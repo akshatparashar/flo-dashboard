@@ -552,21 +552,24 @@ try:
     risk_val = st.sidebar.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"], key="global_risk_filter")
     
     filtered_data = data.copy()
-    # Production Dashboard: Column AC month is the only filter applied to totals.
-    # Keep the existing dashboard UI/tables/charts intact; other sidebar filters
-    # must not silently reduce AS (In Production) and AT (Received) totals.
-    if is_prod:
-        if month_val != "ALL":
-            filtered_data = filtered_data[filtered_data["month_prod"] == month_val]
-    else:
-        if month_val != "ALL": filtered_data = filtered_data[filtered_data[target_month_col] == month_val]
-        if typ_val != "ALL": filtered_data = filtered_data[filtered_data["type_clean"].str.contains(typ_val, case=False, na=False)]
-        if cat_val != "ALL": filtered_data = filtered_data[filtered_data["category_clean"] == cat_val]
-        if des_val != "ALL": filtered_data = filtered_data[filtered_data["designer"].str.upper() == des_val.upper()]
-        if cli_val != "ALL": filtered_data = filtered_data[filtered_data["client"].str.upper() == cli_val.upper()]
-        if fab_val != "ALL": filtered_data = filtered_data[filtered_data["fabricator"].str.upper() == fab_val.upper()]
-        if risk_val == "ON-TIME": filtered_data = filtered_data[filtered_data["delay"] <= 0]
-        if risk_val == "OVERDUE (>0 DAYS)": filtered_data = filtered_data[filtered_data["delay"] > 0]
+    # Apply every selected sidebar filter to every dashboard.
+    # Production Dashboard uses Column AC for the month and sums numeric PCS in AS/AT/AU.
+    if month_val != "ALL":
+        filtered_data = filtered_data[filtered_data[target_month_col] == month_val]
+    if typ_val != "ALL":
+        filtered_data = filtered_data[filtered_data["type_clean"].str.contains(typ_val, case=False, na=False)]
+    if cat_val != "ALL":
+        filtered_data = filtered_data[filtered_data["category_clean"] == cat_val.upper()]
+    if des_val != "ALL":
+        filtered_data = filtered_data[filtered_data["designer"].str.casefold() == des_val.casefold()]
+    if cli_val != "ALL":
+        filtered_data = filtered_data[filtered_data["client"].str.casefold() == cli_val.casefold()]
+    if fab_val != "ALL":
+        filtered_data = filtered_data[filtered_data["fabricator"].str.casefold() == fab_val.casefold()]
+    if risk_val == "ON-TIME":
+        filtered_data = filtered_data[filtered_data["delay"] <= 0]
+    elif risk_val == "OVERDUE (>0 DAYS)":
+        filtered_data = filtered_data[filtered_data["delay"] > 0]
     
     st.write(f"**Filtered Records:** {len(filtered_data):,} / {len(data):,}")
     
