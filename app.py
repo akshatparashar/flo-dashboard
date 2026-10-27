@@ -108,7 +108,6 @@ def load_sheet():
     width = len(headers)
     rows = [(r + [""] * max(0, width - len(r)))[:width] for r in rows]
     data = pd.DataFrame(rows, columns=headers)
-    data = data.loc[~data.apply(lambda r: all(not str(v).strip() for v in r), axis=1)].copy()
     data.attrs["tab"] = ws.title
     data.attrs["header_row"] = header_i + 1
     return data
@@ -119,7 +118,7 @@ def load_sheet():
 def prepare(raw):
     d = raw.copy()
     
-    # Complete Mapping including Fabricator Date Attributes to prevent AttributeError
+    # Complete Mapping of Column Positions
     letter_mapping = {
         "date": "B",                  # Order Date
         "designer": "C",              # Designer's Name
@@ -164,16 +163,8 @@ def prepare(raw):
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    # Preserving ALL rows having any non-zero numeric activity to ensure 151,844 total is met
-    d = d[
-        (d["designer"].ne("")) | 
-        (d["client"].ne("")) | 
-        (d["qty"] > 0) | 
-        (d["production"] > 0) | 
-        (d["received"] > 0) | 
-        (d["pending"] > 0) | 
-        d["date"].notna()
-    ].copy()
+    # Keeping ALL rows that contain numeric values (AS, AT, AU, or J) without dropping blank designer/client rows
+    d = d[(d["qty"] > 0) | (d["production"] > 0) | (d["received"] > 0) | (d["pending"] > 0) | (d["designer"].ne("")) | (d["client"].ne(""))].copy()
     
     return d
 
@@ -320,7 +311,7 @@ def production_dashboard(d):
         ("Orders / Designs", f"{len(d):,}"),
         ("In Production PCS (AS)", fmt(d.production.sum())),
         ("Received PCS (AT)", fmt(d.received.sum())),
-        ("Pending PCS (AU)", fmt(pending_rows.pending.sum())),
+        ("Pending PCS (AU)", fmt(d.pending.sum())),
         ("Overdue PCS (AH > 0)", fmt(d.loc[d.delay > 0, "production"].sum())),
     ])
     
