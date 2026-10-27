@@ -1,310 +1,359 @@
-import streamlit as st
+import re
 import pandas as pd
 import plotly.express as px
+import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 
-# -----------------------------------------------------------------------------
-# 1. PAGE CONFIGURATION
-# -----------------------------------------------------------------------------
-st.set_page_config(
-    page_title="Executive Multi-Dashboard 2026-27",
-    page_icon="📊",
-    layout="wide"
-)
+st.set_page_config(page_title="Sample Production Dashboard", page_icon="📊", layout="wide")
+SHEET_ID = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"
+DEFAULT_TAB = "ORDER SHEET"
+MONTHS = ["April", "May", "June", "July", "August", "September",
+          "October", "November", "December", "January", "February", "March"]
 
-# -----------------------------------------------------------------------------
-# 2. GOOGLE SHEETS AUTHENTICATION & DATA FETCHING
-# -----------------------------------------------------------------------------
-@st.cache_data(ttl=300)
-def load_sheet_data():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    
-    # Extract TOML secrets into a python dictionary
-    raw_creds = st.secrets["gcp_service_account"]
-    creds_dict = {k: v for k, v in raw_creds.items()}
-    
-    # Key Sanitization: Fix PEM string formatting issue for OpenSSL/Cryptography parser
-    if "private_key" in creds_dict:
-        pk = str(creds_dict["private_key"])
-        # Replace escaped newlines with actual newline characters
-        pk = pk.replace("\\n", "\n")
-        creds_dict["private_key"] = pk
+st.markdown("""
+<style>
+.block-container{padding-top:1.2rem}
+[data-testid="stMetric"]{background:#f8fafc;border:1px solid #dbe3ed;padding:14px;border-radius:12px}
+</style>
+""", unsafe_allow_html=True)
 
-    # Authenticate via Google OAuth Credentials
-    credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
-    client = gspread.authorize(credentials)
-    
-    # Open target Google Sheet by ID
-    sheet_key = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"
-    spreadsheet = client.open_by_key(sheet_key)
-    
-    # Select First Worksheet
-    ws = spreadsheet.get_worksheet(0)
-    raw_data = ws.get_all_values()
-    
-    # Headers start at Row 5 (Index 4)
-    if len(raw_data) > 4:
-        header = raw_data[4]
-        data = raw_data[5:]
-    else:
-        header = raw_data[0]
-        data = raw_data[1:]
-        
-    df = pd.DataFrame(data, columns=[str(h).strip() for h in header])
-    return df
 
-# -----------------------------------------------------------------------------
-# 3. MAIN APPLICATION & DASHBOARDS
-# -----------------------------------------------------------------------------
-try:
-    raw_df = load_sheet_data()
-    
-    st.sidebar.title("🎛️ Management Dashboards")
-    selected_dashboard = st.sidebar.radio(
-        "Select Executive View:",
-        [
-            "1. Designer Performance & Category Tracking",
-            "2. Client Performance & Fulfillment",
-            "3. Production Process & Vendor Performance"
-        ]
+def norm(x):
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(x).lower())).strip()
+
+
+def col_index(letter):
+    n = 0
+    for c in letter.upper():
+        n = n * 26 + ord(c) - 64
+    return n - 1
+
+
+def choose_col(df, aliases, fallback):
+    headers = {norm(c): c for c in df.columns}
+    for alias in aliases:
+        if norm(alias) in headers:
+            return headers[norm(alias)]
+    for alias in aliases:
+        a = norm(alias)
+        if len(a) >= 5:
+            for h, original in headers.items():
+                if a in h or h in a:
+                    return original
+    idx = col_index(fallback)
+    return df.columns[idx] if idx < len(df.columns) else None
+
+
+@st.cache_data(ttl=300, show_spinner="Google Sheet se data load ho raha hai...")
+def load_sheet():
+    if "gcp_service_account" not in st.secrets:
+        st.error("Google credentials missing hain. Streamlit Settings → Secrets mein credentials add karein.")
+        st.info("Setup instructions project ke README.md mein hain.")
+        st.stop()
+    creds = Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]),
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
     )
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 Interactive Filters")
+    gc = gspread.authorize(creds)
+    sheet_id = st.secrets.get("spreadsheet_id", SHEET_ID)
+    tab_name = st.secrets.get("worksheet_name", DEFAULT_TAB)
+    book = gc.open_by_key(sheet_id)
+    try:
+        ws = book.worksheet(tab_name)
+    except gspread.WorksheetNotFound:
+        st.error(f'Tab "{tab_name}" nahi mila. Available tabs: {", ".join(w.title for w in book.worksheets())}')
+        st.stop()
+    values = ws.get_all_values()
+    if not values:
+        st.error("Google Sheet empty hai.")
+        st.stop()
+    # Apps Script data starts around row 5; identify the best header among first 10 rows.
+    keywords = ["designer", "client", "order", "category", "sample"]
+    header_i, best = 0, -1
+    for i, row in enumerate(values[:10]):
+        cells = [norm(v) for v in row if str(v).strip()]
+        score = sum(any(k in cell for cell in cells) for k in keywords)
+        if score > best:
+            header_i, best = i, score
+    headers = []
+    for i, v in enumerate(values[header_i]):
+        name = str(v).strip() or f"Unnamed_{i+1}"
+        if name in headers:
+            name = f"{name}_{i+1}"
+        headers.append(name)
+    rows = values[header_i + 1:]
+    width = len(headers)
+    rows = [(r + [""] * max(0, width-len(r)))[:width] for r in rows]
+    data = pd.DataFrame(rows, columns=headers)
+    data = data.loc[~data.apply(lambda r: all(not str(v).strip() for v in r), axis=1)].copy()
+    data.attrs["tab"] = tab_name
+    data.attrs["header_row"] = header_i + 1
+    return data
 
-    fy_months = [
-        "April", "May", "June", "July", "August", "September",
-        "October", "November", "December", "January", "February", "March"
-    ]
 
-    # Column Mapping based on Sheet Order
-    col_date = raw_df.columns[1] if len(raw_df.columns) > 1 else "ORDER DATE"
-    col_des  = raw_df.columns[2] if len(raw_df.columns) > 2 else "DESIGNER'S NAME"
-    col_type = raw_df.columns[3] if len(raw_df.columns) > 3 else "ORDER TYPE"
-    col_item = raw_df.columns[5] if len(raw_df.columns) > 5 else "CATEGORY"
-    col_qty  = raw_df.columns[9] if len(raw_df.columns) > 9 else "NO. OF PC'S"
-    col_client = raw_df.columns[13] if len(raw_df.columns) > 13 else "CLIENT NAME"
-    col_fab  = raw_df.columns[20] if len(raw_df.columns) > 20 else "FABRICATOR'S"
-    col_delay= raw_df.columns[33] if len(raw_df.columns) > 33 else "Delay Days By Fabricator"
-    
-    col_inprod  = raw_df.columns[44] if len(raw_df.columns) > 44 else "IN PRODUCTION"
-    col_recvd   = raw_df.columns[45] if len(raw_df.columns) > 45 else "RECEIVED"
-    col_pending = raw_df.columns[46] if len(raw_df.columns) > 46 else "PENDING"
+def num(s):
+    return pd.to_numeric(s.astype(str).str.replace(",", "", regex=False)
+                         .str.replace(r"[^0-9.\-]", "", regex=True), errors="coerce").fillna(0)
 
-    # -------------------------------------------------------------
-    # VIEW 1: DESIGNER PERFORMANCE & CATEGORY TRACKING DASHBOARD
-    # -------------------------------------------------------------
-    if selected_dashboard == "1. Designer Performance & Category Tracking":
-        st.title("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
-        st.markdown("---")
 
-        sel_month = st.sidebar.selectbox("Select Month", ["ALL"] + fy_months)
-        des_list = ["ALL"] + sorted([
-            str(x).strip().upper() for x in raw_df[col_des].unique() 
-            if str(x).strip() not in ["", "DESIGNER", "DESIGNER'S NAME"]
-        ])
-        sel_des = st.sidebar.selectbox("Select Designer", des_list)
-        sel_type = st.sidebar.selectbox("Order Type", ["ALL", "NEW", "REPEAT"])
+def date_col(s):
+    return pd.to_datetime(s, errors="coerce", dayfirst=True)
 
-        df = raw_df.copy()
-        if sel_month != "ALL":
-            df = df[df[col_date].astype(str).str.contains(sel_month, case=False, na=False)]
-        if sel_des != "ALL":
-            df = df[df[col_des].astype(str).str.upper().str.strip() == sel_des]
-        if sel_type != "ALL":
-            df = df[df[col_type].astype(str).str.contains(sel_type, case=False, na=False)]
 
-        df[col_qty] = pd.to_numeric(df[col_qty], errors='coerce').fillna(0)
+def prepare(raw):
+    d = raw.copy()
+    # Aliases first; column-letter fallbacks follow the supplied Apps Script.
+    fields = {
+        "date": (["Order Date", "Date", "Order Booking Date"], "B"),
+        "designer": (["Designer's Name", "Designer Name", "Designer"], "C"),
+        "type": (["Order Type", "Type"], "D"),
+        "category": (["Sample Product", "Category", "Product"], "F"),
+        "qty": (["No. of Pcs", "No of Pcs", "Order Qty", "Order Quantity", "Quantity", "Qty"], "J"),
+        "client": (["Client Name", "Client", "Customer Name"], "N"),
+        "fabricator": (["Fabricator", "Fabricator Name", "Vendor Name", "Vendor"], "AA"),
+        "delay": (["Delay Days", "Overdue Days", "Delay (Days)", "Days Delayed"], "AH"),
+        "production": (["In Production", "In Production Qty", "Production Qty", "Production Quantity"], "AS"),
+        "received": (["Received Qty", "Received Quantity", "Received / Done", "Received"], "AT"),
+        "pending": (["Pending Qty", "Pending Quantity", "Total Pending Qty", "Pending"], "AU"),
+        "status": (["Status", "Production Status", "Order Status"], "AX"),
+        "required_date": (["Customer Required Delivery Date", "Required Delivery Date", "Required Date"], "O"),
+        "fabric_order_date": (["Fabric Order Date"], "P"),
+        "planned_fabric_date": (["Planned reqd Date", "Planned Required Date", "Planned Date"], "S"),
+        "follow_up": (["Follow Up", "Follow-up", "Followup"], "T"),
+        "fabric_received_date": (["Rcvd Date", "Received Date", "Fabric Received Date"], "U"),
+    }
+    for key, (aliases, letter) in fields.items():
+        c = choose_col(d, aliases, letter)
+        d[key] = d[c] if c is not None else ""
+    for c in ["designer", "type", "category", "client", "fabricator", "status", "follow_up"]:
+        d[c] = d[c].astype(str).str.strip()
+        d.loc[d[c].str.lower().isin(["nan", "none"]), c] = ""
+    for c in ["qty", "production", "received", "pending", "delay"]:
+        d[c] = num(d[c])
+    for c in ["date", "required_date", "fabric_order_date", "planned_fabric_date", "fabric_received_date"]:
+        d[c] = date_col(d[c])
+    # If pending column is entirely blank/zero, estimate pending from order quantity minus received.
+    if (d["pending"] == 0).all() and (d["qty"] > 0).any():
+        d["pending"] = (d["qty"] - d["received"]).clip(lower=0)
+    d["month"] = d["date"].dt.month_name()
+    d["type_clean"] = d["type"].str.upper()
+    d["category_clean"] = d["category"].str.upper().str.strip()
+    d = d[(d["designer"].ne("")) | (d["client"].ne("")) | (d["qty"] != 0) | d["date"].notna()].copy()
+    return d
 
-        total_designs = len(df)
-        total_qty = int(df[col_qty].sum())
-        new_qty = int(df[df[col_type].astype(str).str.contains("NEW", case=False, na=False)][col_qty].sum())
-        repeat_qty = int(df[df[col_type].astype(str).str.contains("REPEAT", case=False, na=False)][col_qty].sum())
-        
-        des_grouped = df.groupby(col_des)[col_qty].sum()
-        top_performer = f"{des_grouped.idxmax()} ({int(des_grouped.max()):,} Pcs)" if not des_grouped.empty and des_grouped.max() > 0 else "N/A"
 
-        k1, k2, k3, k4, k5 = st.columns(5)
-        k1.metric("TOTAL DESIGNS", f"{total_designs:,}")
-        k2.metric("TOTAL QUANTITY (PCS)", f"{total_qty:,}")
-        k3.metric("NEW ORDER QTY", f"{new_qty:,}")
-        k4.metric("REPEAT ORDER QTY", f"{repeat_qty:,}")
-        k5.metric("TOP PERFORMER", top_performer)
+def filters(d):
+    st.sidebar.header("🔎 Filters")
+    month_values = [m for m in MONTHS if m in d["month"].dropna().astype(str).unique()]
+    def select(label, values, key):
+        opts = ["ALL"] + sorted({str(v) for v in values if str(v).strip() and str(v) != "nan"})
+        return st.sidebar.selectbox(label, opts, key=key)
+    month = st.sidebar.selectbox("Month", ["ALL"] + month_values)
+    typ = select("Order Type", d["type_clean"].unique(), "type")
+    cat = select("Category", d["category_clean"].unique(), "category")
+    des = select("Designer", d["designer"].unique(), "designer")
+    cli = select("Client", d["client"].unique(), "client")
+    fab = select("Fabricator", d["fabricator"].unique(), "fabricator")
+    risk = st.sidebar.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"])
+    out = d.copy()
+    if month != "ALL": out = out[out["month"] == month]
+    if typ != "ALL": out = out[out["type_clean"].str.contains(typ, case=False, na=False)]
+    if cat != "ALL": out = out[out["category_clean"] == cat]
+    if des != "ALL": out = out[out["designer"].str.upper() == des.upper()]
+    if cli != "ALL": out = out[out["client"].str.upper() == cli.upper()]
+    if fab != "ALL": out = out[out["fabricator"].str.upper() == fab.upper()]
+    if risk == "ON-TIME": out = out[out["delay"] <= 0]
+    if risk == "OVERDUE (>0 DAYS)": out = out[out["delay"] > 0]
+    return out
 
-        st.markdown("---")
-        st.subheader("📊 Designer Volume & Share Breakdown")
-        
-        c_tbl, c_chart = st.columns([1.2, 1])
-        with c_tbl:
-            des_summary = []
-            all_designers = [x for x in des_list if x != "ALL"]
-            for d in all_designers:
-                sub_d = raw_df[raw_df[col_des].astype(str).str.upper().str.strip() == d]
-                if sel_month != "ALL":
-                    sub_d = sub_d[sub_d[col_date].astype(str).str.contains(sel_month, case=False, na=False)]
-                if sel_type != "ALL":
-                    sub_d = sub_d[sub_d[col_type].astype(str).str.contains(sel_type, case=False, na=False)]
-                
-                sub_d[col_qty] = pd.to_numeric(sub_d[col_qty], errors='coerce').fillna(0)
-                d_new = int(sub_d[sub_d[col_type].astype(str).str.contains("NEW", case=False, na=False)][col_qty].sum())
-                d_repeat = int(sub_d[sub_d[col_type].astype(str).str.contains("REPEAT", case=False, na=False)][col_qty].sum())
-                
-                des_summary.append({
-                    "Designer Name": d,
-                    "New Orders (Pcs)": d_new,
-                    "Repeat Orders (Pcs)": d_repeat,
-                    "Total Volume (Pcs)": d_new + d_repeat,
-                    "Total Design Count": len(sub_d)
-                })
 
-            des_df = pd.DataFrame(des_summary)
-            grand_total_vol = des_df["Total Volume (Pcs)"].sum()
-            des_df["Share %"] = des_df["Total Volume (Pcs)"].apply(
-                lambda x: f"{(x/grand_total_vol*100):.1f}%" if grand_total_vol > 0 else "0.0%"
-            )
-            st.dataframe(des_df, use_container_width=True)
+def metrics(items):
+    cols = st.columns(len(items))
+    for c, (label, value) in zip(cols, items):
+        c.metric(label, value)
 
-        with c_chart:
-            fig_bar = px.bar(
-                des_df, x="Designer Name", y=["New Orders (Pcs)", "Repeat Orders (Pcs)"],
-                title="DESIGNER PERFORMANCE: NEW vs REPEAT ORDERS (PCS)",
-                barmode="group", color_discrete_sequence=["#059669", "#7C3AED"]
-            )
-            st.plotly_chart(fig_bar, use_container_width=True)
 
-    # -------------------------------------------------------------
-    # VIEW 2: CLIENT PERFORMANCE & FULFILLMENT DASHBOARD
-    # -------------------------------------------------------------
-    elif selected_dashboard == "2. Client Performance & Fulfillment":
-        st.title("🏢 Executive Client Performance & Category Dashboard")
-        st.markdown("---")
+def fmt(x):
+    return f"{x:,.0f}"
 
-        sel_month = st.sidebar.selectbox("Select Month", ["ALL"] + fy_months)
-        client_opts = ["ALL"] + sorted([
-            str(x).strip().upper() for x in raw_df[col_client].unique() 
-            if str(x).strip() not in ["", "CLIENT NAME"]
-        ])
-        sel_client = st.sidebar.selectbox("Select Client Name", client_opts)
-        sel_type = st.sidebar.selectbox("Order Type", ["ALL", "NEW", "REPEAT"])
 
-        df = raw_df.copy()
-        if sel_month != "ALL":
-            df = df[df[col_date].astype(str).str.contains(sel_month, case=False, na=False)]
-        if sel_client != "ALL":
-            df = df[df[col_client].astype(str).str.upper().str.strip() == sel_client]
-        if sel_type != "ALL":
-            df = df[df[col_type].astype(str).str.contains(sel_type, case=False, na=False)]
+def overview(d):
+    st.subheader("Executive Overview")
+    metrics([
+        ("Total Designs", f"{len(d):,}"), ("Total Order Qty", fmt(d.qty.sum())),
+        ("In Production", fmt(d.production.sum())), ("Received / Done", fmt(d.received.sum())),
+    ])
+    metrics([
+        ("Pending Qty", fmt(d.pending.sum())),
+        ("Overdue Pending Qty", fmt(d.loc[d.delay > 0, "pending"].sum())),
+        ("On-time Orders", f"{(d.delay.le(0).mean()*100 if len(d) else 0):.1f}%"),
+        ("New Order Qty", fmt(d.loc[d.type_clean.str.contains("NEW", na=False), "qty"].sum())),
+    ])
+    a, b = st.columns(2)
+    with a:
+        m = d.dropna(subset=["date"]).assign(Month=lambda x: x.date.dt.to_period("M").astype(str)).groupby("Month", as_index=False)["qty"].sum()
+        if not m.empty:
+            st.plotly_chart(px.bar(m, x="Month", y="qty", title="Monthly Order Quantity", text_auto=".2s"), use_container_width=True)
+    with b:
+        c = d[d.category_clean.ne("")].groupby("category_clean", as_index=False)["qty"].sum().sort_values("qty", ascending=False)
+        if not c.empty:
+            st.plotly_chart(px.bar(c, x="category_clean", y="qty", title="Category-wise Quantity", text_auto=".2s"), use_container_width=True)
+    a, b = st.columns(2)
+    with a:
+        x = pd.DataFrame({"Status": ["Received / Done", "Pending"], "Quantity": [d.received.sum(), d.pending.sum()]})
+        x = x[x.Quantity > 0]
+        if not x.empty: st.plotly_chart(px.pie(x, names="Status", values="Quantity", hole=.5, title="Received vs Pending"), use_container_width=True)
+    with b:
+        x = d[d.type_clean.ne("")].groupby("type_clean", as_index=False)["qty"].sum()
+        if not x.empty: st.plotly_chart(px.pie(x, names="type_clean", values="qty", hole=.5, title="New vs Repeat Orders"), use_container_width=True)
 
-        for c in [col_qty, col_inprod, col_recvd, col_pending]:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
-        t_designs = len(df)
-        t_qty = int(df[col_qty].sum()) if col_qty in df.columns else 0
-        t_prod = int(df[col_inprod].sum()) if col_inprod in df.columns else 0
-        t_rec = int(df[col_recvd].sum()) if col_recvd in df.columns else 0
-        t_pend = int(df[col_pending].sum()) if col_pending in df.columns else 0
+def designer_dashboard(d):
+    st.subheader("Designer Performance")
+    x = d[d.designer.ne("")].copy()
+    if x.empty:
+        st.info("Selected filters ke liye designer data nahi hai."); return
+    g = x.groupby("designer", as_index=False).agg(**{"Total Volume (Pcs)": ("qty", "sum"), "Design Count": ("qty", "size")})
+    new = x[x.type_clean.str.contains("NEW", na=False)].groupby("designer").qty.sum()
+    repeat = x[x.type_clean.str.contains("REPEAT", na=False)].groupby("designer").qty.sum()
+    g["New Orders (Pcs)"] = g.designer.map(new).fillna(0)
+    g["Repeat Orders (Pcs)"] = g.designer.map(repeat).fillna(0)
+    g["Share %"] = g["Total Volume (Pcs)"] / max(g["Total Volume (Pcs)"].sum(), 1) * 100
+    g = g.sort_values("Total Volume (Pcs)", ascending=False)
+    top = g.iloc[0]
+    metrics([("Designers", f"{g.designer.nunique():,}"), ("Top Performer", top.designer),
+             ("Top Performer Qty", fmt(top["Total Volume (Pcs)"])), ("New Qty", fmt(g["New Orders (Pcs)"].sum())),
+             ("Repeat Qty", fmt(g["Repeat Orders (Pcs)"].sum()))])
+    a, b = st.columns(2)
+    with a:
+        st.plotly_chart(px.bar(g.head(20), x="designer", y="Total Volume (Pcs)", title="Designer Volume", text_auto=".2s"), use_container_width=True)
+    with b:
+        melted = g.melt(id_vars="designer", value_vars=["New Orders (Pcs)", "Repeat Orders (Pcs)"], var_name="Order Type", value_name="Qty")
+        st.plotly_chart(px.bar(melted, x="designer", y="Qty", color="Order Type", barmode="group", title="New vs Repeat by Designer"), use_container_width=True)
+    trend = x.dropna(subset=["date"]).copy()
+    if not trend.empty:
+        trend["Month"] = trend.date.dt.to_period("M").astype(str)
+        trend = trend.groupby(["Month", "designer"], as_index=False).qty.sum()
+        st.plotly_chart(px.line(trend, x="Month", y="qty", color="designer", markers=True, title="Monthly Designer Trend"), use_container_width=True)
+    st.dataframe(g.rename(columns={"designer": "Designer"}), use_container_width=True, hide_index=True)
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("TOTAL DESIGNS", f"{t_designs:,}")
-        c2.metric("TOTAL QTY (PCS)", f"{t_qty:,}")
-        c3.metric("IN PRODUCTION", f"{t_prod:,}")
-        c4.metric("RECEIVED / DONE", f"{t_rec:,}")
-        c5.metric("TOTAL PENDING QTY", f"{t_pend:,}")
 
-        st.markdown("---")
-        st.subheader("📅 Client Fulfillment Breakdown (Monthly)")
-        
-        m_summary = []
-        for m in fy_months:
-            sub_m = raw_df[raw_df[col_date].astype(str).str.contains(m, case=False, na=False)]
-            if sel_client != "ALL":
-                sub_m = sub_m[sub_m[col_client].astype(str).str.upper().str.strip() == sel_client]
-            if sel_type != "ALL":
-                sub_m = sub_m[sub_m[col_type].astype(str).str.contains(sel_type, case=False, na=False)]
+def client_dashboard(d):
+    st.subheader("Client Analysis")
+    x = d[d.client.ne("")].copy()
+    if x.empty:
+        st.info("Selected filters ke liye client data nahi hai."); return
+    g = x.groupby("client", as_index=False).agg(
+        **{"Order Count": ("qty", "size"), "Order Qty": ("qty", "sum"),
+           "In Production": ("production", "sum"), "Received / Done": ("received", "sum"), "Pending Qty": ("pending", "sum")})
+    g = g.sort_values("Order Qty", ascending=False)
+    metrics([("Clients", f"{x.client.nunique():,}"), ("Total Order Qty", fmt(x.qty.sum())),
+             ("Repeat Qty", fmt(x.loc[x.type_clean.str.contains("REPEAT", na=False), "qty"].sum())),
+             ("Pending Qty", fmt(x.pending.sum()))])
+    a, b = st.columns(2)
+    with a:
+        st.plotly_chart(px.bar(g.head(20), x="client", y="Order Qty", title="Top 20 Clients by Quantity", text_auto=".2s"), use_container_width=True)
+    with b:
+        q = pd.DataFrame({"Status": ["Received / Done", "Pending"], "Qty": [x.received.sum(), x.pending.sum()]})
+        q = q[q.Qty > 0]
+        if not q.empty: st.plotly_chart(px.pie(q, names="Status", values="Qty", hole=.5, title="Fulfilment Ratio"), use_container_width=True)
+    cats = x[x.category_clean.ne("")].groupby("category_clean", as_index=False).qty.sum()
+    if not cats.empty: st.plotly_chart(px.bar(cats, x="category_clean", y="qty", title="Category-wise Client Orders", text_auto=".2s"), use_container_width=True)
+    st.dataframe(g.rename(columns={"client": "Client"}), use_container_width=True, hide_index=True)
 
-            for c in [col_qty, col_inprod, col_recvd, col_pending]:
-                if c in sub_m.columns:
-                    sub_m[c] = pd.to_numeric(sub_m[c], errors='coerce').fillna(0)
 
-            m_summary.append({
-                "Month": m,
-                "ORDER QTY": int(sub_m[col_qty].sum()) if col_qty in sub_m.columns else 0,
-                "IN PRODUCTION": int(sub_m[col_inprod].sum()) if col_inprod in sub_m.columns else 0,
-                "RECEIVED": int(sub_m[col_recvd].sum()) if col_recvd in sub_m.columns else 0,
-                "PENDING": int(sub_m[col_pending].sum()) if col_pending in sub_m.columns else 0
-            })
+def production_dashboard(d):
+    st.subheader("Production Process & Delay Analysis")
+    overdue = d[d.delay > 0]
+    metrics([("Orders / Designs", f"{len(d):,}"), ("In Production", fmt(d.production.sum())),
+             ("Received / Done", fmt(d.received.sum())), ("Pending", fmt(d.pending.sum()))])
+    metrics([("Overdue Pending Qty", fmt(overdue.pending.sum())),
+             ("Average Overdue Days", f"{overdue.delay.mean():.1f}" if len(overdue) else "0.0"),
+             ("On-time Delivery %", f"{(d.delay.le(0).mean()*100 if len(d) else 0):.1f}%"),
+             ("Overdue Orders", f"{len(overdue):,}")])
+    a, b = st.columns(2)
+    with a:
+        x = d[d.category_clean.ne("")].groupby("category_clean", as_index=False).agg(
+            **{"In Production": ("production", "sum"), "Received": ("received", "sum"), "Pending": ("pending", "sum")})
+        if not x.empty: st.plotly_chart(px.bar(x, x="category_clean", y=["In Production", "Received", "Pending"], barmode="group", title="Category Production Performance"), use_container_width=True)
+    with b:
+        x = d[d.fabricator.ne("")].groupby("fabricator", as_index=False).pending.sum().sort_values("pending", ascending=False).head(15)
+        if not x.empty: st.plotly_chart(px.bar(x, x="fabricator", y="pending", title="Pending Qty by Fabricator", text_auto=".2s"), use_container_width=True)
+    x = d.dropna(subset=["date"]).copy()
+    if not x.empty:
+        x["Month"] = x.date.dt.to_period("M").astype(str)
+        x = x.groupby("Month", as_index=False).agg(**{"Order Qty": ("qty", "sum"), "Production": ("production", "sum"), "Received": ("received", "sum"), "Pending": ("pending", "sum")})
+        st.plotly_chart(px.line(x, x="Month", y=["Order Qty", "Production", "Received", "Pending"], markers=True, title="Monthly Fulfilment Trend"), use_container_width=True)
+    if not overdue.empty:
+        st.markdown("#### Overdue Orders")
+        st.dataframe(overdue[["date", "designer", "client", "category", "qty", "fabricator", "production", "received", "pending", "delay"]]
+                     .rename(columns={"date":"Order Date","designer":"Designer","client":"Client","category":"Category","qty":"Order Qty","fabricator":"Fabricator","production":"In Production","received":"Received","pending":"Pending Qty","delay":"Delay Days"})
+                     .sort_values("Delay Days", ascending=False), use_container_width=True, hide_index=True)
 
-        m_df = pd.DataFrame(m_summary)
-        m_col1, m_col2 = st.columns([1, 1])
-        with m_col1:
-            st.dataframe(m_df, use_container_width=True)
-        with m_col2:
-            fig_donut = px.pie(
-                names=["RECEIVED QTY", "PENDING QTY"],
-                values=[t_rec, t_pend],
-                title="ORDER FULFILLMENT RATIO (RECEIVED vs PENDING)",
-                hole=0.45, color_discrete_sequence=["#059669", "#DC2626"]
-            )
-            st.plotly_chart(fig_donut, use_container_width=True)
 
-    # -------------------------------------------------------------
-    # VIEW 3: PRODUCTION PROCESS & VENDOR PERFORMANCE DASHBOARD
-    # -------------------------------------------------------------
-    elif selected_dashboard == "3. Production Process & Vendor Performance":
-        st.title("🏭 Production Executive Process Dashboard")
-        st.markdown("---")
+def fabric_dashboard(d):
+    st.subheader("Fabric & Vendor Tracking")
+    metrics([("Fabricators / Vendors", f"{d.loc[d.fabricator.ne(''), 'fabricator'].nunique():,}"),
+             ("Orders with Vendor", f"{d.fabricator.ne('').sum():,}"),
+             ("Awaiting Fabric Receipt", f"{d.fabric_received_date.isna().sum():,}"),
+             ("Overdue Orders", f"{(d.delay > 0).sum():,}")])
+    v = d[d.fabricator.ne("")].groupby("fabricator", as_index=False).agg(
+        Orders=("qty", "size"), OrderQty=("qty", "sum"), PendingQty=("pending", "sum"),
+        FabricReceived=("fabric_received_date", lambda s: s.notna().sum()))
+    if not v.empty: st.dataframe(v.rename(columns={"fabricator":"Vendor / Fabricator"}), use_container_width=True, hide_index=True)
+    waiting = d[d.fabric_order_date.notna() & d.fabric_received_date.isna()]
+    if not waiting.empty:
+        st.markdown("#### Fabric ordered but receipt date is blank")
+        st.dataframe(waiting[["fabric_order_date","fabricator","designer","client","category","qty","planned_fabric_date","follow_up"]]
+                     .rename(columns={"fabric_order_date":"Fabric Order Date","fabricator":"Vendor","designer":"Designer","client":"Client","category":"Category","qty":"Order Qty","planned_fabric_date":"Planned Date","follow_up":"Follow Up"}), use_container_width=True, hide_index=True)
 
-        sel_month = st.sidebar.selectbox("Select Month", ["ALL"] + fy_months)
-        fab_opts = ["ALL"] + sorted([
-            str(x).strip().upper() for x in raw_df[col_fab].unique() 
-            if str(x).strip() not in ["", "FABRICATOR'S"]
-        ])
-        sel_fab = st.sidebar.selectbox("Fabricator", fab_opts)
 
-        df = raw_df.copy()
-        if sel_month != "ALL":
-            df = df[df[col_date].astype(str).str.contains(sel_month, case=False, na=False)]
-        if sel_fab != "ALL":
-            df = df[df[col_fab].astype(str).str.upper().str.strip() == sel_fab]
+def order_details(d):
+    st.subheader("Searchable Order Details")
+    query = st.text_input("Search client, designer, category, fabricator, order type or status")
+    x = d.copy()
+    if query:
+        mask = pd.Series(False, index=x.index)
+        for c in ["client", "designer", "category", "fabricator", "type", "status"]:
+            mask |= x[c].astype(str).str.contains(query, case=False, na=False)
+        x = x[mask]
+    cols = ["date","designer","client","type","category","qty","production","received","pending","fabricator","status","delay","required_date","fabric_order_date","planned_fabric_date","fabric_received_date","follow_up"]
+    names = {"date":"Order Date","designer":"Designer","client":"Client","type":"Order Type","category":"Category","qty":"Order Qty",
+             "production":"In Production","received":"Received / Done","pending":"Pending Qty","fabricator":"Fabricator","status":"Status","delay":"Delay Days",
+             "required_date":"Required Delivery Date","fabric_order_date":"Fabric Order Date","planned_fabric_date":"Planned Fabric Date","fabric_received_date":"Fabric Received Date","follow_up":"Follow Up"}
+    view = x[cols].rename(columns=names)
+    st.caption(f"{len(view):,} rows")
+    st.dataframe(view, use_container_width=True, hide_index=True)
+    st.download_button("⬇️ Download filtered orders CSV", view.to_csv(index=False).encode("utf-8-sig"), "filtered_orders.csv", "text/csv")
 
-        for c in [col_inprod, col_recvd, col_pending, col_delay]:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
-        t_design = len(df)
-        p_inprod = int(df[col_inprod].sum()) if col_inprod in df.columns else 0
-        p_recvd = int(df[col_recvd].sum()) if col_recvd in df.columns else 0
-        p_pending = int(df[col_pending].sum()) if col_pending in df.columns else 0
-        p_overdue = int(df[df[col_delay] > 0][col_inprod].sum()) if col_delay in df.columns else 0
+st.title("📊 Sample Production & Performance Dashboard")
+st.caption("Private Google Sheet connection · refresh cache every 5 minutes")
+with st.sidebar:
+    if st.button("🔄 Refresh data now", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
-        p1, p2, p3, p4, p5 = st.columns(5)
-        p1.metric("TOTAL DESIGN", f"{t_design:,} Orders")
-        p2.metric("INPRODUCTION PCS", f"{p_inprod:,} Pcs")
-        p3.metric("RECIEVED PCS", f"{p_recvd:,} Pcs")
-        p4.metric("PENDING PCS", f"{p_pending:,} Pcs")
-        p5.metric("OVERDUE PCS", f"{p_overdue:,} Pcs")
+raw = load_sheet()
+data = prepare(raw)
+st.caption(f"Source tab: {raw.attrs.get('tab', DEFAULT_TAB)} · Rows: {len(data):,} · Detected header row: {raw.attrs.get('header_row', '?')}")
+if data.empty:
+    st.warning("Data detect nahi hua. Worksheet aur header row check karein.")
+    st.stop()
+filtered = filters(data)
+st.write(f"**Filtered records:** {len(filtered):,} / {len(data):,}")
+tabs = st.tabs(["Executive Overview", "Designer Dashboard", "Client Dashboard", "Production Dashboard", "Fabric & Vendor", "Order Details"])
+with tabs[0]: overview(filtered)
+with tabs[1]: designer_dashboard(filtered)
+with tabs[2]: client_dashboard(filtered)
+with tabs[3]: production_dashboard(filtered)
+with tabs[4]: fabric_dashboard(filtered)
+with tabs[5]: order_details(filtered)
 
-        st.markdown("---")
-        st.subheader("🧵 Fabricator/Vendor Wise Pending Load")
-        
-        fab_summary = df.groupby(col_fab)[col_pending].sum().reset_index()
-        fab_summary.columns = ["Fabricator Name", "Pending Pcs"]
-        fab_summary = fab_summary.sort_values(by="Pending Pcs", ascending=False)
-
-        f_col1, f_col2 = st.columns([1, 1.2])
-        with f_col1:
-            st.dataframe(fab_summary, use_container_width=True)
-        with f_col2:
-            fig_fab = px.pie(
-                fab_summary, names="Fabricator Name", values="Pending Pcs",
-                title="FABRICATOR PENDING PCS SHARE", hole=0.4,
-                color_discrete_sequence=px.colors.qualitative.Pastel
-            )
-            st.plotly_chart(fig_fab, use_container_width=True)
-
-except Exception as e:
-    st.error(f"Error Loading Google Sheets Data: {e}")
+with st.expander("Column mapping / important check"):
+    st.write("Header matching is attempted first. Fallback columns from your Apps Script: B=Order Date, C=Designer, D=Order Type, F=Category, J=Quantity, N=Client, AA=Fabricator, AH=Delay Days, AS=In Production, AT=Received, AU=Pending, AX=Status.")
+    st.warning("Uploaded Apps Script mein AS/AT/AU ki meanings different dashboards mein inconsistent hain. Fallback currently Client Dashboard interpretation use karta hai: AS=In Production, AT=Received, AU=Pending. Please verify these columns against the actual sheet before relying on production KPIs.")
