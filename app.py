@@ -71,7 +71,7 @@ def col_to_idx(letter):
 def num(s):
     if not isinstance(s, pd.Series):
         s = pd.Series(s)
-    text = s.astype("string").str.strip()
+    text = s.astype("string").str.replace("\xa0", "", regex=False).str.strip()
     text = text.replace({"": pd.NA, "-": pd.NA, "—": pd.NA, "–": pd.NA, "N/A": pd.NA, "n/a": pd.NA, "None": pd.NA, "nan": pd.NA})
     is_paren_negative = text.str.match(r"^\(.*\)$", na=False)
     cleaned = text.str.replace(",", "", regex=False).str.replace(r"[^0-9.\-]", "", regex=True)
@@ -138,7 +138,7 @@ def load_sheet():
     return df_raw
 
 # -----------------------------------------------------------------------------
-# 4. DATA PREPARATION (DIRECT POSITION MAPPING TO PRESERVE ALL ROWS)
+# 4. DATA PREPARATION (DIRECT COLUMN MAPPING - PRESERVES ALL ROWS)
 # -----------------------------------------------------------------------------
 def prepare(raw):
     d = pd.DataFrame()
@@ -266,19 +266,16 @@ def designer_dashboard(d):
     st.dataframe(cat_df, use_container_width=True, hide_index=True)
 
 def client_dashboard(d):
-    st.subheader("🏢 Executive Client Performance Dashboard (Date: Col B, Total Qty: Col J Direct)")
+    st.subheader("🏢 Executive Client Performance Dashboard (Date: Col B, Direct Column J Sum)")
     x = d.copy()
     
-    valid_client_mask = x["client"].ne("")
-    x_valid = x[valid_client_mask]
-    
-    total_designs = len(x_valid[x_valid.qty > 0])
-    total_qty = x_valid["qty"].sum()              # SUM OF COL J FOR VALID CLIENTS
-    in_prod = x_valid["production"].sum()         # SUM OF COL AS
-    rec_done = x_valid["received"].sum()          # SUM OF COL AT
-    pending_qty = x_valid["pending"].sum()        # SUM OF COL AU
-    repeat_qty = x_valid[x_valid["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
-    new_qty = x_valid[x_valid["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
+    total_designs = len(x[x.qty > 0])
+    total_qty = x["qty"].sum()              # DIRECT SUM OF COL J
+    in_prod = x["production"].sum()         # DIRECT SUM OF COL AS
+    rec_done = x["received"].sum()          # DIRECT SUM OF COL AT
+    pending_qty = x["pending"].sum()        # DIRECT SUM OF COL AU
+    repeat_qty = x[x["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
+    new_qty = x[x["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
 
     metrics([
         ("TOTAL DESIGNS", f"{total_designs:,}"),
@@ -297,7 +294,7 @@ def client_dashboard(d):
     st.subheader("📅 Client Fulfillment Breakdown (Monthly Filtered by Col B Date)")
     monthly_ful = []
     for m in MONTHS:
-        sub_m = x_valid[x_valid["month_client"] == m]
+        sub_m = x[x["month_client"] == m]
         monthly_ful.append({
             "MONTH": m,
             "ORDER QTY (J)": int(sub_m["qty"].sum()),
@@ -326,7 +323,7 @@ def client_dashboard(d):
     st.subheader("📦 Monthly Category Order Breakdown (Col B & Col F Matrix)")
     m_cat_matrix = []
     for m in MONTHS:
-        sub_m = x_valid[x_valid["month_client"] == m]
+        sub_m = x[x["month_client"] == m]
         r_data = {"MONTH": m}
         for cat in CATEGORIES_LIST:
             r_data[cat] = int(sub_m[sub_m["category_clean"] == cat]["qty"].sum())
