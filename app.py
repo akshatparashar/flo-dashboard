@@ -194,26 +194,22 @@ def prepare(raw):
     for c in ["date", "required_date", "fabric_order_date", "planned_fabric_date", "fabric_received_date"]:
         d[c] = date_col(d[c])
 
-    # Rule AU == 0 -> Effective Order Qty = Received Qty
-    d["pending_explicit_zero"] = d["pending"].astype(str).str.strip().str.replace(",", "", regex=False).isin(["0", "0.0", "0.00"]) | (d["pending"] == 0)
-    d["effective_qty"] = d["qty"]
-    fully_received = d["pending_explicit_zero"] & (d["received"] > 0)
-    d.loc[fully_received, "effective_qty"] = d.loc[fully_received, "received"]
-
     d["month"] = d["date"].dt.month_name()
+    # Fallback month assignment if date parsing fails but month string exists
+    d["month"] = d["month"].fillna("Unassigned/April")
+
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    # PRESERVE ALL ROWS INCLUDING FUSION FABRICATOR ENTRIES
+    # STRICT RULE: Preserve ALL valid rows having any quantity or text data
     d = d[
         (d["qty"] > 0) | 
         (d["production"] > 0) | 
         (d["received"] > 0) | 
         (d["pending"] > 0) | 
         (d["designer"].ne("")) | 
-        (d["client"].ne("")) | 
-        (d["fabricator"].ne("")) |
-        d["date"].notna()
+        (d["client"].ne("")) |
+        (d["fabricator"].ne(""))
     ].copy()
     
     return d
