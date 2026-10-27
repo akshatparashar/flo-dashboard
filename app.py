@@ -380,16 +380,93 @@ def client_dashboard(d):
         st.plotly_chart(fig_stack, use_container_width=True)
 
 def production_dashboard(d):
-    """Production totals: selected production month comes from Column AC;
-    In Production PCS are summed directly from AS and Received PCS from AT.
-    No client/order/category/fabricator/delay rules are applied here.
-    """
-    st.subheader("🏭 Production Dashboard (Date: Col AC)")
+    st.subheader("🏭 Production Executive Process Dashboard (Date: Col AC, Prod: Col AS)")
+    
+    overdue_mask = d["delay"] > 0
+    overdue = d[overdue_mask]
+    avg_overdue = overdue["delay"].mean() if len(overdue) > 0 else 0.0
+    
     metrics([
-        ("IN PRODUCTION PCS [Col AS]", fmt(d["production"].sum())),
-        ("RECEIVED PCS [Col AT]", fmt(d["received"].sum())),
+        ("TOTAL DESIGN", f"{len(d):,} Orders"),
+        ("INPRODUCTION PCS [Col AS]", fmt(d.production.sum())),
+        ("RECIEVED PCS [Col AT]", fmt(d.received.sum())),
+        ("PENDING PCS [Col AU]", fmt(d.pending.sum())),
+        ("OVERDUE PCS (AH > 0)", fmt(d.loc[overdue_mask, "production"].sum())),
     ])
+    
+    metrics([
+        ("AVG OVERDUE DAYS", f"{avg_overdue:.1f} Days"),
+        ("ON-TIME DELIVERY %", f"{((len(d[d.delay <= 0]) / len(d) * 100) if len(d) > 0 else 0):.1f}%"),
+        ("ON-TIME PCS (AH <= 0)", fmt(d.loc[d.delay <= 0, "production"].sum())),
+        ("OVERDUE ORDERS COUNT", f"{len(overdue):,} Orders"),
+    ])
+    
+    st.markdown("---")
+    st.subheader("🧵 Category-Wise Production Performance Breakdown")
+    cat_prod_summary = []
+    for cat in CATEGORIES_LIST:
+        sub_c = d[d["category_clean"] == cat]
+        cat_prod_summary.append({
+            "CATEGORY": cat,
+            "INPRODUCTION (AS)": int(sub_c["production"].sum()),
+            "RECIEVED (AT)": int(sub_c["received"].sum()),
+            "PENDING (AU)": int(sub_c["pending"].sum())
+        })
+    cp_df = pd.DataFrame(cat_prod_summary)
+    
+    cp_tot = pd.DataFrame([{
+        "CATEGORY": "TOTAL",
+        "INPRODUCTION (AS)": cp_df["INPRODUCTION (AS)"].sum(),
+        "RECIEVED (AT)": cp_df["RECIEVED (AT)"].sum(),
+        "PENDING (AU)": cp_df["PENDING (AU)"].sum()
+    }])
+    cp_df_display = pd.concat([cp_df, cp_tot], ignore_index=True)
+    
+    col_p1, col_p2 = st.columns([1.2, 1])
+    with col_p1:
+        st.dataframe(cp_df_display, use_container_width=True, hide_index=True)
+    with col_p2:
+        fig_cp = px.bar(cp_df, x="CATEGORY", y=["INPRODUCTION (AS)", "RECIEVED (AT)", "PENDING (AU)"], barmode="group", title="CATEGORY PRODUCTION PERFORMANCE")
+        st.plotly_chart(fig_cp, use_container_width=True)
 
+    st.markdown("---")
+    st.subheader("📈 Monthly Production Fulfillment Trend (by Col AC)")
+    m_ful_summary = []
+    for m in MONTHS:
+        sub_m = d[d["month_prod"] == m]
+        m_ful_summary.append({
+            "MONTH": m,
+            "ORDERS": len(sub_m),
+            "IN PRODUCTION (AS)": int(sub_m["production"].sum()),
+            "RECIEVED (AT)": int(sub_m["received"].sum())
+        })
+    mf_df = pd.DataFrame(m_ful_summary)
+    
+    mf_tot = pd.DataFrame([{
+        "MONTH": "TOTAL",
+        "ORDERS": mf_df["ORDERS"].sum(),
+        "IN PRODUCTION (AS)": mf_df["IN PRODUCTION (AS)"].sum(),
+        "RECIEVED (AT)": mf_df["RECIEVED (AT)"].sum()
+    }])
+    mf_df_display = pd.concat([mf_df, mf_tot], ignore_index=True)
+    
+    col_m1, col_m2 = st.columns([1, 1.2])
+    with col_m1:
+        st.dataframe(mf_df_display, use_container_width=True, hide_index=True)
+    with col_m2:
+        st.plotly_chart(px.line(mf_df, x="MONTH", y=["IN PRODUCTION (AS)", "RECIEVED (AT)"], markers=True, title="MONTHLY FULFILLMENT TREND ANALYSIS (Column AC)"), use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🚨 Fabricator Wise Pending Load & Overdue Matrix")
+    fab_summary = d[d["fabricator"].ne("")].groupby("fabricator", as_index=False)["pending"].sum().sort_values("pending", ascending=False)
+    fab_summary.columns = ["Fabricator Name", "Pending Pcs"]
+    
+    f_c1, f_c2 = st.columns([1, 1])
+    with f_c1:
+        st.dataframe(fab_summary, use_container_width=True, hide_index=True)
+    with f_c2:
+        fig_fab = px.pie(fab_summary.head(10), names="Fabricator Name", values="Pending Pcs", title="FABRICATOR PENDING PCS SHARE", hole=0.4)
+        st.plotly_chart(fig_fab, use_container_width=True)
 
 def fabric_dashboard(d):
     st.subheader("🧵 Fabric & Vendor Tracking")
@@ -475,12 +552,13 @@ try:
     risk_val = st.sidebar.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"], key="global_risk_filter")
     
     filtered_data = data.copy()
+    # Production Dashboard: Column AC month is the only filter applied to totals.
+    # Keep the existing dashboard UI/tables/charts intact; other sidebar filters
+    # must not silently reduce AS (In Production) and AT (Received) totals.
     if is_prod:
-        # Production Dashboard: filter only by production date in Column AC.
         if month_val != "ALL":
             filtered_data = filtered_data[filtered_data["month_prod"] == month_val]
     else:
-        # Other dashboards retain their existing global filters (Client uses Column B).
         if month_val != "ALL": filtered_data = filtered_data[filtered_data[target_month_col] == month_val]
         if typ_val != "ALL": filtered_data = filtered_data[filtered_data["type_clean"].str.contains(typ_val, case=False, na=False)]
         if cat_val != "ALL": filtered_data = filtered_data[filtered_data["category_clean"] == cat_val]
