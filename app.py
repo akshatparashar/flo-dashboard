@@ -21,10 +21,43 @@ MONTHS = ["April", "May", "June", "July", "August", "September",
 
 CATEGORIES_LIST = ["CO-ORD SET", "KURTA PANT", "TOP", "KURTA PANT DUPATTA", "DRESS", "KAFTAN", "KURTA"]
 
-st.markdown("""
+# Theme preference (presentation only; dashboard calculations remain unchanged)
+if "dashboard_dark_mode" not in st.session_state:
+    st.session_state.dashboard_dark_mode = False
+
+with st.sidebar:
+    st.markdown("### 🎨 Appearance")
+    st.toggle("Dark mode", key="dashboard_dark_mode", help="Dashboard ke colors badalne ke liye. Isse calculations ya filters nahi badlenge.")
+
+DARK_MODE = st.session_state.dashboard_dark_mode
+if DARK_MODE:
+    APP_BG, PANEL_BG, TEXT, MUTED, BORDER = "#0b1220", "#111c2e", "#e5edf7", "#9fb0c7", "#26364d"
+    PLOT_TEMPLATE = "plotly_dark"
+else:
+    APP_BG, PANEL_BG, TEXT, MUTED, BORDER = "#f4f7fb", "#ffffff", "#172033", "#64748b", "#dce4ef"
+    PLOT_TEMPLATE = "plotly_white"
+px.defaults.template = PLOT_TEMPLATE
+
+st.markdown(f"""
 <style>
-.block-container{padding-top:1.2rem}
-[data-testid="stMetric"]{background:#f8fafc;border:1px solid #dbe3ed;padding:14px;border-radius:12px}
+:root {{ color-scheme: {'dark' if DARK_MODE else 'light'}; }}
+.stApp {{ background: {APP_BG}; color: {TEXT}; }}
+.block-container {{ padding-top: 1.15rem; padding-bottom: 2.5rem; max-width: 1600px; }}
+[data-testid="stHeader"] {{ background: transparent; }}
+[data-testid="stSidebar"] {{ background: {PANEL_BG}; border-right: 1px solid {BORDER}; }}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] label {{ color: {TEXT}; }}
+[data-testid="stMetric"] {{ background: {PANEL_BG}; border: 1px solid {BORDER}; padding: 16px 18px; border-radius: 15px; box-shadow: 0 5px 18px rgba(15,23,42,.07); min-height: 105px; }}
+[data-testid="stMetricLabel"] {{ color: {MUTED}; font-size: .83rem; font-weight: 650; }}
+[data-testid="stMetricValue"] {{ color: {TEXT}; font-weight: 750; letter-spacing: -.025em; }}
+[data-testid="stTabs"] button {{ border-radius: 10px 10px 0 0; font-weight: 650; }}
+[data-testid="stDataFrame"] {{ border: 1px solid {BORDER}; border-radius: 12px; overflow: hidden; }}
+[data-testid="stPlotlyChart"] {{ background: {PANEL_BG}; border: 1px solid {BORDER}; border-radius: 14px; padding: 6px; }}
+[data-testid="stAlert"] {{ border-radius: 12px; }}
+hr {{ border-color: {BORDER}; }}
+h1, h2, h3 {{ letter-spacing: -.025em; }}
+.dashboard-hero {{ background: linear-gradient(120deg, {'#16243b' if DARK_MODE else '#e8f1ff'}, {'#172d43' if DARK_MODE else '#ffffff'}); border: 1px solid {BORDER}; border-radius: 18px; padding: 22px 26px; margin: 0 0 18px 0; }}
+.dashboard-hero p {{ color: {MUTED}; margin: 4px 0 0 0; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -244,6 +277,98 @@ def overview(d):
         if not c.empty:
             st.plotly_chart(px.bar(c, x="category_clean", y="qty", title="Category-wise Quantity", text_auto=".2s"), use_container_width=True)
 
+    # Additional analysis (read-only insights; original KPIs and filters are retained)
+    st.markdown("---")
+    st.subheader("📌 Additional Business Insights")
+    total_qty = float(d["qty"].sum())
+    received_qty = float(d["received"].sum())
+    pending_qty = float(d["pending"].sum())
+    overdue_rows = d[d["delay"] > 0]
+    avg_delay = overdue_rows["delay"].mean() if not overdue_rows.empty else 0.0
+    fulfillment = (received_qty / (received_qty + pending_qty) * 100) if received_qty + pending_qty > 0 else 0.0
+    new_qty = float(d.loc[d["type_clean"].str.contains("NEW", na=False), "qty"].sum())
+    repeat_qty = float(d.loc[d["type_clean"].str.contains("REPEAT", na=False), "qty"].sum())
+    repeat_share = repeat_qty / (new_qty + repeat_qty) * 100 if new_qty + repeat_qty > 0 else 0.0
+    overdue_order_share = len(overdue_rows) / len(d) * 100 if len(d) else 0.0
+    metrics([
+        ("RECEIVED SHARE OF (AT+AU)", f"{fulfillment:.1f}%"),
+        ("OVERDUE ORDER SHARE", f"{overdue_order_share:.1f}%"),
+        ("AVERAGE OVERDUE DAYS", f"{avg_delay:.1f} days"),
+        ("REPEAT QTY SHARE (NEW+REPEAT)", f"{repeat_share:.1f}%"),
+    ])
+    insight_left, insight_right = st.columns(2)
+
+    # Composite performance score: compare several dimensions, not one metric.
+    def add_performance_score(frame):
+        frame = frame.copy()
+        dimensions = {
+            "OrderQty": 0.20, "Orders": 0.15, "ProductionPCS": 0.15,
+            "ReceivedPCS": 0.20, "OnTimeRate": 0.20, "CompletionRate": 0.10,
+        }
+        score = pd.Series(0.0, index=frame.index)
+        for column, weight in dimensions.items():
+            values = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+            score += values.rank(method="average", pct=True) * 100 * weight
+        frame["Overall Score"] = score.round(1)
+        return frame
+
+    with insight_left:
+        st.markdown("#### 🧑‍🎨 Top 3 Designer Performers")
+        designer_rows = d[d["designer"].astype(str).str.strip().ne("")].copy()
+        if designer_rows.empty:
+            st.info("Selected filters mein designer data available nahi hai.")
+        else:
+            designer_perf = designer_rows.groupby("designer", as_index=False).agg(
+                OrderQty=("qty", "sum"), Orders=("qty", "size"),
+                ProductionPCS=("production", "sum"), ReceivedPCS=("received", "sum"),
+                PendingPCS=("pending", "sum"),
+                OnTimeOrders=("delay", lambda values: int((values <= 0).sum())),
+                OverdueOrders=("delay", lambda values: int((values > 0).sum())),
+            )
+            designer_perf["OnTimeRate"] = designer_perf["OnTimeOrders"] / designer_perf["Orders"].clip(lower=1) * 100
+            denom = designer_perf["ReceivedPCS"] + designer_perf["PendingPCS"]
+            designer_perf["CompletionRate"] = designer_perf["ReceivedPCS"].div(denom.where(denom.ne(0), 1)) * 100
+            designer_perf = add_performance_score(designer_perf).sort_values(["Overall Score", "OrderQty"], ascending=False).head(3)
+            display = designer_perf.rename(columns={"designer":"Designer", "OrderQty":"Order Qty", "ProductionPCS":"In Production PCS", "ReceivedPCS":"Received PCS", "PendingPCS":"Pending PCS", "OnTimeRate":"On-time %", "OverdueOrders":"Overdue Orders", "Overall Score":"Overall Score / 100"})
+            display["On-time %"] = display["On-time %"].map(lambda value: f"{value:.1f}%")
+            st.dataframe(display[["Designer", "Overall Score / 100", "Order Qty", "Orders", "In Production PCS", "Received PCS", "Pending PCS", "On-time %", "Overdue Orders"]], use_container_width=True, hide_index=True)
+            st.plotly_chart(px.bar(designer_perf.sort_values("Overall Score"), x="Overall Score", y="designer", orientation="h", text="Overall Score", title="Top 3 Designers — Overall Score", labels={"designer":"Designer", "Overall Score":"Score / 100"}), use_container_width=True)
+
+    with insight_right:
+        st.markdown("#### 🏭 Top 3 Fabricator Performers")
+        fab_rows = d[d["fabricator"].astype(str).str.strip().ne("")].copy()
+        if fab_rows.empty:
+            st.info("Selected filters mein fabricator data available nahi hai.")
+        else:
+            fab_perf = fab_rows.groupby("fabricator", as_index=False).agg(
+                OrderQty=("qty", "sum"), Orders=("qty", "size"),
+                ProductionPCS=("production", "sum"), ReceivedPCS=("received", "sum"),
+                PendingPCS=("pending", "sum"),
+                OnTimeOrders=("delay", lambda values: int((values <= 0).sum())),
+                OverdueOrders=("delay", lambda values: int((values > 0).sum())),
+            )
+            fab_perf["OnTimeRate"] = fab_perf["OnTimeOrders"] / fab_perf["Orders"].clip(lower=1) * 100
+            denom = fab_perf["ReceivedPCS"] + fab_perf["PendingPCS"]
+            fab_perf["CompletionRate"] = fab_perf["ReceivedPCS"].div(denom.where(denom.ne(0), 1)) * 100
+            fab_perf = add_performance_score(fab_perf).sort_values(["Overall Score", "OrderQty"], ascending=False).head(3)
+            display = fab_perf.rename(columns={"fabricator":"Fabricator", "OrderQty":"Order Qty", "ProductionPCS":"In Production PCS", "ReceivedPCS":"Received PCS", "PendingPCS":"Pending PCS", "OnTimeRate":"On-time %", "OverdueOrders":"Overdue Orders", "Overall Score":"Overall Score / 100"})
+            display["On-time %"] = display["On-time %"].map(lambda value: f"{value:.1f}%")
+            st.dataframe(display[["Fabricator", "Overall Score / 100", "Order Qty", "Orders", "In Production PCS", "Received PCS", "Pending PCS", "On-time %", "Overdue Orders"]], use_container_width=True, hide_index=True)
+            st.plotly_chart(px.bar(fab_perf.sort_values("Overall Score"), x="Overall Score", y="fabricator", orientation="h", text="Overall Score", title="Top 3 Fabricators — Overall Score", labels={"fabricator":"Fabricator", "Overall Score":"Score / 100"}), use_container_width=True)
+
+    with st.expander("📖 How overall performance is calculated"):
+        st.markdown("""
+        **Overall Score (0–100)** is a comparative score within the currently selected filters, not a replacement for existing Google Sheet KPIs.
+
+        - **20%** total order quantity (volume)
+        - **15%** number of orders handled
+        - **15%** in-production quantity
+        - **20%** received quantity
+        - **20%** on-time order rate (AH ≤ 0)
+        - **10%** completion rate (AT ÷ (AT + AU))
+
+        Each dimension is converted to a percentile rank before combining, so different units can be compared together. Top 3 is based on the combined score; order quantity breaks ties. Scores reflect only the available sheet fields and current filters, not unrecorded quality or complexity.
+        """)
 # --- TAB 1: DESIGNER PERFORMANCE DASHBOARD ---
 def designer_dashboard(d):
     st.subheader("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
@@ -537,8 +662,12 @@ def order_details(d):
 # -----------------------------------------------------------------------------
 # MAIN APP FLOW
 # -----------------------------------------------------------------------------
-st.title("📊 Sample Production & Performance Executive Dashboard")
-st.caption("Private Google Sheet Connection · Auto-refreshed every 5 minutes")
+st.markdown("""
+<div class="dashboard-hero">
+  <h1 style="margin:0">📊 Sample Production &amp; Performance</h1>
+  <p>Executive dashboard · Private Google Sheets connection · Data cache refreshes every 5 minutes</p>
+</div>
+""", unsafe_allow_html=True)
 
 with st.sidebar:
     if st.button("🔄 Refresh Data Now", use_container_width=True):
@@ -548,7 +677,7 @@ with st.sidebar:
 try:
     raw = load_sheet()
     data = prepare(raw)
-    st.caption(f"Source tab: {raw.attrs.get('tab', DEFAULT_TAB)} · Total Rows: {len(data):,} · Header Row: {raw.attrs.get('header_row', '?')}")
+    st.caption(f"📄 Source: {raw.attrs.get('tab', DEFAULT_TAB)}  ·  {len(data):,} usable rows  ·  Header row: {raw.attrs.get('header_row', '?')}")
     
     if data.empty:
         st.warning("Data detect nahi hua. Sheet format check karein.")
