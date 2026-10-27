@@ -74,16 +74,18 @@ def get_col_by_letter(df, letter):
         return df.columns[idx]
     return None
 
-def num_strict(s):
+def num(s):
     if not isinstance(s, pd.Series):
         s = pd.Series(s)
     text = s.astype("string").str.strip()
     text = text.replace({"": pd.NA, "-": pd.NA, "—": pd.NA, "–": pd.NA, "N/A": pd.NA, "n/a": pd.NA, "None": pd.NA, "nan": pd.NA})
+    is_paren_negative = text.str.match(r"^\(.*\)$", na=False)
     cleaned = text.str.replace(",", "", regex=False).str.replace(r"[^0-9.\-]", "", regex=True)
+    cleaned = cleaned.mask(is_paren_negative, "-" + cleaned.str.replace("-", "", regex=False))
     return pd.to_numeric(cleaned, errors="coerce").fillna(0).astype(float)
 
 def clean_delay_days(s):
-    parsed = num_strict(s)
+    parsed = num(s)
     parsed = parsed.mask(parsed > 1000, 0)
     return parsed
 
@@ -149,7 +151,7 @@ def load_sheet():
     return data
 
 # -----------------------------------------------------------------------------
-# 4. DATA PREPARATION (RAW PRESERVATION)
+# 4. DATA PREPARATION (FIXED: NO ROWS DROPPED)
 # -----------------------------------------------------------------------------
 def prepare(raw):
     d = raw.copy()
@@ -179,7 +181,7 @@ def prepare(raw):
         d.loc[d[c].str.lower().isin(["nan", "none"]), c] = ""
         
     for c in ["qty", "production", "received", "pending"]:
-        d[c] = num_strict(d[c])
+        d[c] = num(d[c])
         
     d["delay"] = clean_delay_days(d["delay"])
     
@@ -192,16 +194,7 @@ def prepare(raw):
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    # Keep ALL rows that carry numerical values in J, AS, AT, AU or Date Entries
-    d = d[
-        (d["qty"] > 0) | 
-        (d["production"] > 0) | 
-        (d["received"] > 0) | 
-        (d["pending"] > 0) | 
-        d["date_client"].notna() |
-        d["date_prod"].notna()
-    ].copy()
-    
+    # 100% PRESERVE ALL ROWS (No row dropping so calculations are exact)
     return d
 
 def metrics(items):
@@ -219,7 +212,7 @@ def fmt(x):
 def overview(d):
     st.subheader("Executive Overview")
     metrics([
-        ("Total Designs", f"{len(d):,}"), 
+        ("Total Designs", f"{len(d[d.qty > 0]):,}"), 
         ("Total Order Qty (J)", fmt(d.qty.sum())),
         ("In Production PCS (AS)", fmt(d.production.sum())), 
         ("Received PCS (AT)", fmt(d.received.sum())),
@@ -264,16 +257,47 @@ def designer_dashboard(d):
         ("REPEAT ORDER QTY", fmt(g["Repeat Orders (Pcs)"].sum())),
         ("TOP PERFORMER", f"{top.designer} ({fmt(top['Total Volume (Pcs)'])} Pcs)"),
     ])
+    
+    st.markdown("---")
+    st.subheader("📊 Designer Volume & Share Breakdown")
+    des_summary_df = g[["designer", "New Orders (Pcs)", "Repeat Orders (Pcs)", "Total Volume (Pcs)", "Share %", "Total Design Count"]].rename(columns={"designer": "Designer Name"})
+    
+    col_t1, col_c1 = st.columns([1.2, 1])
+    with col_t1:
+        st.dataframe(des_summary_df, use_container_width=True, hide_index=True)
+    with col_c1:
+        melted = g.melt(id_vars="designer", value_vars=["New Orders (Pcs)", "Repeat Orders (Pcs)"], var_name="Order Type", value_name="Qty")
+        st.plotly_chart(px.bar(melted, x="designer", y="Qty", color="Order Type", barmode="group", title="DESIGNER PERFORMANCE: NEW vs REPEAT ORDERS (PCS)", color_discrete_sequence=["#059669", "#7C3AED"]), use_container_width=True)
+        
+    st.markdown("---")
+    st.subheader("🧩 Category Wise Designer Breakdown Matrix (Pcs)")
+    cat_matrix = []
+    for des_name in g["designer"]:
+        sub = x[x["designer"].str.upper() == des_name.upper()]
+        row_data = {"Designer": des_name}
+        for cat in CATEGORIES_LIST:
+            row_data[cat] = int(sub[sub["category_clean"] == cat]["qty"].sum())
+        row_data["TOTAL"] = sum(row_data[c] for c in CATEGORIES_LIST)
+        cat_matrix.append(row_data)
+        
+    cat_df = pd.DataFrame(cat_matrix)
+    tot_row = {"Designer": "TOTAL"}
+    for cat in CATEGORIES_LIST:
+        tot_row[cat] = cat_df[cat].sum()
+    tot_row["TOTAL"] = cat_df["TOTAL"].sum()
+    cat_df = pd.concat([cat_df, pd.DataFrame([tot_row])], ignore_index=True)
+    st.dataframe(cat_df, use_container_width=True, hide_index=True)
 
+# CLIENT DASHBOARD: DIRECT UNFILTERED COLUMN J & B CALCULATIONS
 def client_dashboard(d):
     st.subheader("🏢 Executive Client Performance Dashboard (Date: Col B, Total Qty: Col J Direct)")
     x = d.copy()
-    
-    total_designs = len(x)
-    total_qty = x["qty"].sum()              # DIRECT SUM OF COLUMN J
-    in_prod = x["production"].sum()         # DIRECT SUM OF COLUMN AS
-    rec_done = x["received"].sum()          # DIRECT SUM OF COLUMN AT
-    pending_qty = x["pending"].sum()        # DIRECT SUM OF COLUMN AU
+        
+    total_designs = len(x[x.qty > 0])
+    total_qty = x["qty"].sum()              # EXACT DIRECT SUM OF COLUMN J
+    in_prod = x["production"].sum()         # EXACT DIRECT SUM OF COLUMN AS
+    rec_done = x["received"].sum()          # EXACT DIRECT SUM OF COLUMN AT
+    pending_qty = x["pending"].sum()        # EXACT DIRECT SUM OF COLUMN AU
     repeat_qty = x[x["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
     new_qty = x[x["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
 
@@ -289,7 +313,62 @@ def client_dashboard(d):
         ("NEW ORDERS (PCS)", fmt(new_qty)),
         ("CATEGORY TOTAL (PCS)", fmt(total_qty)),
     ])
+    
+    st.markdown("---")
+    st.subheader("📅 Client Fulfillment Breakdown (Monthly Filtered by Col B)")
+    monthly_ful = []
+    for m in MONTHS:
+        sub_m = x[x["month_client"] == m]
+        monthly_ful.append({
+            "MONTH": m,
+            "ORDER QTY (J)": int(sub_m["qty"].sum()),
+            "IN PRODUCTION (AS)": int(sub_m["production"].sum()),
+            "RECEIVED (AT)": int(sub_m["received"].sum()),
+            "PENDING (AU)": int(sub_m["pending"].sum())
+        })
+    m_df = pd.DataFrame(monthly_ful)
+    m_df_tot = pd.DataFrame([{
+        "MONTH": "TOTAL",
+        "ORDER QTY (J)": m_df["ORDER QTY (J)"].sum(),
+        "IN PRODUCTION (AS)": m_df["IN PRODUCTION (AS)"].sum(),
+        "RECEIVED (AT)": m_df["RECEIVED (AT)"].sum(),
+        "PENDING (AU)": m_df["PENDING (AU)"].sum()
+    }])
+    m_df_display = pd.concat([m_df, m_df_tot], ignore_index=True)
+    
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        st.dataframe(m_df_display, use_container_width=True, hide_index=True)
+    with c2:
+        q = pd.DataFrame({"Status": ["RECEIVED QTY", "PENDING QTY"], "Qty": [rec_done, pending_qty]})
+        st.plotly_chart(px.pie(q, names="Status", values="Qty", hole=.45, title="ORDER FULFILLMENT RATIO (RECEIVED vs PENDING)", color_discrete_sequence=["#059669", "#DC2626"]), use_container_width=True)
 
+    st.markdown("---")
+    st.subheader("📦 Monthly Category Order Breakdown (Col B)")
+    m_cat_matrix = []
+    for m in MONTHS:
+        sub_m = x[x["month_client"] == m]
+        r_data = {"MONTH": m}
+        for cat in CATEGORIES_LIST:
+            r_data[cat] = int(sub_m[sub_m["category_clean"] == cat]["qty"].sum())
+        r_data["TOTAL"] = sum(r_data[c] for c in CATEGORIES_LIST)
+        m_cat_matrix.append(r_data)
+        
+    m_cat_df = pd.DataFrame(m_cat_matrix)
+    m_cat_tot = {"MONTH": "TOTAL"}
+    for cat in CATEGORIES_LIST:
+        m_cat_tot[cat] = m_cat_df[cat].sum()
+    m_cat_tot["TOTAL"] = m_cat_df["TOTAL"].sum()
+    m_cat_df_display = pd.concat([m_cat_df, pd.DataFrame([m_cat_tot])], ignore_index=True)
+    
+    col_mc1, col_mc2 = st.columns([1.2, 1])
+    with col_mc1:
+        st.dataframe(m_cat_df_display, use_container_width=True, hide_index=True)
+    with col_mc2:
+        fig_stack = px.bar(m_cat_df, x="MONTH", y=CATEGORIES_LIST, title="CATEGORY DISTRIBUTION BY MONTH", barmode="stack")
+        st.plotly_chart(fig_stack, use_container_width=True)
+
+# PRODUCTION DASHBOARD: DIRECT UNFILTERED COLUMN AS & AT CALCULATIONS
 def production_dashboard(d):
     st.subheader("🏭 Production Executive Process Dashboard (Date: Col AC, Prod: Col AS)")
     
@@ -297,16 +376,11 @@ def production_dashboard(d):
     overdue = d[overdue_mask]
     avg_overdue = overdue["delay"].mean() if len(overdue) > 0 else 0.0
     
-    # Direct Numeric Sums without filtering out non-designer rows
-    total_as_production = d["production"].sum()
-    total_at_received = d["received"].sum()
-    total_au_pending = d["pending"].sum()
-    
     metrics([
-        ("TOTAL DESIGN", f"{len(d):,} Orders"),
-        ("INPRODUCTION PCS [Col AS]", fmt(total_as_production)),
-        ("RECIEVED PCS [Col AT]", fmt(total_at_received)),
-        ("PENDING PCS [Col AU]", fmt(total_au_pending)),
+        ("TOTAL DESIGN", f"{len(d[d.production > 0]):,} Orders"),
+        ("INPRODUCTION PCS [Col AS]", fmt(d.production.sum())),
+        ("RECIEVED PCS [Col AT]", fmt(d.received.sum())),
+        ("PENDING PCS [Col AU]", fmt(d.pending.sum())),
         ("OVERDUE PCS (AH > 0)", fmt(d.loc[overdue_mask, "production"].sum())),
     ])
     
@@ -318,15 +392,43 @@ def production_dashboard(d):
     ])
     
     st.markdown("---")
-    st.subheader("📈 Monthly Production Fulfillment Trend (Filtered by Col AC Date)")
+    st.subheader("🧵 Category-Wise Production Performance Breakdown")
+    cat_prod_summary = []
+    for cat in CATEGORIES_LIST:
+        sub_c = d[d["category_clean"] == cat]
+        cat_prod_summary.append({
+            "CATEGORY": cat,
+            "INPRODUCTION (AS)": int(sub_c["production"].sum()),
+            "RECIEVED (AT)": int(sub_c["received"].sum()),
+            "PENDING (AU)": int(sub_c["pending"].sum())
+        })
+    cp_df = pd.DataFrame(cat_prod_summary)
+    
+    cp_tot = pd.DataFrame([{
+        "CATEGORY": "TOTAL",
+        "INPRODUCTION (AS)": cp_df["INPRODUCTION (AS)"].sum(),
+        "RECIEVED (AT)": cp_df["RECIEVED (AT)"].sum(),
+        "PENDING (AU)": cp_df["PENDING (AU)"].sum()
+    }])
+    cp_df_display = pd.concat([cp_df, cp_tot], ignore_index=True)
+    
+    col_p1, col_p2 = st.columns([1.2, 1])
+    with col_p1:
+        st.dataframe(cp_df_display, use_container_width=True, hide_index=True)
+    with col_p2:
+        fig_cp = px.bar(cp_df, x="CATEGORY", y=["INPRODUCTION (AS)", "RECIEVED (AT)", "PENDING (AU)"], barmode="group", title="CATEGORY PRODUCTION PERFORMANCE")
+        st.plotly_chart(fig_cp, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("📈 Monthly Production Fulfillment Trend (by Col AC)")
     m_ful_summary = []
     for m in MONTHS:
         sub_m = d[d["month_prod"] == m]
         m_ful_summary.append({
             "MONTH": m,
-            "ORDERS": len(sub_m),
+            "ORDERS": len(sub_m[sub_m.production > 0]),
             "IN PRODUCTION (AS)": int(sub_m["production"].sum()),
-            "RECEIVED (AT)": int(sub_m["received"].sum())
+            "RECIEVED (AT)": int(sub_m["received"].sum())
         })
     mf_df = pd.DataFrame(m_ful_summary)
     
@@ -334,7 +436,7 @@ def production_dashboard(d):
         "MONTH": "TOTAL",
         "ORDERS": mf_df["ORDERS"].sum(),
         "IN PRODUCTION (AS)": mf_df["IN PRODUCTION (AS)"].sum(),
-        "RECEIVED (AT)": mf_df["RECEIVED (AT)"].sum()
+        "RECIEVED (AT)": mf_df["RECIEVED (AT)"].sum()
     }])
     mf_df_display = pd.concat([mf_df, mf_tot], ignore_index=True)
     
@@ -342,7 +444,19 @@ def production_dashboard(d):
     with col_m1:
         st.dataframe(mf_df_display, use_container_width=True, hide_index=True)
     with col_m2:
-        st.plotly_chart(px.line(mf_df, x="MONTH", y=["IN PRODUCTION (AS)", "RECEIVED (AT)"], markers=True, title="MONTHLY FULFILLMENT TREND ANALYSIS (Column AC)"), use_container_width=True)
+        st.plotly_chart(px.line(mf_df, x="MONTH", y=["IN PRODUCTION (AS)", "RECIEVED (AT)"], markers=True, title="MONTHLY FULFILLMENT TREND ANALYSIS (Column AC)"), use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🚨 Fabricator Wise Pending Load & Overdue Matrix")
+    fab_summary = d[d["fabricator"].ne("")].groupby("fabricator", as_index=False)["pending"].sum().sort_values("pending", ascending=False)
+    fab_summary.columns = ["Fabricator Name", "Pending Pcs"]
+    
+    f_c1, f_c2 = st.columns([1, 1])
+    with f_c1:
+        st.dataframe(fab_summary, use_container_width=True, hide_index=True)
+    with f_c2:
+        fig_fab = px.pie(fab_summary.head(10), names="Fabricator Name", values="Pending Pcs", title="FABRICATOR PENDING PCS SHARE", hole=0.4)
+        st.plotly_chart(fig_fab, use_container_width=True)
 
 def fabric_dashboard(d):
     st.subheader("🧵 Fabric & Vendor Tracking")
@@ -351,11 +465,20 @@ def fabric_dashboard(d):
         ("Orders with Vendor", f"{d.fabricator.ne('').sum():,}"),
         ("Overdue Orders", f"{(d.delay > 0).sum():,}")
     ])
+    v = d[d.fabricator.ne("")].groupby("fabricator", as_index=False).agg(
+        Orders=("qty", "size"), OrderQty=("qty", "sum"), PendingQty=("pending", "sum")
+    )
+    if not v.empty: st.dataframe(v.rename(columns={"fabricator":"Vendor / Fabricator"}), use_container_width=True, hide_index=True)
 
 def order_details(d):
     st.subheader("🔎 Searchable Order Details & Overdue Filters")
+    overdue_only = st.checkbox("Show Overdue Orders Only (AH > 0)", value=False, key="check_overdue_only")
     query = st.text_input("Search client, designer, category, fabricator, order type or status", key="search_query_input")
     x = d.copy()
+    
+    if overdue_only:
+        x = x[x["delay"] > 0]
+        
     if query:
         mask = pd.Series(False, index=x.index)
         for c in ["client", "designer", "category", "fabricator", "type", "status"]:
@@ -368,6 +491,7 @@ def order_details(d):
     view = x[cols].rename(columns=names)
     st.caption(f"{len(view):,} rows filtered")
     st.dataframe(view, use_container_width=True, hide_index=True)
+    st.download_button("⬇️ Download Filtered Orders CSV", view.to_csv(index=False).encode("utf-8-sig"), "filtered_orders_details.csv", "text/csv")
 
 # -----------------------------------------------------------------------------
 # MAIN APP FLOW
@@ -387,9 +511,14 @@ with st.sidebar:
 try:
     raw = load_sheet()
     data = prepare(raw)
-    st.caption(f"📄 Source: {raw.attrs.get('tab', DEFAULT_TAB)}  ·  {len(data):,} total usable rows")
+    st.caption(f"📄 Source: {raw.attrs.get('tab', DEFAULT_TAB)}  ·  {len(data):,} usable rows  ·  Header row: {raw.attrs.get('header_row', '?')}")
     
+    if data.empty:
+        st.warning("Data detect nahi hua. Sheet format check karein.")
+        st.stop()
+        
     st.sidebar.header("🔎 Global Filters")
+    
     active_tab = st.selectbox(
         "📌 View Dashboard Section", 
         ["Executive Overview", "Designer Dashboard", "Client Dashboard", "Production Dashboard", "Fabric & Vendor", "Order Details"],
@@ -413,6 +542,7 @@ try:
     risk_val = st.sidebar.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"], key="global_risk_filter")
     
     filtered_data = data.copy()
+    
     if month_val != "ALL":
         filtered_data = filtered_data[filtered_data[target_month_col] == month_val]
     if typ_val != "ALL":
