@@ -4,38 +4,36 @@ import plotly.express as px
 import gspread
 from google.oauth2.service_account import Credentials
 
-# Streamlit Page Setup
 st.set_page_config(
     page_title="Executive Multi-Dashboard 2026-27",
     page_icon="📊",
     layout="wide"
 )
 
-# 1. Google Sheets Robust Live Data Fetching
+# Robust Google Sheets Credentials Parsing
 @st.cache_data(ttl=300)
 def load_sheet_data():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    credentials = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=scope
-    )
+    
+    # Extract secrets from Streamlit environment
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    
+    # Fix potential multi-line escape issues in Private Key
+    if "private_key" in creds_dict:
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(credentials)
     
+    # Open Google Sheet using ID
     sheet_key = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"
     spreadsheet = client.open_by_key(sheet_key)
     
-    # Try getting "CONFIRMATION SHEET" or "ORDER SHEET" or First Sheet
-    try:
-        ws = spreadsheet.worksheet("CONFIRMATION SHEET")
-    except:
-        try:
-            ws = spreadsheet.worksheet("ORDER SHEET")
-        except:
-            ws = spreadsheet.get_worksheet(0)
-            
+    # Fetch first available worksheet
+    ws = spreadsheet.get_worksheet(0)
     raw_data = ws.get_all_values()
     
-    # Header is at Row 5 (Index 4) in your sheet
+    # Extract headers from Row 5 (Index 4)
     if len(raw_data) > 4:
         header = raw_data[4]
         data = raw_data[5:]
@@ -63,7 +61,7 @@ try:
 
     fy_months = ["April", "May", "June", "July", "August", "September", "October", "November", "December", "January", "February", "March"]
 
-    # Safely Identify Columns by Index to match Google Apps Script
+    # Safely Identify Columns by Index
     col_date = raw_df.columns[1] if len(raw_df.columns) > 1 else "ORDER DATE"
     col_des  = raw_df.columns[2] if len(raw_df.columns) > 2 else "DESIGNER'S NAME"
     col_type = raw_df.columns[3] if len(raw_df.columns) > 3 else "ORDER TYPE"
@@ -77,9 +75,7 @@ try:
     col_recvd   = raw_df.columns[45] if len(raw_df.columns) > 45 else "RECEIVED"
     col_pending = raw_df.columns[46] if len(raw_df.columns) > 46 else "PENDING"
 
-    # -------------------------------------------------------------
-    # 1. DESIGNER PERFORMANCE & CATEGORY TRACKING DASHBOARD
-    # -------------------------------------------------------------
+    # 1. DESIGNER DASHBOARD
     if selected_dashboard == "1. Designer Performance & Category Tracking":
         st.title("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
         st.markdown("---")
@@ -118,7 +114,6 @@ try:
         st.subheader("📊 Designer Volume & Share Breakdown")
         
         c_tbl, c_chart = st.columns([1.2, 1])
-
         with c_tbl:
             des_summary = []
             all_designers = [x for x in des_list if x != "ALL"]
@@ -130,24 +125,20 @@ try:
                     sub_d = sub_d[sub_d[col_type].astype(str).str.contains(sel_type, case=False, na=False)]
                 
                 sub_d[col_qty] = pd.to_numeric(sub_d[col_qty], errors='coerce').fillna(0)
-                
                 d_new = int(sub_d[sub_d[col_type].astype(str).str.contains("NEW", case=False, na=False)][col_qty].sum())
                 d_repeat = int(sub_d[sub_d[col_type].astype(str).str.contains("REPEAT", case=False, na=False)][col_qty].sum())
-                d_total = d_new + d_repeat
-                d_designs = len(sub_d)
-
+                
                 des_summary.append({
                     "Designer Name": d,
                     "New Orders (Pcs)": d_new,
                     "Repeat Orders (Pcs)": d_repeat,
-                    "Total Volume (Pcs)": d_total,
-                    "Total Design Count": d_designs
+                    "Total Volume (Pcs)": d_new + d_repeat,
+                    "Total Design Count": len(sub_d)
                 })
 
             des_df = pd.DataFrame(des_summary)
             grand_total_vol = des_df["Total Volume (Pcs)"].sum()
             des_df["Share %"] = des_df["Total Volume (Pcs)"].apply(lambda x: f"{(x/grand_total_vol*100):.1f}%" if grand_total_vol > 0 else "0.0%")
-            
             st.dataframe(des_df, use_container_width=True)
 
         with c_chart:
@@ -158,9 +149,7 @@ try:
             )
             st.plotly_chart(fig_bar, use_container_width=True)
 
-    # -------------------------------------------------------------
-    # 2. CLIENT PERFORMANCE & FULFILLMENT DASHBOARD
-    # -------------------------------------------------------------
+    # 2. CLIENT DASHBOARD
     elif selected_dashboard == "2. Client Performance & Fulfillment":
         st.title("🏢 Executive Client Performance & Category Dashboard")
         st.markdown("---")
@@ -219,7 +208,6 @@ try:
             })
 
         m_df = pd.DataFrame(m_summary)
-        
         m_col1, m_col2 = st.columns([1, 1])
         with m_col1:
             st.dataframe(m_df, use_container_width=True)
@@ -232,9 +220,7 @@ try:
             )
             st.plotly_chart(fig_donut, use_container_width=True)
 
-    # -------------------------------------------------------------
-    # 3. PRODUCTION PROCESS & VENDOR PERFORMANCE DASHBOARD
-    # -------------------------------------------------------------
+    # 3. PRODUCTION DASHBOARD
     elif selected_dashboard == "3. Production Process & Vendor Performance":
         st.title("🏭 Production Executive Process Dashboard")
         st.markdown("---")
