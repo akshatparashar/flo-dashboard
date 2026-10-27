@@ -4,36 +4,49 @@ import plotly.express as px
 import gspread
 from google.oauth2.service_account import Credentials
 
+# -----------------------------------------------------------------------------
+# 1. PAGE CONFIGURATION
+# -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Executive Multi-Dashboard 2026-27",
     page_icon="📊",
     layout="wide"
 )
 
-# Robust Google Sheets Credentials Parsing
+# -----------------------------------------------------------------------------
+# 2. GOOGLE SHEETS AUTHENTICATION & DATA FETCHING
+# -----------------------------------------------------------------------------
 @st.cache_data(ttl=300)
 def load_sheet_data():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
     
-    # Extract secrets from Streamlit environment
-    creds_dict = dict(st.secrets["gcp_service_account"])
+    # Extract TOML secrets into a python dictionary
+    raw_creds = st.secrets["gcp_service_account"]
+    creds_dict = {k: v for k, v in raw_creds.items()}
     
-    # Fix potential multi-line escape issues in Private Key
+    # Key Sanitization: Fix PEM string formatting issue for OpenSSL/Cryptography parser
     if "private_key" in creds_dict:
-        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        
+        pk = str(creds_dict["private_key"])
+        # Replace escaped newlines with actual newline characters
+        pk = pk.replace("\\n", "\n")
+        creds_dict["private_key"] = pk
+
+    # Authenticate via Google OAuth Credentials
     credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(credentials)
     
-    # Open Google Sheet using ID
+    # Open target Google Sheet by ID
     sheet_key = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"
     spreadsheet = client.open_by_key(sheet_key)
     
-    # Fetch first available worksheet
+    # Select First Worksheet
     ws = spreadsheet.get_worksheet(0)
     raw_data = ws.get_all_values()
     
-    # Extract headers from Row 5 (Index 4)
+    # Headers start at Row 5 (Index 4)
     if len(raw_data) > 4:
         header = raw_data[4]
         data = raw_data[5:]
@@ -44,6 +57,9 @@ def load_sheet_data():
     df = pd.DataFrame(data, columns=[str(h).strip() for h in header])
     return df
 
+# -----------------------------------------------------------------------------
+# 3. MAIN APPLICATION & DASHBOARDS
+# -----------------------------------------------------------------------------
 try:
     raw_df = load_sheet_data()
     
@@ -59,9 +75,12 @@ try:
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔍 Interactive Filters")
 
-    fy_months = ["April", "May", "June", "July", "August", "September", "October", "November", "December", "January", "February", "March"]
+    fy_months = [
+        "April", "May", "June", "July", "August", "September",
+        "October", "November", "December", "January", "February", "March"
+    ]
 
-    # Safely Identify Columns by Index
+    # Column Mapping based on Sheet Order
     col_date = raw_df.columns[1] if len(raw_df.columns) > 1 else "ORDER DATE"
     col_des  = raw_df.columns[2] if len(raw_df.columns) > 2 else "DESIGNER'S NAME"
     col_type = raw_df.columns[3] if len(raw_df.columns) > 3 else "ORDER TYPE"
@@ -75,13 +94,18 @@ try:
     col_recvd   = raw_df.columns[45] if len(raw_df.columns) > 45 else "RECEIVED"
     col_pending = raw_df.columns[46] if len(raw_df.columns) > 46 else "PENDING"
 
-    # 1. DESIGNER DASHBOARD
+    # -------------------------------------------------------------
+    # VIEW 1: DESIGNER PERFORMANCE & CATEGORY TRACKING DASHBOARD
+    # -------------------------------------------------------------
     if selected_dashboard == "1. Designer Performance & Category Tracking":
         st.title("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
         st.markdown("---")
 
         sel_month = st.sidebar.selectbox("Select Month", ["ALL"] + fy_months)
-        des_list = ["ALL"] + sorted([str(x).strip().upper() for x in raw_df[col_des].unique() if str(x).strip() not in ["", "DESIGNER", "DESIGNER'S NAME"]])
+        des_list = ["ALL"] + sorted([
+            str(x).strip().upper() for x in raw_df[col_des].unique() 
+            if str(x).strip() not in ["", "DESIGNER", "DESIGNER'S NAME"]
+        ])
         sel_des = st.sidebar.selectbox("Select Designer", des_list)
         sel_type = st.sidebar.selectbox("Order Type", ["ALL", "NEW", "REPEAT"])
 
@@ -138,7 +162,9 @@ try:
 
             des_df = pd.DataFrame(des_summary)
             grand_total_vol = des_df["Total Volume (Pcs)"].sum()
-            des_df["Share %"] = des_df["Total Volume (Pcs)"].apply(lambda x: f"{(x/grand_total_vol*100):.1f}%" if grand_total_vol > 0 else "0.0%")
+            des_df["Share %"] = des_df["Total Volume (Pcs)"].apply(
+                lambda x: f"{(x/grand_total_vol*100):.1f}%" if grand_total_vol > 0 else "0.0%"
+            )
             st.dataframe(des_df, use_container_width=True)
 
         with c_chart:
@@ -149,13 +175,18 @@ try:
             )
             st.plotly_chart(fig_bar, use_container_width=True)
 
-    # 2. CLIENT DASHBOARD
+    # -------------------------------------------------------------
+    # VIEW 2: CLIENT PERFORMANCE & FULFILLMENT DASHBOARD
+    # -------------------------------------------------------------
     elif selected_dashboard == "2. Client Performance & Fulfillment":
         st.title("🏢 Executive Client Performance & Category Dashboard")
         st.markdown("---")
 
         sel_month = st.sidebar.selectbox("Select Month", ["ALL"] + fy_months)
-        client_opts = ["ALL"] + sorted([str(x).strip().upper() for x in raw_df[col_client].unique() if str(x).strip() not in ["", "CLIENT NAME"]])
+        client_opts = ["ALL"] + sorted([
+            str(x).strip().upper() for x in raw_df[col_client].unique() 
+            if str(x).strip() not in ["", "CLIENT NAME"]
+        ])
         sel_client = st.sidebar.selectbox("Select Client Name", client_opts)
         sel_type = st.sidebar.selectbox("Order Type", ["ALL", "NEW", "REPEAT"])
 
@@ -220,13 +251,18 @@ try:
             )
             st.plotly_chart(fig_donut, use_container_width=True)
 
-    # 3. PRODUCTION DASHBOARD
+    # -------------------------------------------------------------
+    # VIEW 3: PRODUCTION PROCESS & VENDOR PERFORMANCE DASHBOARD
+    # -------------------------------------------------------------
     elif selected_dashboard == "3. Production Process & Vendor Performance":
         st.title("🏭 Production Executive Process Dashboard")
         st.markdown("---")
 
         sel_month = st.sidebar.selectbox("Select Month", ["ALL"] + fy_months)
-        fab_opts = ["ALL"] + sorted([str(x).strip().upper() for x in raw_df[col_fab].unique() if str(x).strip() not in ["", "FABRICATOR'S"]])
+        fab_opts = ["ALL"] + sorted([
+            str(x).strip().upper() for x in raw_df[col_fab].unique() 
+            if str(x).strip() not in ["", "FABRICATOR'S"]
+        ])
         sel_fab = st.sidebar.selectbox("Fabricator", fab_opts)
 
         df = raw_df.copy()
