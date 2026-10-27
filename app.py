@@ -138,7 +138,7 @@ def load_sheet():
     return df_raw
 
 # -----------------------------------------------------------------------------
-# 4. DATA PREPARATION (DIRECT POSITION MAPPING TO MATCH SUBTOTAL(9))
+# 4. DATA PREPARATION (DIRECT POSITION MAPPING TO PRESERVE ALL ROWS)
 # -----------------------------------------------------------------------------
 def prepare(raw):
     d = pd.DataFrame()
@@ -149,19 +149,19 @@ def prepare(raw):
             return raw[idx]
         return pd.Series([""] * len(raw))
 
-    d["date_client"] = date_col(get_raw_col("B"))                   # Col B Date
-    d["date_prod"] = date_col(get_raw_col("AC"))                    # Col AC Date
-    d["designer"] = get_raw_col("C").astype(str).str.strip()        # Col C Designer
-    d["type"] = get_raw_col("D").astype(str).str.strip()            # Col D Type
-    d["category"] = get_raw_col("F").astype(str).str.strip()        # Col F Category
-    d["qty"] = num(get_raw_col("J"))                                # Col J Qty
-    d["client"] = get_raw_col("N").astype(str).str.strip()          # Col N Client
-    d["fabricator"] = get_raw_col("AA").astype(str).str.strip()     # Col AA Fabricator
-    d["delay"] = clean_delay_days(get_raw_col("AH"))                # Col AH Delay
-    d["production"] = num(get_raw_col("AS"))                       # Col AS In Production
-    d["received"] = num(get_raw_col("AT"))                         # Col AT Received
-    d["pending"] = num(get_raw_col("AU"))                          # Col AU Pending
-    d["status"] = get_raw_col("AX").astype(str).str.strip()         # Col AX Status
+    d["date_client"] = date_col(get_raw_col("B"))                   # Col B (ORDER DATE)
+    d["date_prod"] = date_col(get_raw_col("AC"))                    # Col AC (PROD DATE)
+    d["designer"] = get_raw_col("C").astype(str).str.strip()        # Col C (DESIGNER)
+    d["type"] = get_raw_col("D").astype(str).str.strip()            # Col D (ORDER TYPE)
+    d["category"] = get_raw_col("F").astype(str).str.strip()        # Col F (CATEGORY)
+    d["qty"] = num(get_raw_col("J"))                                # Col J (NO. OF PC'S)
+    d["client"] = get_raw_col("N").astype(str).str.strip()          # Col N (CLIENT NAME)
+    d["fabricator"] = get_raw_col("AA").astype(str).str.strip()     # Col AA (FABRICATOR)
+    d["delay"] = clean_delay_days(get_raw_col("AH"))                # Col AH (DELAY DAYS)
+    d["production"] = num(get_raw_col("AS"))                       # Col AS (IN PRODUCTION)
+    d["received"] = num(get_raw_col("AT"))                         # Col AT (RECEIVED)
+    d["pending"] = num(get_raw_col("AU"))                          # Col AU (PENDING)
+    d["status"] = get_raw_col("AX").astype(str).str.strip()         # Col AX (STATUS)
 
     for c in ["designer", "type", "category", "client", "fabricator", "status"]:
         d.loc[d[c].str.lower().isin(["nan", "none"]), c] = ""
@@ -172,7 +172,6 @@ def prepare(raw):
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    # Preserve 100% rows so SUBTOTAL(9) matched exactly
     return d
 
 def metrics(items):
@@ -269,14 +268,17 @@ def designer_dashboard(d):
 def client_dashboard(d):
     st.subheader("🏢 Executive Client Performance Dashboard (Date: Col B, Total Qty: Col J Direct)")
     x = d.copy()
-        
-    total_designs = len(x[x.qty > 0])
-    total_qty = x["qty"].sum()              # DIRECT SUBTOTAL MATCH OF COL J
-    in_prod = x["production"].sum()         # DIRECT SUBTOTAL MATCH OF COL AS
-    rec_done = x["received"].sum()          # DIRECT SUBTOTAL MATCH OF COL AT
-    pending_qty = x["pending"].sum()        # DIRECT SUBTOTAL MATCH OF COL AU
-    repeat_qty = x[x["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
-    new_qty = x[x["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
+    
+    valid_client_mask = x["client"].ne("")
+    x_valid = x[valid_client_mask]
+    
+    total_designs = len(x_valid[x_valid.qty > 0])
+    total_qty = x_valid["qty"].sum()              # SUM OF COL J FOR VALID CLIENTS
+    in_prod = x_valid["production"].sum()         # SUM OF COL AS
+    rec_done = x_valid["received"].sum()          # SUM OF COL AT
+    pending_qty = x_valid["pending"].sum()        # SUM OF COL AU
+    repeat_qty = x_valid[x_valid["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
+    new_qty = x_valid[x_valid["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
 
     metrics([
         ("TOTAL DESIGNS", f"{total_designs:,}"),
@@ -292,10 +294,10 @@ def client_dashboard(d):
     ])
     
     st.markdown("---")
-    st.subheader("📅 Client Fulfillment Breakdown (Monthly Filtered by Col B)")
+    st.subheader("📅 Client Fulfillment Breakdown (Monthly Filtered by Col B Date)")
     monthly_ful = []
     for m in MONTHS:
-        sub_m = x[x["month_client"] == m]
+        sub_m = x_valid[x_valid["month_client"] == m]
         monthly_ful.append({
             "MONTH": m,
             "ORDER QTY (J)": int(sub_m["qty"].sum()),
@@ -321,10 +323,10 @@ def client_dashboard(d):
         st.plotly_chart(px.pie(q, names="Status", values="Qty", hole=.45, title="ORDER FULFILLMENT RATIO (RECEIVED vs PENDING)", color_discrete_sequence=["#059669", "#DC2626"]), use_container_width=True)
 
     st.markdown("---")
-    st.subheader("📦 Monthly Category Order Breakdown (Col B)")
+    st.subheader("📦 Monthly Category Order Breakdown (Col B & Col F Matrix)")
     m_cat_matrix = []
     for m in MONTHS:
-        sub_m = x[x["month_client"] == m]
+        sub_m = x_valid[x_valid["month_client"] == m]
         r_data = {"MONTH": m}
         for cat in CATEGORIES_LIST:
             r_data[cat] = int(sub_m[sub_m["category_clean"] == cat]["qty"].sum())
@@ -505,20 +507,21 @@ try:
     target_month_col = "month_prod" if is_prod else "month_client"
     
     month_opts = ["ALL"] + [m for m in MONTHS if m in data[target_month_col].dropna().astype(str).unique()]
-    month_val = st.sidebar.selectbox("Month", month_opts, key="global_month_filter")
+    month_val = st.sidebar.selectbox("Month Filter", month_opts, key="global_month_filter")
     
     def get_opts(column):
         return ["ALL"] + sorted({str(v) for v in data[column].unique() if str(v).strip() and str(v) != "nan"})
         
-    typ_val = st.sidebar.selectbox("Order Type", get_opts("type_clean"), key="global_type_filter")
-    cat_val = st.sidebar.selectbox("Category", get_opts("category_clean"), key="global_cat_filter")
-    des_val = st.sidebar.selectbox("Designer", get_opts("designer"), key="global_des_filter")
-    cli_val = st.sidebar.selectbox("Client", get_opts("client"), key="global_cli_filter")
-    fab_val = st.sidebar.selectbox("Fabricator", get_opts("fabricator"), key="global_fab_filter")
-    risk_val = st.sidebar.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"], key="global_risk_filter")
+    typ_val = st.sidebar.selectbox("Order Type Filter", get_opts("type_clean"), key="global_type_filter")
+    cat_val = st.sidebar.selectbox("Category Filter", get_opts("category_clean"), key="global_cat_filter")
+    des_val = st.sidebar.selectbox("Designer Filter", get_opts("designer"), key="global_des_filter")
+    cli_val = st.sidebar.selectbox("Client Filter", get_opts("client"), key="global_cli_filter")
+    fab_val = st.sidebar.selectbox("Fabricator Filter", get_opts("fabricator"), key="global_fab_filter")
+    risk_val = st.sidebar.selectbox("Delay Risk Filter", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"], key="global_risk_filter")
     
     filtered_data = data.copy()
     
+    # Apply all 7 active filters dynamically
     if month_val != "ALL":
         filtered_data = filtered_data[filtered_data[target_month_col] == month_val]
     if typ_val != "ALL":
