@@ -26,7 +26,7 @@ if "dashboard_dark_mode" not in st.session_state:
 
 with st.sidebar:
     st.markdown("### 🎨 Appearance")
-    st.toggle("Dark mode", key="dashboard_dark_mode", help="Dashboard ke colors badalne ke liye.")
+    st.toggle("Dark mode", key="dashboard_dark_mode", help="Dashboard appearance mode toggle")
 
 DARK_MODE = st.session_state.dashboard_dark_mode
 if DARK_MODE:
@@ -52,7 +52,6 @@ st.markdown(f"""
 [data-testid="stTabs"] button {{ border-radius: 10px 10px 0 0; font-weight: 650; }}
 [data-testid="stDataFrame"] {{ border: 1px solid {BORDER}; border-radius: 12px; overflow: hidden; }}
 [data-testid="stPlotlyChart"] {{ background: {PANEL_BG}; border: 1px solid {BORDER}; border-radius: 14px; padding: 6px; }}
-[data-testid="stAlert"] {{ border-radius: 12px; }}
 hr {{ border-color: {BORDER}; }}
 h1, h2, h3 {{ letter-spacing: -.025em; }}
 .dashboard-hero {{ background: linear-gradient(120deg, {'#16243b' if DARK_MODE else '#e8f1ff'}, {'#172d43' if DARK_MODE else '#ffffff'}); border: 1px solid {BORDER}; border-radius: 18px; padding: 22px 26px; margin: 0 0 18px 0; }}
@@ -91,7 +90,6 @@ def clean_delay_days(s):
     return parsed
 
 def date_col(s):
-    # Multiple parsing formats to ensure no date is dropped
     res = pd.to_datetime(s, errors="coerce", dayfirst=True)
     mask = res.isna()
     if mask.any():
@@ -153,7 +151,7 @@ def load_sheet():
     return data
 
 # -----------------------------------------------------------------------------
-# 4. DATA PREPARATION
+# 4. DATA PREPARATION & CALCULATIONS
 # -----------------------------------------------------------------------------
 def prepare(raw):
     d = raw.copy()
@@ -190,26 +188,31 @@ def prepare(raw):
         d[c] = num(d[c])
         
     d["delay"] = clean_delay_days(d["delay"])
-        
     for c in ["date", "required_date", "fabric_order_date", "planned_fabric_date", "fabric_received_date"]:
         d[c] = date_col(d[c])
 
-    d["month"] = d["date"].dt.month_name()
-    # Fallback month assignment if date parsing fails but month string exists
-    d["month"] = d["month"].fillna("Unassigned/April")
+    # EXACT RULE: AU == 0 -> TOTAL ORDERED QTY COUNT = RECEIVED PCS (AT), ELSE SHEET ORDER QTY (J)
+    pending_text = d["pending"].astype(str).str.strip().str.replace(",", "", regex=False)
+    d["is_au_zero"] = (pending_text.isin(["0", "0.0", "0.00"])) | (d["pending"] == 0)
+    
+    d["effective_qty"] = d["qty"]
+    use_at_condition = d["is_au_zero"] & (d["received"] > 0)
+    d.loc[use_at_condition, "effective_qty"] = d.loc[use_at_condition, "received"]
 
+    d["month"] = d["date"].dt.month_name()
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    # STRICT RULE: Preserve ALL valid rows having any quantity or text data
+    # PRESERVE ALL VALID ENTRIES (INCLUDING FUSION FABRICATOR & NON-DESIGNER ROWS)
     d = d[
         (d["qty"] > 0) | 
         (d["production"] > 0) | 
         (d["received"] > 0) | 
         (d["pending"] > 0) | 
         (d["designer"].ne("")) | 
-        (d["client"].ne("")) |
-        (d["fabricator"].ne(""))
+        (d["client"].ne("")) | 
+        (d["fabricator"].ne("")) |
+        d["date"].notna()
     ].copy()
     
     return d
@@ -250,14 +253,14 @@ def fmt(x):
     return f"{x:,.0f}"
 
 # -----------------------------------------------------------------------------
-# 5. DASHBOARD VIEWS
+# 5. DASHBOARD VIEWS & TABLES
 # -----------------------------------------------------------------------------
 
 def overview(d):
     st.subheader("Executive Overview")
     metrics([
         ("Total Designs", f"{len(d):,}"), 
-        ("Total Order Qty (J)", fmt(d.qty.sum())),
+        ("Total Order Qty (Pcs)", fmt(d.effective_qty.sum())),
         ("In Production PCS (AS)", fmt(d.production.sum())), 
         ("Received PCS (AT)", fmt(d.received.sum())),
     ])
@@ -265,17 +268,17 @@ def overview(d):
         ("Pending PCS (AU)", fmt(d.pending.sum())),
         ("Overdue PCS (AH > 0)", fmt(d.loc[d.delay > 0, "production"].sum())),
         ("On-Time PCS (AH <= 0)", fmt(d.loc[d.delay <= 0, "production"].sum())),
-        ("New Order Qty", fmt(d.loc[d.type_clean.str.contains("NEW", na=False), "qty"].sum())),
+        ("New Order Qty", fmt(d.loc[d.type_clean.str.contains("NEW", na=False), "effective_qty"].sum())),
     ])
     a, b = st.columns(2)
     with a:
-        m = d.dropna(subset=["date"]).assign(Month=lambda x: x.date.dt.to_period("M").astype(str)).groupby("Month", as_index=False)["qty"].sum()
+        m = d.dropna(subset=["date"]).assign(Month=lambda x: x.date.dt.to_period("M").astype(str)).groupby("Month", as_index=False)["effective_qty"].sum()
         if not m.empty:
-            st.plotly_chart(px.bar(m, x="Month", y="qty", title="Monthly Order Quantity", text_auto=".2s"), use_container_width=True)
+            st.plotly_chart(px.bar(m, x="Month", y="effective_qty", title="Monthly Order Quantity", text_auto=".2s"), use_container_width=True)
     with b:
-        c = d[d.category_clean.ne("")].groupby("category_clean", as_index=False)["qty"].sum().sort_values("qty", ascending=False)
+        c = d[d.category_clean.ne("")].groupby("category_clean", as_index=False)["effective_qty"].sum().sort_values("effective_qty", ascending=False)
         if not c.empty:
-            st.plotly_chart(px.bar(c, x="category_clean", y="qty", title="Category-wise Quantity", text_auto=".2s"), use_container_width=True)
+            st.plotly_chart(px.bar(c, x="category_clean", y="effective_qty", title="Category-wise Quantity", text_auto=".2s"), use_container_width=True)
 
 def designer_dashboard(d):
     st.subheader("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
@@ -283,9 +286,9 @@ def designer_dashboard(d):
     if x.empty:
         st.info("Selected filters ke liye designer data nahi hai."); return
         
-    g = x.groupby("designer", as_index=False).agg(**{"Total Volume (Pcs)": ("qty", "sum"), "Total Design Count": ("qty", "size")})
-    new = x[x.type_clean.str.contains("NEW", na=False)].groupby("designer").qty.sum()
-    repeat = x[x.type_clean.str.contains("REPEAT", na=False)].groupby("designer").qty.sum()
+    g = x.groupby("designer", as_index=False).agg(**{"Total Volume (Pcs)": ("effective_qty", "sum"), "Total Design Count": ("effective_qty", "size")})
+    new = x[x.type_clean.str.contains("NEW", na=False)].groupby("designer").effective_qty.sum()
+    repeat = x[x.type_clean.str.contains("REPEAT", na=False)].groupby("designer").effective_qty.sum()
     g["New Orders (Pcs)"] = g.designer.map(new).fillna(0)
     g["Repeat Orders (Pcs)"] = g.designer.map(repeat).fillna(0)
     
@@ -320,7 +323,7 @@ def designer_dashboard(d):
         sub = x[x["designer"].str.upper() == des_name.upper()]
         row_data = {"Designer": des_name}
         for cat in CATEGORIES_LIST:
-            row_data[cat] = int(sub[sub["category_clean"] == cat]["qty"].sum())
+            row_data[cat] = int(sub[sub["category_clean"] == cat]["effective_qty"].sum())
         row_data["TOTAL"] = sum(row_data[c] for c in CATEGORIES_LIST)
         cat_matrix.append(row_data)
         
@@ -339,12 +342,12 @@ def client_dashboard(d):
         st.info("Selected filters ke liye client data nahi hai."); return
         
     total_designs = len(x)
-    total_qty = x["qty"].sum()
+    total_qty = x["effective_qty"].sum()
     in_prod = x["production"].sum()
     rec_done = x["received"].sum()
     pending_qty = x["pending"].sum()
-    repeat_qty = x[x["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
-    new_qty = x[x["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
+    repeat_qty = x[x["type_clean"].str.contains("REPEAT", na=False)]["effective_qty"].sum()
+    new_qty = x[x["type_clean"].str.contains("NEW", na=False)]["effective_qty"].sum()
 
     metrics([
         ("TOTAL DESIGNS", f"{total_designs:,}"),
@@ -366,7 +369,7 @@ def client_dashboard(d):
         sub_m = x[x["month"] == m]
         monthly_ful.append({
             "MONTH": m,
-            "ORDER QTY": int(sub_m["qty"].sum()),
+            "ORDER QTY": int(sub_m["effective_qty"].sum()),
             "IN PRODUCTION": int(sub_m["production"].sum()),
             "RECEIVED": int(sub_m["received"].sum()),
             "PENDING": int(sub_m["pending"].sum())
@@ -395,7 +398,7 @@ def client_dashboard(d):
         sub_m = x[x["month"] == m]
         r_data = {"MONTH": m}
         for cat in CATEGORIES_LIST:
-            r_data[cat] = int(sub_m[sub_m["category_clean"] == cat]["qty"].sum())
+            r_data[cat] = int(sub_m[sub_m["category_clean"] == cat]["effective_qty"].sum())
         r_data["TOTAL"] = sum(r_data[c] for c in CATEGORIES_LIST)
         m_cat_matrix.append(r_data)
         
@@ -511,7 +514,7 @@ def fabric_dashboard(d):
         ("Overdue Orders", f"{(d.delay > 0).sum():,}")
     ])
     v = d[d.fabricator.ne("")].groupby("fabricator", as_index=False).agg(
-        Orders=("qty", "size"), OrderQty=("qty", "sum"), PendingQty=("pending", "sum"),
+        Orders=("effective_qty", "size"), OrderQty=("effective_qty", "sum"), PendingQty=("pending", "sum"),
         FabricReceived=("fabric_received_date", lambda s: s.notna().sum())
     )
     if not v.empty: st.dataframe(v.rename(columns={"fabricator":"Vendor / Fabricator"}), use_container_width=True, hide_index=True)
@@ -531,8 +534,8 @@ def order_details(d):
             mask |= x[c].astype(str).str.contains(query, case=False, na=False)
         x = x[mask]
         
-    cols = ["date","designer","client","type","category","qty","production","received","pending","fabricator","status","delay"]
-    names = {"date":"Order Date","designer":"Designer","client":"Client","type":"Order Type","category":"Category","qty":"Sheet Order Qty (J)",
+    cols = ["date","designer","client","type","category","qty","effective_qty","production","received","pending","fabricator","status","delay"]
+    names = {"date":"Order Date","designer":"Designer","client":"Client","type":"Order Type","category":"Category","qty":"Sheet Order Qty (J)","effective_qty":"Effective Order Qty (AU=0 -> AT)",
              "production":"In Production (AS)","received":"Received / Done (AT)","pending":"Pending Qty (AU)","fabricator":"Fabricator","status":"Status","delay":"Delay Days (AH)"}
     view = x[cols].rename(columns=names)
     st.caption(f"{len(view):,} rows filtered")
