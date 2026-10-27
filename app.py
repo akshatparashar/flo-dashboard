@@ -162,7 +162,7 @@ def prepare(raw):
         "designer": "C",              # Designer's Name
         "type": "D",                  # Order Type
         "category": "F",              # Category / Sample Product
-        "qty": "J",                   # Sheet Order Qty (J)
+        "qty": "J",                   # Direct Sheet Order Qty (Column J)
         "client": "N",                # Client Name
         "fabricator": "AA",           # Fabricator's
         "delay": "AH",                # Delay Days (AH)
@@ -297,17 +297,18 @@ def designer_dashboard(d):
     cat_df = pd.concat([cat_df, pd.DataFrame([tot_row])], ignore_index=True)
     st.dataframe(cat_df, use_container_width=True, hide_index=True)
 
+# CLIENT DASHBOARD: DIRECT COLUMN J SUM & DATE FROM COLUMN B (NO OVERLAY CONDITIONS)
 def client_dashboard(d):
-    st.subheader("🏢 Executive Client Performance Dashboard (Date: Col B, Qty: Col J)")
+    st.subheader("🏢 Executive Client Performance Dashboard (Date: Col B, Total Qty: Col J Direct)")
     x = d[d.client.ne("")].copy()
     if x.empty:
         st.info("Selected filters ke liye client data nahi hai."); return
         
     total_designs = len(x)
-    total_qty = x["qty"].sum()
-    in_prod = x["production"].sum()
-    rec_done = x["received"].sum()
-    pending_qty = x["pending"].sum()
+    total_qty = x["qty"].sum()              # DIRECT SUM OF COLUMN J
+    in_prod = x["production"].sum()         # DIRECT SUM OF COLUMN AS
+    rec_done = x["received"].sum()          # DIRECT SUM OF COLUMN AT
+    pending_qty = x["pending"].sum()        # DIRECT SUM OF COLUMN AU
     repeat_qty = x[x["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
     new_qty = x[x["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
 
@@ -325,7 +326,7 @@ def client_dashboard(d):
     ])
     
     st.markdown("---")
-    st.subheader("📅 Client Fulfillment Breakdown (Monthly by Col B)")
+    st.subheader("📅 Client Fulfillment Breakdown (Monthly Filtered by Col B)")
     monthly_ful = []
     for m in MONTHS:
         sub_m = x[x["month_client"] == m]
@@ -526,7 +527,6 @@ try:
         st.warning("Data detect nahi hua. Sheet format check karein.")
         st.stop()
         
-    # SINGLE TOP-LEVEL SIDEBAR FILTERS (NO DUPLICATE KEYS ERROR)
     st.sidebar.header("🔎 Global Filters")
     
     active_tab = st.selectbox(
