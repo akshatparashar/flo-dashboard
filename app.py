@@ -27,7 +27,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 2. EXACT COLUMN LETTER INDEXING & NUMERIC SANITIZATION
+# 2. HELPER FUNCTIONS & NUMERIC SANITIZATION
 # -----------------------------------------------------------------------------
 def col_index(letter):
     n = 0
@@ -91,7 +91,7 @@ def load_sheet():
         st.error("Google Sheet empty hai.")
         st.stop()
 
-    # Sheet header is at Row 5 (Index 4)
+    # Header row is Row 5 (Index 4)
     if len(values) > 4:
         header_i = 4
     else:
@@ -114,41 +114,47 @@ def load_sheet():
     return data
 
 # -----------------------------------------------------------------------------
-# 4. DATA PREPARATION WITH EXACT SHEET COLUMN MAPPINGS
+# 4. DATA PREPARATION WITH ALL REQUIRED COLUMNS & EXACT RULES
 # -----------------------------------------------------------------------------
 def prepare(raw):
     d = raw.copy()
     
-    # Direct Column Position Mapping based on exact Sheet Column Letters
+    # Complete Mapping including Fabricator Date Attributes to prevent AttributeError
     letter_mapping = {
-        "date": "B",          # Order Date
-        "designer": "C",      # Designer's Name
-        "type": "D",          # Order Type
-        "category": "F",      # Sample Product / Category
-        "qty": "J",           # Order Qty (No. of Pc's)
-        "client": "N",        # Client Name
-        "fabricator": "AA",   # Fabricator's
-        "delay": "AH",        # Delay Days
-        "production": "AS",   # IN PRODUCTION PCS
-        "received": "AT",     # RECEIVED PCS
-        "pending": "AU",      # PENDING PCS
-        "status": "AX",       # Status
+        "date": "B",                  # Order Date
+        "designer": "C",              # Designer's Name
+        "type": "D",                  # Order Type
+        "category": "F",              # Category / Sample Product
+        "qty": "J",                   # Sheet Order Qty
+        "client": "N",                # Client Name
+        "required_date": "O",         # Delivery Date
+        "fabric_order_date": "P",     # Fabric Order Date
+        "planned_fabric_date": "S",  # Planned Date
+        "follow_up": "T",             # Follow Up
+        "fabric_received_date": "U",  # Fabric Received Date
+        "fabricator": "AA",           # Fabricator's
+        "delay": "AH",                # Delay Days
+        "production": "AS",           # IN PRODUCTION PCS (Column AS)
+        "received": "AT",             # RECEIVED PCS (Column AT)
+        "pending": "AU",              # PENDING PCS (Column AU)
+        "status": "AX",               # Status (Column AX)
     }
     
     for key, letter in letter_mapping.items():
         c_name = get_col_by_letter(d, letter)
         d[key] = d[c_name] if c_name is not None else ""
 
-    for c in ["designer", "type", "category", "client", "fabricator", "status"]:
+    for c in ["designer", "type", "category", "client", "fabricator", "status", "follow_up"]:
         d[c] = d[c].astype(str).str.strip()
         d.loc[d[c].str.lower().isin(["nan", "none"]), c] = ""
         
     for c in ["qty", "production", "received", "pending", "delay"]:
         d[c] = num(d[c])
         
-    d["date"] = date_col(d["date"])
+    for c in ["date", "required_date", "fabric_order_date", "planned_fabric_date", "fabric_received_date"]:
+        d[c] = date_col(d[c])
 
-    # RULE: When Pending (AU) is 0, set Effective Order Qty = Received Qty (AT)
+    # RULE: When Pending (AU) is explicitly 0, set Effective Order Qty = Received Qty (AT)
     d["pending_explicit_zero"] = d["pending"].astype(str).str.strip().str.replace(",", "", regex=False).isin(["0", "0.0", "0.00"]) | (d["pending"] == 0)
     d["effective_qty"] = d["qty"]
     fully_received = d["pending_explicit_zero"] & (d["received"] > 0)
@@ -158,8 +164,17 @@ def prepare(raw):
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    # Filter non-empty valid rows
-    d = d[(d["designer"].ne("")) | (d["client"].ne("")) | (d["qty"] > 0) | (d["production"] > 0) | d["date"].notna()].copy()
+    # Preserving ALL rows having any non-zero numeric activity to ensure 151,844 total is met
+    d = d[
+        (d["designer"].ne("")) | 
+        (d["client"].ne("")) | 
+        (d["qty"] > 0) | 
+        (d["production"] > 0) | 
+        (d["received"] > 0) | 
+        (d["pending"] > 0) | 
+        d["date"].notna()
+    ].copy()
+    
     return d
 
 def filters(d):
@@ -336,6 +351,11 @@ def fabric_dashboard(d):
         ("Awaiting Fabric Receipt", f"{d.fabric_received_date.isna().sum():,}"),
         ("Overdue Orders", f"{(d.delay > 0).sum():,}")
     ])
+    v = d[d.fabricator.ne("")].groupby("fabricator", as_index=False).agg(
+        Orders=("effective_qty", "size"), OrderQty=("effective_qty", "sum"), PendingQty=("pending", "sum"),
+        FabricReceived=("fabric_received_date", lambda s: s.notna().sum())
+    )
+    if not v.empty: st.dataframe(v.rename(columns={"fabricator":"Vendor / Fabricator"}), use_container_width=True, hide_index=True)
 
 def order_details(d):
     st.subheader("Searchable Order Details")
