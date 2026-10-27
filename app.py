@@ -27,30 +27,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 2. HELPER FUNCTIONS FOR COLUMN INDEXING & NUMERIC CLEANING
+# 2. EXACT COLUMN LETTER INDEXING & NUMERIC SANITIZATION
 # -----------------------------------------------------------------------------
-def norm(x):
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(x).lower())).strip()
-
 def col_index(letter):
     n = 0
     for c in letter.upper():
         n = n * 26 + ord(c) - 64
     return n - 1
 
-def choose_col(df, aliases, fallback):
-    headers = {norm(c): c for c in df.columns}
-    for alias in aliases:
-        if norm(alias) in headers:
-            return headers[norm(alias)]
-    for alias in aliases:
-        a = norm(alias)
-        if len(a) >= 5:
-            for h, original in headers.items():
-                if a in h or h in a:
-                    return original
-    idx = col_index(fallback)
-    return df.columns[idx] if idx < len(df.columns) else None
+def get_col_by_letter(df, letter):
+    idx = col_index(letter)
+    if idx < len(df.columns):
+        return df.columns[idx]
+    return None
 
 def num(s):
     if not isinstance(s, pd.Series):
@@ -66,7 +55,7 @@ def date_col(s):
     return pd.to_datetime(s, errors="coerce", dayfirst=True)
 
 # -----------------------------------------------------------------------------
-# 3. GOOGLE SHEETS AUTHENTICATION & DATA FETCHING
+# 3. GOOGLE SHEETS AUTHENTICATION & LIVE DATA LOAD
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=300, show_spinner="Google Sheet se live data load ho raha hai...")
 def load_sheet():
@@ -101,19 +90,16 @@ def load_sheet():
     if not values:
         st.error("Google Sheet empty hai.")
         st.stop()
-        
-    def header_score(row):
-        cells = [norm(v) for v in row if str(v).strip()]
-        keywords = ["designer", "client", "order", "category", "sample", "fabricator", "pcs", "date"]
-        return sum(any(k in cell for cell in cells) for k in keywords)
 
-    header_i = 3 if len(values) > 3 and header_score(values[3]) >= 2 else 0
-    if header_i == 0:
-        header_i = max(range(min(10, len(values))), key=lambda i: header_score(values[i]))
+    # Sheet header is at Row 5 (Index 4)
+    if len(values) > 4:
+        header_i = 4
+    else:
+        header_i = 0
         
     headers = []
     for i, v in enumerate(values[header_i]):
-        name = str(v).strip() or f"Unnamed_{i+1}"
+        name = str(v).strip() or f"Col_{i+1}"
         if name in headers:
             name = f"{name}_{i+1}"
         headers.append(name)
@@ -128,55 +114,52 @@ def load_sheet():
     return data
 
 # -----------------------------------------------------------------------------
-# 4. DATA PREPARATION WITH ADJUSTED EFFECTIVE QUANTITY RULE
+# 4. DATA PREPARATION WITH EXACT SHEET COLUMN MAPPINGS
 # -----------------------------------------------------------------------------
 def prepare(raw):
     d = raw.copy()
-    fields = {
-        "date": (["Order Date", "Date", "Order Booking Date"], "B"),
-        "designer": (["Designer's Name", "Designer Name", "Designer"], "C"),
-        "type": (["Order Type", "Type"], "D"),
-        "category": (["Sample Product", "Category", "Product"], "F"),
-        "qty": (["No. of Pcs", "No of Pcs", "Order Qty", "Order Quantity", "Quantity", "Qty"], "J"),
-        "client": (["Client Name", "Client", "Customer Name"], "N"),
-        "fabricator": (["Fabricator", "Fabricator Name", "Vendor Name", "Vendor"], "AA"),
-        "delay": (["Delay Days", "Overdue Days", "Delay (Days)", "Days Delayed"], "AH"),
-        "production": (["In Production", "In Production Qty", "Production Qty", "Production Quantity"], "AS"),
-        "received": (["Received Qty", "Received Quantity", "Received / Done", "Received"], "AT"),
-        "pending": (["Pending Qty", "Pending Quantity", "Total Pending Qty", "Pending"], "AU"),
-        "status": (["Status", "Production Status", "Order Status"], "AX"),
-        "required_date": (["Customer Required Delivery Date", "Required Delivery Date", "Required Date"], "O"),
-        "fabric_order_date": (["Fabric Order Date"], "P"),
-        "planned_fabric_date": (["Planned reqd Date", "Planned Required Date", "Planned Date"], "S"),
-        "follow_up": (["Follow Up", "Follow-up", "Followup"], "T"),
-        "fabric_received_date": (["Rcvd Date", "Received Date", "Fabric Received Date"], "U"),
+    
+    # Direct Column Position Mapping based on exact Sheet Column Letters
+    letter_mapping = {
+        "date": "B",          # Order Date
+        "designer": "C",      # Designer's Name
+        "type": "D",          # Order Type
+        "category": "F",      # Sample Product / Category
+        "qty": "J",           # Order Qty (No. of Pc's)
+        "client": "N",        # Client Name
+        "fabricator": "AA",   # Fabricator's
+        "delay": "AH",        # Delay Days
+        "production": "AS",   # IN PRODUCTION PCS
+        "received": "AT",     # RECEIVED PCS
+        "pending": "AU",      # PENDING PCS
+        "status": "AX",       # Status
     }
     
-    for key, (aliases, letter) in fields.items():
-        c = choose_col(d, aliases, letter)
-        d[key] = d[c] if c is not None else ""
-        
-    for c in ["designer", "type", "category", "client", "fabricator", "status", "follow_up"]:
+    for key, letter in letter_mapping.items():
+        c_name = get_col_by_letter(d, letter)
+        d[key] = d[c_name] if c_name is not None else ""
+
+    for c in ["designer", "type", "category", "client", "fabricator", "status"]:
         d[c] = d[c].astype(str).str.strip()
         d.loc[d[c].str.lower().isin(["nan", "none"]), c] = ""
         
     for c in ["qty", "production", "received", "pending", "delay"]:
         d[c] = num(d[c])
         
-    for c in ["date", "required_date", "fabric_order_date", "planned_fabric_date", "fabric_received_date"]:
-        d[c] = date_col(d[c])
+    d["date"] = date_col(d["date"])
 
-    # PENDING = 0 RULE FOR ORDERED QUANTITY REPLACEMENT
-    # When Pending (AU) is explicitly 0, use Received (AT) as final volume so figures match exact totals
+    # RULE: When Pending (AU) is 0, set Effective Order Qty = Received Qty (AT)
+    d["pending_explicit_zero"] = d["pending"].astype(str).str.strip().str.replace(",", "", regex=False).isin(["0", "0.0", "0.00"]) | (d["pending"] == 0)
     d["effective_qty"] = d["qty"]
-    is_pending_zero = (d["pending"] == 0) & (d["received"] > 0)
-    d.loc[is_pending_zero, "effective_qty"] = d.loc[is_pending_zero, "received"]
+    fully_received = d["pending_explicit_zero"] & (d["received"] > 0)
+    d.loc[fully_received, "effective_qty"] = d.loc[fully_received, "received"]
 
     d["month"] = d["date"].dt.month_name()
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    d = d[(d["designer"].ne("")) | (d["client"].ne("")) | (d["qty"] != 0) | d["date"].notna()].copy()
+    # Filter non-empty valid rows
+    d = d[(d["designer"].ne("")) | (d["client"].ne("")) | (d["qty"] > 0) | (d["production"] > 0) | d["date"].notna()].copy()
     return d
 
 def filters(d):
@@ -215,7 +198,7 @@ def fmt(x):
     return f"{x:,.0f}"
 
 # -----------------------------------------------------------------------------
-# 5. EXECUTION DASHBOARD VIEWS USING EFFECTIVE QTY
+# 5. DASHBOARD VIEWS
 # -----------------------------------------------------------------------------
 def overview(d):
     st.subheader("Executive Overview")
@@ -239,7 +222,7 @@ def overview(d):
     with b:
         c = d[d.category_clean.ne("")].groupby("category_clean", as_index=False)["effective_qty"].sum().sort_values("effective_qty", ascending=False)
         if not c.empty:
-            st.plotly_chart(px.bar(c, x="category_clean", y="effective_qty", title="Category-wise Effective Quantity", text_auto=".2s"), use_container_width=True)
+            st.plotly_chart(px.bar(c, x="category_clean", y="effective_qty", title="Category-wise Quantity", text_auto=".2s"), use_container_width=True)
 
 def designer_dashboard(d):
     st.subheader("1. Executive Designer Performance & Category Tracking Dashboard")
@@ -247,7 +230,6 @@ def designer_dashboard(d):
     if x.empty:
         st.info("Selected filters ke liye designer data nahi hai."); return
         
-    # Aggregate using effective_qty so Pending = 0 rows count Received Qty correctly
     g = x.groupby("designer", as_index=False).agg(**{"Total Volume (Pcs)": ("effective_qty", "sum"), "Design Count": ("effective_qty", "size")})
     new = x[x.type_clean.str.contains("NEW", na=False)].groupby("designer").effective_qty.sum()
     repeat = x[x.type_clean.str.contains("REPEAT", na=False)].groupby("designer").effective_qty.sum()
@@ -365,7 +347,7 @@ def order_details(d):
             mask |= x[c].astype(str).str.contains(query, case=False, na=False)
         x = x[mask]
     cols = ["date","designer","client","type","category","qty","effective_qty","production","received","pending","fabricator","status","delay"]
-    names = {"date":"Order Date","designer":"Designer","client":"Client","type":"Order Type","category":"Category","qty":"Sheet Order Qty (J)","effective_qty":"Effective Order Qty (Rule Pending=0 -> Received)",
+    names = {"date":"Order Date","designer":"Designer","client":"Client","type":"Order Type","category":"Category","qty":"Sheet Order Qty (J)","effective_qty":"Effective Order Qty (AU=0 -> AT)",
              "production":"In Production (AS)","received":"Received / Done (AT)","pending":"Pending Qty (AU)","fabricator":"Fabricator","status":"Status","delay":"Delay Days (AH)"}
     view = x[cols].rename(columns=names)
     st.caption(f"{len(view):,} rows")
