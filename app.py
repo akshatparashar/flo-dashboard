@@ -151,7 +151,7 @@ def load_sheet():
     return data
 
 # -----------------------------------------------------------------------------
-# 4. DATA PREPARATION & CALCULATIONS
+# 4. DATA PREPARATION
 # -----------------------------------------------------------------------------
 def prepare(raw):
     d = raw.copy()
@@ -162,11 +162,11 @@ def prepare(raw):
         "designer": "C",              # Designer's Name
         "type": "D",                  # Order Type
         "category": "F",              # Category / Sample Product
-        "qty": "J",                   # Sheet Order Qty (J) - Used directly for Client
+        "qty": "J",                   # Sheet Order Qty (J)
         "client": "N",                # Client Name
         "fabricator": "AA",           # Fabricator's
         "delay": "AH",                # Delay Days (AH)
-        "production": "AS",           # IN PRODUCTION PCS (Column AS) - Used directly for Prod
+        "production": "AS",           # IN PRODUCTION PCS (Column AS)
         "received": "AT",             # RECEIVED PCS (Column AT)
         "pending": "AU",              # PENDING PCS (Column AU)
         "status": "AX",               # Status (Column AX)
@@ -185,18 +185,15 @@ def prepare(raw):
         
     d["delay"] = clean_delay_days(d["delay"])
     
-    # Dates
     d["date_client"] = date_col(d["date_client"])
     d["date_prod"] = date_col(d["date_prod"])
 
-    # Extract Month Names for Client (B) and Production (AC)
     d["month_client"] = d["date_client"].dt.month_name()
     d["month_prod"] = d["date_prod"].dt.month_name()
     
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    # PRESERVE ALL VALID ENTRIES
     d = d[
         (d["qty"] > 0) | 
         (d["production"] > 0) | 
@@ -209,23 +206,26 @@ def prepare(raw):
     
     return d
 
-def filters(d, is_prod_dashboard=False):
+def render_filters(d, is_prod_dashboard=False):
     st.sidebar.header("🔎 Filters")
     
     target_month_col = "month_prod" if is_prod_dashboard else "month_client"
     month_values = [m for m in MONTHS if m in d[target_month_col].dropna().astype(str).unique()]
     
-    def select(label, values, key):
+    # FIXED: Added unique key suffix to avoid duplicate element ID error
+    key_prefix = "prod_" if is_prod_dashboard else "cli_"
+    
+    def select(label, values, key_name):
         opts = ["ALL"] + sorted({str(v) for v in values if str(v).strip() and str(v) != "nan"})
-        return st.sidebar.selectbox(label, opts, key=key)
+        return st.sidebar.selectbox(label, opts, key=f"{key_prefix}{key_name}")
         
-    month = st.sidebar.selectbox("Month", ["ALL"] + month_values)
+    month = st.sidebar.selectbox("Month", ["ALL"] + month_values, key=f"{key_prefix}month")
     typ = select("Order Type", d["type_clean"].unique(), "type")
     cat = select("Category", d["category_clean"].unique(), "category")
     des = select("Designer", d["designer"].unique(), "designer")
     cli = select("Client", d["client"].unique(), "client")
     fab = select("Fabricator", d["fabricator"].unique(), "fabricator")
-    risk = st.sidebar.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"])
+    risk = st.sidebar.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"], key=f"{key_prefix}risk")
     
     out = d.copy()
     if month != "ALL": out = out[out[target_month_col] == month]
@@ -329,7 +329,6 @@ def designer_dashboard(d):
     cat_df = pd.concat([cat_df, pd.DataFrame([tot_row])], ignore_index=True)
     st.dataframe(cat_df, use_container_width=True, hide_index=True)
 
-# CLIENT DASHBOARD (DATE FROM COL B, ORDER QTY FROM COL J)
 def client_dashboard(d):
     st.subheader("🏢 Executive Client Performance Dashboard (Date: Col B, Qty: Col J)")
     x = d[d.client.ne("")].copy()
@@ -337,10 +336,10 @@ def client_dashboard(d):
         st.info("Selected filters ke liye client data nahi hai."); return
         
     total_designs = len(x)
-    total_qty = x["qty"].sum() # DIRECT COLUMN J
-    in_prod = x["production"].sum() # DIRECT COLUMN AS
-    rec_done = x["received"].sum() # DIRECT COLUMN AT
-    pending_qty = x["pending"].sum() # DIRECT COLUMN AU
+    total_qty = x["qty"].sum()
+    in_prod = x["production"].sum()
+    rec_done = x["received"].sum()
+    pending_qty = x["pending"].sum()
     repeat_qty = x[x["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
     new_qty = x[x["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
 
@@ -411,7 +410,6 @@ def client_dashboard(d):
         fig_stack = px.bar(m_cat_df, x="MONTH", y=CATEGORIES_LIST, title="CATEGORY DISTRIBUTION BY MONTH", barmode="stack")
         st.plotly_chart(fig_stack, use_container_width=True)
 
-# PRODUCTION DASHBOARD (DATE FROM COL AC, IN PRODUCTION FROM COL AS)
 def production_dashboard(d):
     st.subheader("🏭 Production Executive Process Dashboard (Date: Col AC, Prod: Col AS)")
     
@@ -563,22 +561,22 @@ try:
     tabs = st.tabs(["Executive Overview", "Designer Dashboard", "Client Dashboard", "Production Dashboard", "Fabric & Vendor", "Order Details"])
     
     with tabs[0]: 
-        filtered_gen = filters(data, is_prod_dashboard=False)
+        filtered_gen = render_filters(data, is_prod_dashboard=False)
         overview(filtered_gen)
     with tabs[1]: 
-        filtered_gen = filters(data, is_prod_dashboard=False)
+        filtered_gen = render_filters(data, is_prod_dashboard=False)
         designer_dashboard(filtered_gen)
     with tabs[2]: 
-        filtered_cli = filters(data, is_prod_dashboard=False)
+        filtered_cli = render_filters(data, is_prod_dashboard=False)
         client_dashboard(filtered_cli)
     with tabs[3]: 
-        filtered_prod = filters(data, is_prod_dashboard=True)
+        filtered_prod = render_filters(data, is_prod_dashboard=True)
         production_dashboard(filtered_prod)
     with tabs[4]: 
-        filtered_gen = filters(data, is_prod_dashboard=False)
+        filtered_gen = render_filters(data, is_prod_dashboard=False)
         fabric_dashboard(filtered_gen)
     with tabs[5]: 
-        filtered_gen = filters(data, is_prod_dashboard=False)
+        filtered_gen = render_filters(data, is_prod_dashboard=False)
         order_details(filtered_gen)
 
 except Exception as e:
