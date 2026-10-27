@@ -206,38 +206,6 @@ def prepare(raw):
     
     return d
 
-def render_filters(d, is_prod_dashboard=False):
-    st.sidebar.header("🔎 Filters")
-    
-    target_month_col = "month_prod" if is_prod_dashboard else "month_client"
-    month_values = [m for m in MONTHS if m in d[target_month_col].dropna().astype(str).unique()]
-    
-    # FIXED: Added unique key suffix to avoid duplicate element ID error
-    key_prefix = "prod_" if is_prod_dashboard else "cli_"
-    
-    def select(label, values, key_name):
-        opts = ["ALL"] + sorted({str(v) for v in values if str(v).strip() and str(v) != "nan"})
-        return st.sidebar.selectbox(label, opts, key=f"{key_prefix}{key_name}")
-        
-    month = st.sidebar.selectbox("Month", ["ALL"] + month_values, key=f"{key_prefix}month")
-    typ = select("Order Type", d["type_clean"].unique(), "type")
-    cat = select("Category", d["category_clean"].unique(), "category")
-    des = select("Designer", d["designer"].unique(), "designer")
-    cli = select("Client", d["client"].unique(), "client")
-    fab = select("Fabricator", d["fabricator"].unique(), "fabricator")
-    risk = st.sidebar.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"], key=f"{key_prefix}risk")
-    
-    out = d.copy()
-    if month != "ALL": out = out[out[target_month_col] == month]
-    if typ != "ALL": out = out[out["type_clean"].str.contains(typ, case=False, na=False)]
-    if cat != "ALL": out = out[out["category_clean"] == cat]
-    if des != "ALL": out = out[out["designer"].str.upper() == des.upper()]
-    if cli != "ALL": out = out[out["client"].str.upper() == cli.upper()]
-    if fab != "ALL": out = out[out["fabricator"].str.upper() == fab.upper()]
-    if risk == "ON-TIME": out = out[out["delay"] <= 0]
-    if risk == "OVERDUE (>0 DAYS)": out = out[out["delay"] > 0]
-    return out
-
 def metrics(items):
     cols = st.columns(len(items))
     for c, (label, value) in zip(cols, items):
@@ -513,8 +481,8 @@ def fabric_dashboard(d):
 
 def order_details(d):
     st.subheader("🔎 Searchable Order Details & Overdue Filters")
-    overdue_only = st.checkbox("Show Overdue Orders Only (AH > 0)", value=False)
-    query = st.text_input("Search client, designer, category, fabricator, order type or status")
+    overdue_only = st.checkbox("Show Overdue Orders Only (AH > 0)", value=False, key="check_overdue_only")
+    query = st.text_input("Search client, designer, category, fabricator, order type or status", key="search_query_input")
     x = d.copy()
     
     if overdue_only:
@@ -558,26 +526,55 @@ try:
         st.warning("Data detect nahi hua. Sheet format check karein.")
         st.stop()
         
-    tabs = st.tabs(["Executive Overview", "Designer Dashboard", "Client Dashboard", "Production Dashboard", "Fabric & Vendor", "Order Details"])
+    # SINGLE TOP-LEVEL SIDEBAR FILTERS (NO DUPLICATE KEYS ERROR)
+    st.sidebar.header("🔎 Global Filters")
     
-    with tabs[0]: 
-        filtered_gen = render_filters(data, is_prod_dashboard=False)
-        overview(filtered_gen)
-    with tabs[1]: 
-        filtered_gen = render_filters(data, is_prod_dashboard=False)
-        designer_dashboard(filtered_gen)
-    with tabs[2]: 
-        filtered_cli = render_filters(data, is_prod_dashboard=False)
-        client_dashboard(filtered_cli)
-    with tabs[3]: 
-        filtered_prod = render_filters(data, is_prod_dashboard=True)
-        production_dashboard(filtered_prod)
-    with tabs[4]: 
-        filtered_gen = render_filters(data, is_prod_dashboard=False)
-        fabric_dashboard(filtered_gen)
-    with tabs[5]: 
-        filtered_gen = render_filters(data, is_prod_dashboard=False)
-        order_details(filtered_gen)
+    active_tab = st.selectbox(
+        "📌 View Dashboard Section", 
+        ["Executive Overview", "Designer Dashboard", "Client Dashboard", "Production Dashboard", "Fabric & Vendor", "Order Details"],
+        key="global_active_tab"
+    )
+    
+    is_prod = (active_tab == "Production Dashboard")
+    target_month_col = "month_prod" if is_prod else "month_client"
+    
+    month_opts = ["ALL"] + [m for m in MONTHS if m in data[target_month_col].dropna().astype(str).unique()]
+    month_val = st.sidebar.selectbox("Month", month_opts, key="global_month_filter")
+    
+    def get_opts(column):
+        return ["ALL"] + sorted({str(v) for v in data[column].unique() if str(v).strip() and str(v) != "nan"})
+        
+    typ_val = st.sidebar.selectbox("Order Type", get_opts("type_clean"), key="global_type_filter")
+    cat_val = st.sidebar.selectbox("Category", get_opts("category_clean"), key="global_cat_filter")
+    des_val = st.sidebar.selectbox("Designer", get_opts("designer"), key="global_des_filter")
+    cli_val = st.sidebar.selectbox("Client", get_opts("client"), key="global_cli_filter")
+    fab_val = st.sidebar.selectbox("Fabricator", get_opts("fabricator"), key="global_fab_filter")
+    risk_val = st.sidebar.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"], key="global_risk_filter")
+    
+    filtered_data = data.copy()
+    if month_val != "ALL": filtered_data = filtered_data[filtered_data[target_month_col] == month_val]
+    if typ_val != "ALL": filtered_data = filtered_data[filtered_data["type_clean"].str.contains(typ_val, case=False, na=False)]
+    if cat_val != "ALL": filtered_data = filtered_data[filtered_data["category_clean"] == cat_val]
+    if des_val != "ALL": filtered_data = filtered_data[filtered_data["designer"].str.upper() == des_val.upper()]
+    if cli_val != "ALL": filtered_data = filtered_data[filtered_data["client"].str.upper() == cli_val.upper()]
+    if fab_val != "ALL": filtered_data = filtered_data[filtered_data["fabricator"].str.upper() == fab_val.upper()]
+    if risk_val == "ON-TIME": filtered_data = filtered_data[filtered_data["delay"] <= 0]
+    if risk_val == "OVERDUE (>0 DAYS)": filtered_data = filtered_data[filtered_data["delay"] > 0]
+    
+    st.write(f"**Filtered Records:** {len(filtered_data):,} / {len(data):,}")
+    
+    if active_tab == "Executive Overview":
+        overview(filtered_data)
+    elif active_tab == "Designer Dashboard":
+        designer_dashboard(filtered_data)
+    elif active_tab == "Client Dashboard":
+        client_dashboard(filtered_data)
+    elif active_tab == "Production Dashboard":
+        production_dashboard(filtered_data)
+    elif active_tab == "Fabric & Vendor":
+        fabric_dashboard(filtered_data)
+    elif active_tab == "Order Details":
+        order_details(filtered_data)
 
 except Exception as e:
     st.error(f"Error Loading Google Sheets Data: {e}")
