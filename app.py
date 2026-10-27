@@ -51,6 +51,11 @@ def num(s):
     cleaned = cleaned.mask(is_paren_negative, "-" + cleaned.str.replace("-", "", regex=False))
     return pd.to_numeric(cleaned, errors="coerce").fillna(0).astype(float)
 
+def clean_delay_days(s):
+    parsed = num(s)
+    parsed = parsed.mask(parsed > 1000, 0)
+    return parsed
+
 def date_col(s):
     return pd.to_datetime(s, errors="coerce", dayfirst=True)
 
@@ -91,11 +96,7 @@ def load_sheet():
         st.error("Google Sheet empty hai.")
         st.stop()
 
-    # Header row is Row 5 (Index 4)
-    if len(values) > 4:
-        header_i = 4
-    else:
-        header_i = 0
+    header_i = 4 if len(values) > 4 else 0
         
     headers = []
     for i, v in enumerate(values[header_i]):
@@ -113,12 +114,11 @@ def load_sheet():
     return data
 
 # -----------------------------------------------------------------------------
-# 4. DATA PREPARATION WITH ALL REQUIRED COLUMNS & EXACT RULES
+# 4. DATA PREPARATION
 # -----------------------------------------------------------------------------
 def prepare(raw):
     d = raw.copy()
     
-    # Complete Mapping of Column Positions
     letter_mapping = {
         "date": "B",                  # Order Date
         "designer": "C",              # Designer's Name
@@ -132,7 +132,7 @@ def prepare(raw):
         "follow_up": "T",             # Follow Up
         "fabric_received_date": "U",  # Fabric Received Date
         "fabricator": "AA",           # Fabricator's
-        "delay": "AH",                # Delay Days
+        "delay": "AH",                # Delay Days (AH)
         "production": "AS",           # IN PRODUCTION PCS (Column AS)
         "received": "AT",             # RECEIVED PCS (Column AT)
         "pending": "AU",              # PENDING PCS (Column AU)
@@ -147,13 +147,15 @@ def prepare(raw):
         d[c] = d[c].astype(str).str.strip()
         d.loc[d[c].str.lower().isin(["nan", "none"]), c] = ""
         
-    for c in ["qty", "production", "received", "pending", "delay"]:
+    for c in ["qty", "production", "received", "pending"]:
         d[c] = num(d[c])
+        
+    d["delay"] = clean_delay_days(d["delay"])
         
     for c in ["date", "required_date", "fabric_order_date", "planned_fabric_date", "fabric_received_date"]:
         d[c] = date_col(d[c])
 
-    # RULE: When Pending (AU) is explicitly 0, set Effective Order Qty = Received Qty (AT)
+    # Rule AU == 0 -> Effective Order Qty = Received Qty
     d["pending_explicit_zero"] = d["pending"].astype(str).str.strip().str.replace(",", "", regex=False).isin(["0", "0.0", "0.00"]) | (d["pending"] == 0)
     d["effective_qty"] = d["qty"]
     fully_received = d["pending_explicit_zero"] & (d["received"] > 0)
@@ -163,8 +165,15 @@ def prepare(raw):
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    # Keeping ALL rows that contain numeric values (AS, AT, AU, or J) without dropping blank designer/client rows
-    d = d[(d["qty"] > 0) | (d["production"] > 0) | (d["received"] > 0) | (d["pending"] > 0) | (d["designer"].ne("")) | (d["client"].ne(""))].copy()
+    # Fully retain non-zero quantity rows (including Fusion Studio entries)
+    d = d[
+        (d["qty"] > 0) | 
+        (d["production"] > 0) | 
+        (d["received"] > 0) | 
+        (d["pending"] > 0) | 
+        (d["designer"].ne("")) | 
+        (d["client"].ne(""))
+    ].copy()
     
     return d
 
@@ -303,20 +312,23 @@ def client_dashboard(d):
             st.plotly_chart(px.pie(q, names="Status", values="Qty", hole=.45, title="ORDER FULFILLMENT RATIO", color_discrete_sequence=["#059669", "#DC2626"]), use_container_width=True)
 
 def production_dashboard(d):
-    st.subheader("3. Production Executive Process Dashboard")
-    overdue = d[d.delay > 0]
+    st.subheader("3. Production Executive Process Dashboard & Vendor Overdue Tracking")
+    
+    overdue_mask = d["delay"] > 0
+    overdue = d[overdue_mask]
     pending_rows = d[(d.status.str.strip().str.upper() < "DONE") & (d.pending > 0)]
+    avg_overdue = overdue["delay"].mean() if len(overdue) > 0 else 0.0
     
     metrics([
         ("Orders / Designs", f"{len(d):,}"),
         ("In Production PCS (AS)", fmt(d.production.sum())),
         ("Received PCS (AT)", fmt(d.received.sum())),
         ("Pending PCS (AU)", fmt(d.pending.sum())),
-        ("Overdue PCS (AH > 0)", fmt(d.loc[d.delay > 0, "production"].sum())),
+        ("Overdue PCS (AH > 0)", fmt(d.loc[overdue_mask, "production"].sum())),
     ])
     
     metrics([
-        ("Avg Overdue Days", f"{overdue.delay.mean():.1f}" if len(overdue) else "0.0"),
+        ("Avg Overdue Days (AH > 0)", f"{avg_overdue:.1f} Days"),
         ("On-Time Delivery %", f"{((len(d[d.delay <= 0]) / len(d) * 100) if len(d) > 0 else 0):.1f}%"),
         ("On-Time PCS (AH <= 0)", fmt(d.loc[d.delay <= 0, "production"].sum())),
         ("Overdue Orders Count", f"{len(overdue):,}"),
@@ -334,6 +346,29 @@ def production_dashboard(d):
         if not x.empty:
             st.plotly_chart(px.pie(x, names="fabricator", values="pending", title="FABRICATOR PENDING PCS SHARE", hole=0.4), use_container_width=True)
 
+    # NEW TABLE 1: DESIGNER & FABRICATOR OVERDUE SUMMARY
+    st.markdown("---")
+    st.subheader("🚨 Overdue Summary Matrix by Designer & Fabricator")
+    if not overdue.empty:
+        des_fab_overdue = overdue.groupby(["designer", "fabricator"], as_index=False).agg(
+            OverdueOrders=("production", "size"),
+            OverduePcs=("production", "sum"),
+            AvgDelayDays=("delay", "mean")
+        ).sort_values(by="OverduePcs", ascending=False)
+        
+        des_fab_overdue.columns = ["Designer Name", "Fabricator Name", "Overdue Orders Count", "Overdue Production Pcs", "Avg Delay (Days)"]
+        des_fab_overdue["Avg Delay (Days)"] = des_fab_overdue["Avg Delay (Days)"].map("{:.1f}".format)
+        
+        st.dataframe(des_fab_overdue, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇️ Download Designer-Fabricator Overdue Summary CSV",
+            des_fab_overdue.to_csv(index=False).encode("utf-8-sig"),
+            "designer_fabricator_overdue_summary.csv",
+            "text/csv"
+        )
+    else:
+        st.info("No overdue orders detected for selected filters.")
+
 def fabric_dashboard(d):
     st.subheader("Fabric & Vendor Tracking")
     metrics([
@@ -349,21 +384,30 @@ def fabric_dashboard(d):
     if not v.empty: st.dataframe(v.rename(columns={"fabricator":"Vendor / Fabricator"}), use_container_width=True, hide_index=True)
 
 def order_details(d):
-    st.subheader("Searchable Order Details")
+    st.subheader("Searchable Order Details & Overdue Filters")
+    
+    st.markdown("#### 🔍 Filter & Download Specific Overdue Orders")
+    overdue_only = st.checkbox("Show Overdue Orders Only (AH > 0)", value=False)
+    
     query = st.text_input("Search client, designer, category, fabricator, order type or status")
     x = d.copy()
+    
+    if overdue_only:
+        x = x[x["delay"] > 0]
+        
     if query:
         mask = pd.Series(False, index=x.index)
         for c in ["client", "designer", "category", "fabricator", "type", "status"]:
             mask |= x[c].astype(str).str.contains(query, case=False, na=False)
         x = x[mask]
+        
     cols = ["date","designer","client","type","category","qty","effective_qty","production","received","pending","fabricator","status","delay"]
     names = {"date":"Order Date","designer":"Designer","client":"Client","type":"Order Type","category":"Category","qty":"Sheet Order Qty (J)","effective_qty":"Effective Order Qty (AU=0 -> AT)",
              "production":"In Production (AS)","received":"Received / Done (AT)","pending":"Pending Qty (AU)","fabricator":"Fabricator","status":"Status","delay":"Delay Days (AH)"}
     view = x[cols].rename(columns=names)
-    st.caption(f"{len(view):,} rows")
+    st.caption(f"{len(view):,} rows filtered")
     st.dataframe(view, use_container_width=True, hide_index=True)
-    st.download_button("⬇️ Download filtered orders CSV", view.to_csv(index=False).encode("utf-8-sig"), "filtered_orders.csv", "text/csv")
+    st.download_button("⬇️ Download Filtered Orders CSV", view.to_csv(index=False).encode("utf-8-sig"), "filtered_orders_details.csv", "text/csv")
 
 # -----------------------------------------------------------------------------
 # MAIN APP FLOW
