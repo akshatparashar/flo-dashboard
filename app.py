@@ -62,17 +62,11 @@ h1, h2, h3 {{ letter-spacing: -.025em; }}
 # -----------------------------------------------------------------------------
 # 2. HELPER FUNCTIONS & NUMERIC SANITIZATION
 # -----------------------------------------------------------------------------
-def col_index(letter):
+def col_to_idx(letter):
     n = 0
     for c in letter.upper():
         n = n * 26 + ord(c) - 64
     return n - 1
-
-def get_col_by_letter(df, letter):
-    idx = col_index(letter)
-    if idx < len(df.columns):
-        return df.columns[idx]
-    return None
 
 def num(s):
     if not isinstance(s, pd.Series):
@@ -134,59 +128,43 @@ def load_sheet():
         st.stop()
 
     header_i = 4 if len(values) > 4 else 0
-        
-    headers = []
-    for i, v in enumerate(values[header_i]):
-        name = str(v).strip() or f"Col_{i+1}"
-        if name in headers:
-            name = f"{name}_{i+1}"
-        headers.append(name)
-        
     rows = values[header_i + 1:]
-    width = len(headers)
-    rows = [(r + [""] * max(0, width - len(r)))[:width] for r in rows]
-    data = pd.DataFrame(rows, columns=headers)
-    data.attrs["tab"] = ws.title
-    data.attrs["header_row"] = header_i + 1
-    return data
+    
+    max_cols = max(len(r) for r in rows) if rows else 0
+    padded_rows = [r + [""] * (max_cols - len(r)) for r in rows]
+    df_raw = pd.DataFrame(padded_rows)
+    df_raw.attrs["tab"] = ws.title
+    df_raw.attrs["header_row"] = header_i + 1
+    return df_raw
 
 # -----------------------------------------------------------------------------
-# 4. DATA PREPARATION (FIXED: NO ROWS DROPPED)
+# 4. DATA PREPARATION (DIRECT POSITION MAPPING TO MATCH SUBTOTAL(9))
 # -----------------------------------------------------------------------------
 def prepare(raw):
-    d = raw.copy()
-    
-    letter_mapping = {
-        "date_client": "B",           # Client Dashboard Date (Column B)
-        "date_prod": "AC",            # Production Dashboard Date (Column AC)
-        "designer": "C",              # Designer's Name
-        "type": "D",                  # Order Type
-        "category": "F",              # Category / Sample Product
-        "qty": "J",                   # Direct Sheet Order Qty (Column J)
-        "client": "N",                # Client Name
-        "fabricator": "AA",           # Fabricator's
-        "delay": "AH",                # Delay Days (AH)
-        "production": "AS",           # IN PRODUCTION PCS (Column AS)
-        "received": "AT",             # RECEIVED PCS (Column AT)
-        "pending": "AU",              # PENDING PCS (Column AU)
-        "status": "AX",               # Status (Column AX)
-    }
-    
-    for key, letter in letter_mapping.items():
-        c_name = get_col_by_letter(d, letter)
-        d[key] = d[c_name] if c_name is not None else ""
+    d = pd.DataFrame()
+
+    def get_raw_col(col_letter):
+        idx = col_to_idx(col_letter)
+        if idx < len(raw.columns):
+            return raw[idx]
+        return pd.Series([""] * len(raw))
+
+    d["date_client"] = date_col(get_raw_col("B"))                   # Col B Date
+    d["date_prod"] = date_col(get_raw_col("AC"))                    # Col AC Date
+    d["designer"] = get_raw_col("C").astype(str).str.strip()        # Col C Designer
+    d["type"] = get_raw_col("D").astype(str).str.strip()            # Col D Type
+    d["category"] = get_raw_col("F").astype(str).str.strip()        # Col F Category
+    d["qty"] = num(get_raw_col("J"))                                # Col J Qty
+    d["client"] = get_raw_col("N").astype(str).str.strip()          # Col N Client
+    d["fabricator"] = get_raw_col("AA").astype(str).str.strip()     # Col AA Fabricator
+    d["delay"] = clean_delay_days(get_raw_col("AH"))                # Col AH Delay
+    d["production"] = num(get_raw_col("AS"))                       # Col AS In Production
+    d["received"] = num(get_raw_col("AT"))                         # Col AT Received
+    d["pending"] = num(get_raw_col("AU"))                          # Col AU Pending
+    d["status"] = get_raw_col("AX").astype(str).str.strip()         # Col AX Status
 
     for c in ["designer", "type", "category", "client", "fabricator", "status"]:
-        d[c] = d[c].astype(str).str.strip()
         d.loc[d[c].str.lower().isin(["nan", "none"]), c] = ""
-        
-    for c in ["qty", "production", "received", "pending"]:
-        d[c] = num(d[c])
-        
-    d["delay"] = clean_delay_days(d["delay"])
-    
-    d["date_client"] = date_col(d["date_client"])
-    d["date_prod"] = date_col(d["date_prod"])
 
     d["month_client"] = d["date_client"].dt.month_name()
     d["month_prod"] = d["date_prod"].dt.month_name()
@@ -194,7 +172,7 @@ def prepare(raw):
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
     
-    # 100% PRESERVE ALL ROWS (No row dropping so calculations are exact)
+    # Preserve 100% rows so SUBTOTAL(9) matched exactly
     return d
 
 def metrics(items):
@@ -288,16 +266,15 @@ def designer_dashboard(d):
     cat_df = pd.concat([cat_df, pd.DataFrame([tot_row])], ignore_index=True)
     st.dataframe(cat_df, use_container_width=True, hide_index=True)
 
-# CLIENT DASHBOARD: DIRECT UNFILTERED COLUMN J & B CALCULATIONS
 def client_dashboard(d):
     st.subheader("🏢 Executive Client Performance Dashboard (Date: Col B, Total Qty: Col J Direct)")
     x = d.copy()
         
     total_designs = len(x[x.qty > 0])
-    total_qty = x["qty"].sum()              # EXACT DIRECT SUM OF COLUMN J
-    in_prod = x["production"].sum()         # EXACT DIRECT SUM OF COLUMN AS
-    rec_done = x["received"].sum()          # EXACT DIRECT SUM OF COLUMN AT
-    pending_qty = x["pending"].sum()        # EXACT DIRECT SUM OF COLUMN AU
+    total_qty = x["qty"].sum()              # DIRECT SUBTOTAL MATCH OF COL J
+    in_prod = x["production"].sum()         # DIRECT SUBTOTAL MATCH OF COL AS
+    rec_done = x["received"].sum()          # DIRECT SUBTOTAL MATCH OF COL AT
+    pending_qty = x["pending"].sum()        # DIRECT SUBTOTAL MATCH OF COL AU
     repeat_qty = x[x["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
     new_qty = x[x["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
 
@@ -368,7 +345,6 @@ def client_dashboard(d):
         fig_stack = px.bar(m_cat_df, x="MONTH", y=CATEGORIES_LIST, title="CATEGORY DISTRIBUTION BY MONTH", barmode="stack")
         st.plotly_chart(fig_stack, use_container_width=True)
 
-# PRODUCTION DASHBOARD: DIRECT UNFILTERED COLUMN AS & AT CALCULATIONS
 def production_dashboard(d):
     st.subheader("🏭 Production Executive Process Dashboard (Date: Col AC, Prod: Col AS)")
     
@@ -511,7 +487,7 @@ with st.sidebar:
 try:
     raw = load_sheet()
     data = prepare(raw)
-    st.caption(f"📄 Source: {raw.attrs.get('tab', DEFAULT_TAB)}  ·  {len(data):,} usable rows  ·  Header row: {raw.attrs.get('header_row', '?')}")
+    st.caption(f"📄 Source: {raw.attrs.get('tab', DEFAULT_TAB)}  ·  {len(data):,} total usable rows")
     
     if data.empty:
         st.warning("Data detect nahi hua. Sheet format check karein.")
