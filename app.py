@@ -20,7 +20,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Dropdown mein dikhne wali Google Sheets. Nayi sheet add karne ke liye yahan ek entry add karein.
+# Dropdown mein dikhne wali Google Sheets
 SHEET_REGISTRY = {
     "Master Sheet": {
         "id": "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU",
@@ -40,7 +40,7 @@ SHEET_REGISTRY = {
         "summary_tabs": ["MONTHWISE SUMMARY"],
     },
 }
-SHEET_ID = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"  # default/fallback
+SHEET_ID = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"
 DEFAULT_TAB = "CONFIRMATION SHEET"
 MONTHS = ["April", "May", "June", "July", "August", "September",
           "October", "November", "December", "January", "February", "March"]
@@ -82,10 +82,6 @@ hr {{ border-color: {BORDER}; }}
 h1, h2, h3 {{ letter-spacing: -.025em; }}
 .dashboard-hero {{ background: linear-gradient(120deg, {'#16243b' if DARK_MODE else '#e8f1ff'}, {'#172d43' if DARK_MODE else '#ffffff'}); border: 1px solid {BORDER}; border-radius: 18px; padding: 22px 26px; margin: 0 0 18px 0; }}
 .dashboard-hero p {{ color: {MUTED}; margin: 4px 0 0 0; }}
-.insight-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; margin: 6px 0 20px 0; }}
-.insight {{ background: {PANEL_BG}; border: 1px solid {BORDER}; border-left: 4px solid #2563eb; border-radius: 12px; padding: 12px 15px; font-size: .92rem; color: {TEXT}; box-shadow: 0 3px 12px rgba(15,23,42,.05); }}
-.chip {{ display: inline-block; background: {'#1d3350' if DARK_MODE else '#eef4ff'}; border: 1px solid {BORDER}; border-radius: 999px; padding: 2px 12px; margin: 10px 8px 0 0; font-size: .78rem; color: {MUTED}; }}
-[data-testid="stTabs"] [role="tablist"] {{ gap: 4px; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -119,6 +115,14 @@ def date_col(s):
     if mask.any():
         res[mask] = pd.to_datetime(s[mask], errors="coerce", dayfirst=False)
     return res
+
+def metrics(items):
+    cols = st.columns(len(items))
+    for c, (label, value) in zip(cols, items):
+        c.metric(label, value)
+
+def fmt(x):
+    return f"{x:,.0f}"
 
 # -----------------------------------------------------------------------------
 # 3. GOOGLE SHEETS AUTHENTICATION & LIVE DATA LOAD
@@ -214,22 +218,12 @@ def prepare(raw):
 
     d["month_client"] = d["date_client"].dt.month_name()
     d["month_prod"] = d["date_prod"].dt.month_name()
-
     d["type_clean"] = d["type"].str.upper()
     d["category_clean"] = d["category"].str.upper().str.strip()
-
     return d
 
-def metrics(items):
-    cols = st.columns(len(items))
-    for c, (label, value) in zip(cols, items):
-        c.metric(label, value)
-
-def fmt(x):
-    return f"{x:,.0f}"
-
 # -----------------------------------------------------------------------------
-# 5. MASTER SHEET DASHBOARD VIEWS & TABLES
+# 5. MASTER SHEET DASHBOARD VIEWS
 # -----------------------------------------------------------------------------
 def overview(d):
     st.subheader("Executive Overview")
@@ -311,7 +305,7 @@ def designer_dashboard(d):
     st.dataframe(cat_df, use_container_width=True, hide_index=True)
 
 def client_dashboard(d):
-    st.subheader("🏢 Executive Client Performance Dashboard (Date: Col B, Direct Column J Sum)")
+    st.subheader("🏢 Executive Client Performance Dashboard")
     x = d.copy()
 
     total_designs = len(x[x.qty > 0])
@@ -336,7 +330,7 @@ def client_dashboard(d):
     ])
 
     st.markdown("---")
-    st.subheader("📅 Client Fulfillment Breakdown (Monthly Filtered by Col B Date)")
+    st.subheader("📅 Client Fulfillment Breakdown")
     monthly_ful = []
     for m in MONTHS:
         sub_m = x[x["month_client"] == m]
@@ -365,8 +359,7 @@ def client_dashboard(d):
         st.plotly_chart(px.pie(q, names="Status", values="Qty", hole=.45, title="ORDER FULFILLMENT RATIO (RECEIVED vs PENDING)", color_discrete_sequence=["#059669", "#DC2626"]), use_container_width=True)
 
 def production_dashboard(d):
-    st.subheader("🏭 Production Executive Process Dashboard (Date: Col AC, Prod: Col AS)")
-
+    st.subheader("🏭 Production Executive Process Dashboard")
     overdue_mask = d["delay"] > 0
     overdue = d[overdue_mask]
     avg_overdue = overdue["delay"].mean() if len(overdue) > 0 else 0.0
@@ -378,7 +371,6 @@ def production_dashboard(d):
         ("PENDING PCS [Col AU]", fmt(d.pending.sum())),
         ("OVERDUE PCS (AH > 0)", fmt(d.loc[overdue_mask, "production"].sum())),
     ])
-
     metrics([
         ("AVG OVERDUE DAYS", f"{avg_overdue:.1f} Days"),
         ("ON-TIME DELIVERY %", f"{((len(d[d.delay <= 0]) / len(d) * 100) if len(d) > 0 else 0):.1f}%"),
@@ -403,153 +395,10 @@ def data_check(totals_row, d_all):
     st.dataframe(out, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# 6. GENERIC SUMMARY ENGINE & AUTO-ANALYSIS HELPER FUNCTIONS
+# 6. GENERIC TABLE UTILITIES
 # -----------------------------------------------------------------------------
 PALETTE = ["#2563eb", "#059669", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#ea580c", "#475569"]
 px.defaults.color_discrete_sequence = PALETTE
-
-MONTH_ABBR = [m[:3].lower() for m in MONTHS]
-MONTH_COL_RE = re.compile(r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-'/_.]*\d{0,4}$", re.I)
-ID_COL_RE = re.compile(r"^(s\.?\s*no\.?|sr\.?\s*no\.?|sl\.?\s*no\.?|serial.*|#|id|index)$", re.I)
-CATEGORY_NUM_RE = re.compile(r"^(year|fy|financial year|week|quarter|month no\.?)$", re.I)
-TOTAL_RE = re.compile(r"^(grand\s*|sub\s*|net\s*)?total\b", re.I)
-BLANKS = {"", "nan", "none", "-", "—", "–", "n/a", "na", "#n/a", "#div/0!", "#ref!", "#value!", "#error!"}
-AGGS = {"Sum": "sum", "Average": "mean", "Median": "median", "Max": "max", "Min": "min", "Count": "count"}
-
-def is_number_like(s):
-    t = re.sub(r"[,\s₹$€£%()\xa0]", "", str(s))
-    if t in ("", "-", "."):
-        return False
-    try:
-        float(t)
-        return True
-    except ValueError:
-        return False
-
-def blank_mask(s):
-    return s.astype(str).str.strip().str.lower().isin(BLANKS)
-
-def num_nan(s):
-    if not isinstance(s, pd.Series):
-        s = pd.Series(s)
-    text = s.astype(str).str.replace("\xa0", "", regex=False).str.strip()
-    text = text.mask(text.str.lower().isin(BLANKS))
-    neg = text.str.match(r"^\(.*\)$", na=False)
-    cleaned = text.str.replace(",", "", regex=False).str.replace(r"[^0-9.\-]", "", regex=True)
-    cleaned = cleaned.mask(neg, "-" + cleaned.str.replace("-", "", regex=False))
-    out = pd.to_numeric(cleaned, errors="coerce")
-    return pd.Series(np.asarray(out, dtype="float64"), index=s.index)
-
-def date_series(s):
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        res = pd.to_datetime(s, errors="coerce", dayfirst=True)
-        miss = res.isna() & s.notna() & (s.astype(str).str.strip() != "")
-        if miss.any():
-            res[miss] = pd.to_datetime(s[miss], errors="coerce", dayfirst=False)
-    return res
-
-def make_unique(names):
-    seen, out = {}, []
-    for i, n in enumerate(names):
-        n = re.sub(r"\s+", " ", str(n)).strip() or f"Column {i + 1}"
-        if n in seen:
-            seen[n] += 1
-            n = f"{n} ({seen[n]})"
-        else:
-            seen[n] = 1
-        out.append(n)
-    return out
-
-def detect_header_row(values, scan=15):
-    head = values[:scan]
-    counts = [sum(1 for c in r if str(c).strip()) for r in head]
-    if not counts or max(counts) == 0:
-        return 0
-    best = max(counts)
-    for i, r in enumerate(head):
-        filled = [str(c).strip() for c in r if str(c).strip()]
-        if len(filled) >= max(2, 0.6 * best):
-            if sum(is_number_like(c) for c in filled) / len(filled) < 0.4:
-                return i
-    return counts.index(best)
-
-def split_table(values):
-    hdr = detect_header_row(values)
-    preface = [r for r in values[:hdr] if any(str(c).strip() for c in r)]
-    body = values[hdr + 1:]
-    width = max([len(values[hdr])] + [len(r) for r in body]) if body else len(values[hdr])
-    header = list(values[hdr]) + [""] * (width - len(values[hdr]))
-    header = make_unique(header)
-    body = [list(r) + [""] * (width - len(r)) for r in body]
-    df = pd.DataFrame(body, columns=header).astype(str)
-    df = df.apply(lambda c: c.str.strip())
-    df = df.loc[(df != "").any(axis=1)]
-    df = df.loc[:, (df != "").any(axis=0)]
-    non_id = [c for c in df.columns if not ID_COL_RE.match(c.strip())]
-    if non_id:
-        df = df.loc[(df[non_id] != "").any(axis=1)]
-
-    def first_text(row):
-        for v in row:
-            if v and not is_number_like(v):
-                return v
-        return ""
-
-    is_total = df.apply(lambda r: bool(TOTAL_RE.match(first_text(r))), axis=1) if len(df) else pd.Series(dtype=bool)
-    totals = df[is_total].reset_index(drop=True)
-    df = df[~is_total].reset_index(drop=True)
-    return df, preface, totals
-
-def infer_table(df):
-    typed, kinds = pd.DataFrame(index=df.index), {}
-    for col in df.columns:
-        raw = df[col].astype(str).str.strip()
-        is_blank = blank_mask(raw)
-        filled = raw[~is_blank]
-        if filled.empty:
-            continue
-        sample = filled.head(300)
-        if sample.map(is_number_like).mean() >= 0.8:
-            if ID_COL_RE.match(col.strip()):
-                typed[col], kinds[col] = raw, "id"
-            elif CATEGORY_NUM_RE.match(col.strip()):
-                typed[col], kinds[col] = raw.where(~is_blank, ""), "category"
-            elif sample.str.contains("%").mean() >= 0.5:
-                typed[col], kinds[col] = num_nan(raw), "percent"
-            else:
-                typed[col], kinds[col] = num_nan(raw), "numeric"
-            continue
-        if sample.str.contains(r"\d").mean() >= 0.9:
-            parsed = date_series(raw.where(~is_blank))
-            if parsed.notna().sum() / len(filled) >= 0.8:
-                typed[col], kinds[col] = parsed, "date"
-                continue
-        typed[col] = raw.where(~is_blank, "")
-        n = filled.nunique()
-        kinds[col] = "category" if (n <= 40 and (n <= 0.7 * len(filled) or n <= 8)) else "text"
-    return typed, kinds
-
-def order_values(series):
-    vals = sorted({str(v) for v in series if str(v).strip() != ""})
-    low = [v.strip().lower() for v in vals]
-    if vals and all(v in MONTH_ABBR or v in [m.lower() for m in MONTHS] for v in low):
-        return sorted(vals, key=lambda v: MONTH_ABBR.index(v.strip().lower()[:3]))
-    return vals
-
-def style_fig(fig, height=390):
-    fig.update_layout(height=height, margin=dict(l=10, r=10, t=55, b=10), legend_title_text="",
-                      font=dict(size=12), title_font_size=15)
-    return fig
-
-@st.cache_data(ttl=300, show_spinner="Loading sheet tabs...")
-def list_tabs(sheet_id):
-    book = get_client().open_by_key(sheet_id)
-    return [(ws.title, ws.id) for ws in book.worksheets()]
-
-@st.cache_data(ttl=300, show_spinner="Loading live data from Google Sheet...")
-def load_tab_values(sheet_id, tab_title):
-    return get_client().open_by_key(sheet_id).worksheet(tab_title).get_all_values()
 
 def show_access_error(e):
     email = ""
@@ -559,181 +408,496 @@ def show_access_error(e):
         pass
     st.error("Could not open this Google Sheet. Share it with service account: " + (f"**{email}**" if email else "email from secrets"))
 
-@st.cache_data(ttl=300, show_spinner="Loading data from Google Sheets...")
-def load_many_tabs(sheet_id, titles):
+@st.cache_data(ttl=300, show_spinner="Sheet tabs load ho rahe hain...")
+def list_tabs(sheet_id):
     book = get_client().open_by_key(sheet_id)
-    out = {}
-    titles = list(titles)
-    for i in range(0, len(titles), 15):
-        chunk = titles[i:i + 15]
-        try:
-            res = book.values_batch_get(["'" + t.replace("'", "''") + "'" for t in chunk])
-            for t, vr in zip(chunk, res.get("valueRanges", [])):
-                out[t] = vr.get("values", [])
-        except Exception:
-            for t in chunk:
-                out[t] = book.worksheet(t).get_all_values()
-    return out
+    return [(ws.title, ws.id) for ws in book.worksheets()]
 
-def find_tab(titles, wanted, exclude_re=None):
+@st.cache_data(ttl=300, show_spinner="Google Sheet se data load ho raha hai...")
+def load_tab_values(sheet_id, tab_title):
+    return get_client().open_by_key(sheet_id).worksheet(tab_title).get_all_values()
+
+def find_tab(titles, wanted):
     nw = re.sub(r"[^a-z0-9]", "", str(wanted).lower())
-    pool = [t for t in titles if not (exclude_re and exclude_re.search(t))]
-    for t in pool:
+    for t in titles:
         if re.sub(r"[^a-z0-9]", "", str(t).lower()) == nw:
             return t
     return None
 
-SKIP_TAB_RE = re.compile(r"summary|dashboard|master|total|index|instruction|readme|config|template", re.I)
+def style_fig(fig, height=380):
+    fig.update_layout(
+        height=height,
+        margin=dict(l=10, r=10, t=50, b=10),
+        legend_title_text="",
+        font=dict(size=12),
+        title_font_size=15
+    )
+    return fig
 
 # -----------------------------------------------------------------------------
-# 7. UPDATED & DEDICATED FABRICATOR REPORT SHEET HANDLER
+# 7. PARSER & DASHBOARD FOR "MONTHWISE SUMMARY" (FABRICATOR REPORT)
 # -----------------------------------------------------------------------------
+def parse_monthwise_summary_sheet(values):
+    """
+    Parses the multi-block grid layout in 'MONTHWISE SUMMARY' tab:
+    Position Of Stock <NAME> followed by columns:
+    [Month, fabric issue (mtr), Pcs Under Production, RCVD, Remaining, monthly incoming]
+    """
+    records = []
+    if not values:
+        return pd.DataFrame()
+
+    for r_idx, row in enumerate(values):
+        for c_idx, cell in enumerate(row):
+            cell_str = str(cell).strip()
+            if re.search(r"position\s*of\s*stock", cell_str, re.I):
+                fab_name = re.sub(r"position\s*of\s*stock\s*[:\-]?", "", cell_str, flags=re.I).strip()
+                fab_name = re.sub(r"^[(\[]|[)\]]$", "", fab_name).strip()
+                if "ALL OVER" in fab_name.upper():
+                    fab_name = "ALL OVER (CONSOLIDATED)"
+                if not fab_name:
+                    fab_name = "UNKNOWN"
+
+                # Find header row right below title
+                header_row_idx = None
+                for scan_r in range(r_idx + 1, min(r_idx + 4, len(values))):
+                    scan_row = values[scan_r]
+                    if c_idx < len(scan_row) and re.search(r"month", str(scan_row[c_idx]), re.I):
+                        header_row_idx = scan_r
+                        break
+
+                if header_row_idx is None:
+                    continue
+
+                h_row = values[header_row_idx]
+                col_map = {}
+                for offset in range(0, 8):
+                    curr_col = c_idx + offset
+                    if curr_col < len(h_row):
+                        h_val = str(h_row[curr_col]).strip().lower()
+                        if not h_val and offset > 4:
+                            break
+                        if "month" in h_val and "month" not in col_map:
+                            col_map["month"] = curr_col
+                        elif ("fabric" in h_val or "issue" in h_val or "mtr" in h_val) and "fabric_issue" not in col_map:
+                            col_map["fabric_issue"] = curr_col
+                        elif ("under" in h_val or "production" in h_val or "pcs" in h_val) and "production" not in col_map:
+                            col_map["production"] = curr_col
+                        elif ("rcvd" in h_val or "received" in h_val) and "received" not in col_map:
+                            col_map["received"] = curr_col
+                        elif ("remain" in h_val or "pending" in h_val) and "remaining" not in col_map:
+                            col_map["remaining"] = curr_col
+                        elif "incoming" in h_val and "incoming" not in col_map:
+                            col_map["incoming"] = curr_col
+
+                if "month" not in col_map:
+                    continue
+
+                # Read data rows
+                for data_r in range(header_row_idx + 1, len(values)):
+                    d_row = values[data_r]
+                    if c_idx >= len(d_row):
+                        break
+                    m_val = str(d_row[c_idx]).strip()
+                    if not m_val:
+                        continue
+                    if re.search(r"^total", m_val, re.I):
+                        break
+                    if re.search(r"position\s*of\s*stock", m_val, re.I):
+                        break
+                    if not re.search(r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", m_val, re.I):
+                        continue
+
+                    def get_num(key):
+                        idx = col_map.get(key)
+                        if idx is not None and idx < len(d_row):
+                            val = d_row[idx]
+                            return float(num(pd.Series([val])).iloc[0])
+                        return 0.0
+
+                    issue_val = get_num("fabric_issue")
+                    prod_val = get_num("production")
+                    rcvd_val = get_num("received")
+                    rem_val = get_num("remaining")
+                    inc_val = get_num("incoming")
+
+                    # Status tagging
+                    if prod_val == 0 and issue_val == 0:
+                        status = "No Orders"
+                    elif rem_val == 0 and prod_val > 0:
+                        status = "Completed (100%)"
+                    elif rcvd_val > 0 and rem_val > 0:
+                        status = "In Progress"
+                    elif rcvd_val == 0 and prod_val > 0:
+                        status = "Pending / Not Started"
+                    else:
+                        status = "In Progress" if rem_val > 0 else "Completed (100%)"
+
+                    records.append({
+                        "Fabricator": fab_name,
+                        "Month": m_val,
+                        "Fabric Issue (mtr)": issue_val,
+                        "Pcs Under Production": int(prod_val),
+                        "RCVD (Pcs)": int(rcvd_val),
+                        "Remaining (Pcs)": int(rem_val),
+                        "Monthly Incoming (Pcs)": int(inc_val),
+                        "Production Status": status,
+                    })
+
+    df = pd.DataFrame(records)
+    if not df.empty:
+        # Standardize month sorting
+        month_order = [
+            "April-26", "May-26", "June-26", "July-26", "August-26", "September-26",
+            "October-26", "November-26", "December-26", "January-27", "February-27", "March-27"
+        ]
+        df["Month_Order"] = df["Month"].apply(lambda m: month_order.index(m) if m in month_order else 99)
+        df = df.sort_values(["Month_Order", "Fabricator"]).drop(columns=["Month_Order"])
+    return df
+
 def render_fabricator_sheet(sheet_name, cfg):
     sid = cfg["id"]
     try:
-        titles = [t for t, _ in list_tabs(sid)]
-        sum_defaults = [t for t in (find_tab(titles, w) for w in cfg.get("summary_tabs", [])) if t]
-        fab_tabs = [t for t in titles if t not in sum_defaults and not SKIP_TAB_RE.search(t)]
-        if not fab_tabs:
-            fab_tabs = [t for t in titles if not SKIP_TAB_RE.search(t)]
-        values = load_many_tabs(sid, tuple(fab_tabs))
+        tabs = list_tabs(sid)
+        titles = [t for t, _ in tabs]
     except Exception as e:
         show_access_error(e)
         st.stop()
 
-    frames = []
-    for tab_name in fab_tabs:
-        v = values.get(tab_name) or []
-        if not v or not any(str(c).strip() for row in v for c in row):
-            continue
-        df, _preface, _totals = split_table(v)
-        if df.empty:
-            continue
-        df.columns = [str(c).strip() or f"Column {i+1}" for i, c in enumerate(df.columns)]
-        df = df.loc[:, ~pd.Index(df.columns).duplicated()]
-        df["Fabricator_Name"] = tab_name
-        frames.append(df)
+    summary_tab = find_tab(titles, "MONTHWISE SUMMARY")
+    if not summary_tab:
+        summary_tab = titles[0] if titles else "MONTHWISE SUMMARY"
 
-    if not frames:
-        st.warning("Is spreadsheet mein usable fabricator data nahi mila.")
+    try:
+        raw_values = load_tab_values(sid, summary_tab)
+    except Exception as e:
+        show_access_error(e)
         st.stop()
 
-    df_raw = pd.concat(frames, ignore_index=True, sort=False).fillna("").astype(str)
-    df_all, _kinds = infer_table(df_raw)
-    
-    # Auto-detect key columns
-    fab_col = "Fabricator_Name"
-    qty_col = next((c for c in df_all.columns if re.search(r"qty|quantity|pcs|pieces", c, re.I)), None)
-    month_col = next((c for c in df_all.columns if re.search(r"month", c, re.I)), None)
-    cat_col = next((c for c in df_all.columns if re.search(r"category", c, re.I)), None)
-    status_col = next((c for c in df_all.columns if re.search(r"status", c, re.I)), None)
+    if not raw_values:
+        st.warning(f"Tab '{summary_tab}' empty hai.")
+        st.stop()
 
-    # Sidebar Filters
+    df_parsed = parse_monthwise_summary_sheet(raw_values)
+    if df_parsed.empty:
+        st.error("Sheet se Fabricator summary data extract nahi ho saka. Format verify karein.")
+        st.stop()
+
+    # Separate 'ALL OVER (CONSOLIDATED)' from individual fabricators
+    is_consolidated = df_parsed["Fabricator"].str.contains("ALL OVER", case=False, na=False)
+    df_consolidated = df_parsed[is_consolidated].copy()
+    df_vendors = df_parsed[~is_consolidated].copy()
+
+    # If all records are consolidated, fallback
+    df_work = df_vendors if not df_vendors.empty else df_consolidated
+
+    # -------------------------------------------------------------------------
+    # SIDEBAR FILTERS (Fabricator Name, Month, Production Status)
+    # -------------------------------------------------------------------------
     with st.sidebar:
         st.markdown("### 🔎 Fabricator Filters")
-        
-        all_fabs = sorted(df_all[fab_col].unique())
-        sel_fabs = st.multiselect("Fabricator Name", options=all_fabs, default=[])
-        
-        sel_months = []
-        if month_col:
-            all_months = order_values(df_all[month_col])
-            sel_months = st.multiselect("Month", options=all_months, default=[])
-            
-        sel_cats = []
-        if cat_col:
-            all_cats = sorted([x for x in df_all[cat_col].unique() if x])
-            sel_cats = st.multiselect("Category", options=all_cats, default=[])
 
-        sel_status = []
-        if status_col:
-            all_status = sorted([x for x in df_all[status_col].unique() if x])
-            sel_status = st.multiselect("Status", options=all_status, default=[])
+        # 1. Fabricator Filter
+        all_fabs = sorted(df_work["Fabricator"].unique())
+        fab_opts = ["All"] + all_fabs
+        sel_fabs = st.multiselect("Fabricator Name", options=fab_opts, default=["All"], key="fab_filter_name")
 
-        if st.button("🔄 Refresh Data", key="fab_refresh"):
+        # 2. Month Filter
+        all_months = list(dict.fromkeys(df_work["Month"].tolist()))
+        month_opts = ["All"] + all_months
+        sel_months = st.multiselect("Month", options=month_opts, default=["All"], key="fab_filter_month")
+
+        # 3. Production Status Filter
+        all_statuses = ["Completed (100%)", "In Progress", "Pending / Not Started", "No Orders"]
+        status_opts = ["All"] + [s for s in all_statuses if s in df_work["Production Status"].values]
+        sel_status = st.multiselect("Production Status", options=status_opts, default=["All"], key="fab_filter_status")
+
+        hide_zero_prod = st.checkbox("Hide Zero-Production Rows", value=True, help="Aise months hide karein jisme production start nahi hui")
+
+        if st.button("🔄 Refresh Data", key="fab_refresh_btn"):
             st.cache_data.clear()
             st.rerun()
 
     # Filter Application
-    filtered_df = df_all.copy()
-    if sel_fabs:
-        filtered_df = filtered_df[filtered_df[fab_col].isin(sel_fabs)]
-    if sel_months and month_col:
-        filtered_df = filtered_df[filtered_df[month_col].isin(sel_months)]
-    if sel_cats and cat_col:
-        filtered_df = filtered_df[filtered_df[cat_col].isin(sel_cats)]
-    if sel_status and status_col:
-        filtered_df = filtered_df[filtered_df[status_col].isin(sel_status)]
+    filtered = df_work.copy()
+    if "All" not in sel_fabs and sel_fabs:
+        filtered = filtered[filtered["Fabricator"].isin(sel_fabs)]
+    if "All" not in sel_months and sel_months:
+        filtered = filtered[filtered["Month"].isin(sel_months)]
+    if "All" not in sel_status and sel_status:
+        filtered = filtered[filtered["Production Status"].isin(sel_status)]
+    if hide_zero_prod:
+        filtered = filtered[(filtered["Pcs Under Production"] > 0) | (filtered["Fabric Issue (mtr)"] > 0)]
 
+    # -------------------------------------------------------------------------
+    # MAIN DASHBOARD HEADER
+    # -------------------------------------------------------------------------
     st.markdown(
         f"""<div class="dashboard-hero">
-        <h2>🧵 {sheet_name}</h2>
-        <p>Clean Vendor Analytics & Executive Dashboard · {len(filtered_df):,} Rows Analyzed</p>
+        <h2>🧵 {sheet_name} · Executive Performance Dashboard</h2>
+        <p>Live Source Tab: <b>{html.escape(summary_tab)}</b> · {filtered['Fabricator'].nunique():,} Active Fabricators · {len(filtered):,} Month-Vendor Records</p>
         </div>""",
         unsafe_allow_html=True
     )
 
-    t1, t2 = st.tabs(["📊 Executive Clean Dashboard", "🗃️ Combined Raw Data"])
+    if filtered.empty:
+        st.warning("Selected filters ke saath koi record match nahi hua. Kripya sidebar se filter reset karein.")
+        st.stop()
 
-    with t1:
-        # Metrics
-        total_orders = len(filtered_df)
-        active_fabs = filtered_df[fab_col].nunique()
-        total_pcs = num(filtered_df[qty_col]).sum() if qty_col else 0
+    # -------------------------------------------------------------------------
+    # EXECUTIVE KPI CARDS
+    # -------------------------------------------------------------------------
+    tot_fabric = filtered["Fabric Issue (mtr)"].sum()
+    tot_prod = filtered["Pcs Under Production"].sum()
+    tot_rcvd = filtered["RCVD (Pcs)"].sum()
+    tot_rem = filtered["Remaining (Pcs)"].sum()
+    tot_incoming = filtered["Monthly Incoming (Pcs)"].sum()
 
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Active Fabricators", f"{active_fabs:,}")
-        m2.metric("Total Records / Orders", f"{total_orders:,}")
-        m3.metric("Total Quantity (Pcs)", fmt(total_pcs))
-        if cat_col:
-            m4.metric("Categories Covered", f"{filtered_df[cat_col].nunique():,}")
-        else:
-            m4.metric("Status", "Data Active")
+    fulfillment_rate = (tot_rcvd / tot_prod * 100) if tot_prod > 0 else 0.0
+    avg_fabric_pc = (tot_fabric / tot_prod) if tot_prod > 0 else 0.0
 
-        st.markdown("---")
+    st.markdown("#### 📌 Key Performance Indicators (MONTHWISE SUMMARY)")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total Fabric Issued", f"{tot_fabric:,.1f} Mtr")
+    k2.metric("Pcs Under Production", fmt(tot_prod))
+    k3.metric("Received Pcs (RCVD)", fmt(tot_rcvd))
+    k4.metric("Remaining Backlog", fmt(tot_rem))
 
-        # Visual Analytics Charts
-        c1, c2 = st.columns(2)
+    k5, k6, k7, k8 = st.columns(4)
+    k5.metric("Overall Fulfillment %", f"{fulfillment_rate:.1f}%")
+    k6.metric("Total Monthly Incoming", fmt(tot_incoming))
+    k7.metric("Avg Fabric / Pc", f"{avg_fabric_pc:.2f} Mtr")
+    k8.metric("Active Vendors Filtered", f"{filtered['Fabricator'].nunique():,}")
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------------------
+    # DASHBOARD TABS
+    # -------------------------------------------------------------------------
+    tab_overview, tab_comparison, tab_table, tab_consolidated = st.tabs([
+        "📈 Production & Status Trends",
+        "👥 Fabricator Comparison",
+        "📋 Monthly Breakdown Table",
+        "🏛️ Consolidated All-Over Stock"
+    ])
+
+    with tab_overview:
+        c1, c2 = st.columns([1.3, 1])
         with c1:
-            if qty_col:
-                fab_qty = filtered_df.groupby(fab_col)[qty_col].apply(lambda s: num(s).sum()).reset_index()
-                fig_pie = px.pie(fab_qty, names=fab_col, values=qty_col, title="Fabricator Volume Share (Pcs)", hole=0.45)
-                st.plotly_chart(style_fig(fig_pie, 380), use_container_width=True)
-            else:
-                fab_count = filtered_df[fab_col].value_counts().reset_index()
-                fab_count.columns = [fab_col, "Count"]
-                fig_pie = px.pie(fab_count, names=fab_col, values="Count", title="Fabricator Order Distribution", hole=0.45)
-                st.plotly_chart(style_fig(fig_pie, 380), use_container_width=True)
+            # Monthly Production vs RCVD vs Remaining Trend
+            m_agg = filtered.groupby("Month", as_index=False).agg({
+                "Pcs Under Production": "sum",
+                "RCVD (Pcs)": "sum",
+                "Remaining (Pcs)": "sum"
+            })
+            # Preserve month chronological order
+            month_order = [
+                "April-26", "May-26", "June-26", "July-26", "August-26", "September-26",
+                "October-26", "November-26", "December-26", "January-27", "February-27", "March-27"
+            ]
+            m_agg["order"] = m_agg["Month"].apply(lambda m: month_order.index(m) if m in month_order else 99)
+            m_agg = m_agg.sort_values("order").drop(columns=["order"])
+
+            fig_trend = go.Figure()
+            fig_trend.add_trace(go.Bar(name="Under Production", x=m_agg["Month"], y=m_agg["Pcs Under Production"], marker_color="#2563eb"))
+            fig_trend.add_trace(go.Bar(name="Received (RCVD)", x=m_agg["Month"], y=m_agg["RCVD (Pcs)"], marker_color="#059669"))
+            fig_trend.add_trace(go.Bar(name="Remaining", x=m_agg["Month"], y=m_agg["Remaining (Pcs)"], marker_color="#dc2626"))
+            fig_trend.update_layout(
+                title="Monthly Production vs Delivery vs Remaining (Pcs)",
+                barmode="group",
+                xaxis_title="Month",
+                yaxis_title="Pieces"
+            )
+            st.plotly_chart(style_fig(fig_trend, 400), use_container_width=True)
 
         with c2:
-            if month_col:
-                if qty_col:
-                    m_qty = filtered_df.groupby(month_col)[qty_col].apply(lambda s: num(s).sum()).reset_index()
-                    fig_bar = px.bar(m_qty, x=month_col, y=qty_col, title="Monthly Order Volume (Pcs)", text_auto=".2s")
-                else:
-                    m_count = filtered_df[month_col].value_counts().reset_index()
-                    m_count.columns = [month_col, "Count"]
-                    fig_bar = px.bar(m_count, x=month_col, y="Count", title="Monthly Order Count", text_auto=True)
-                st.plotly_chart(style_fig(fig_bar, 380), use_container_width=True)
-            else:
-                st.info("Month column detect nahi hua.")
+            # Production Status Ratio
+            status_counts = filtered["Production Status"].value_counts().reset_index()
+            status_counts.columns = ["Status", "Records"]
+            status_colors = {
+                "Completed (100%)": "#059669",
+                "In Progress": "#f59e0b",
+                "Pending / Not Started": "#dc2626",
+                "No Orders": "#94a3b8"
+            }
+            fig_status = px.pie(
+                status_counts,
+                names="Status",
+                values="Records",
+                title="Vendor Orders Status Breakdown",
+                hole=0.45,
+                color="Status",
+                color_discrete_map=status_colors
+            )
+            st.plotly_chart(style_fig(fig_status, 400), use_container_width=True)
 
         st.markdown("---")
-        st.subheader("📋 Fabricator Performance Summary Table")
-        
-        if qty_col:
-            summary_group = filtered_df.groupby(fab_col).agg(
-                Total_Orders=(fab_col, "count"),
-                Total_Pcs=(qty_col, lambda s: int(num(s).sum()))
-            ).reset_index().sort_values("Total_Pcs", ascending=False)
+
+        c3, c4 = st.columns(2)
+        with c3:
+            # Fabric Issue vs Production Correlation
+            m_fab = filtered.groupby("Month", as_index=False).agg({
+                "Fabric Issue (mtr)": "sum",
+                "Pcs Under Production": "sum"
+            })
+            m_fab["order"] = m_fab["Month"].apply(lambda m: month_order.index(m) if m in month_order else 99)
+            m_fab = m_fab.sort_values("order").drop(columns=["order"])
+
+            fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
+            fig_dual.add_trace(
+                go.Bar(name="Fabric Issue (mtr)", x=m_fab["Month"], y=m_fab["Fabric Issue (mtr)"], marker_color="#0891b2"),
+                secondary_y=False
+            )
+            fig_dual.add_trace(
+                go.Scatter(name="Under Production (Pcs)", x=m_fab["Month"], y=m_fab["Pcs Under Production"], mode="lines+markers", line=dict(color="#ea580c", width=3)),
+                secondary_y=True
+            )
+            fig_dual.update_layout(title="Fabric Issued (Mtrs) vs Production Output (Pcs)")
+            fig_dual.update_yaxes(title_text="Fabric Issued (Mtr)", secondary_y=False)
+            fig_dual.update_yaxes(title_text="Pieces Under Production", secondary_y=True)
+            st.plotly_chart(style_fig(fig_dual, 380), use_container_width=True)
+
+        with c4:
+            # Fabricator Volume Share
+            fab_share = filtered.groupby("Fabricator", as_index=False)["Pcs Under Production"].sum().sort_values("Pcs Under Production", ascending=False)
+            fig_fab_pie = px.pie(
+                fab_share,
+                names="Fabricator",
+                values="Pcs Under Production",
+                title="Fabricator Production Volume Share",
+                hole=0.45
+            )
+            st.plotly_chart(style_fig(fig_fab_pie, 380), use_container_width=True)
+
+    with tab_comparison:
+        st.subheader("👥 Fabricator Performance & Backlog Analysis")
+        fab_summary = filtered.groupby("Fabricator", as_index=False).agg({
+            "Fabric Issue (mtr)": "sum",
+            "Pcs Under Production": "sum",
+            "RCVD (Pcs)": "sum",
+            "Remaining (Pcs)": "sum",
+            "Monthly Incoming (Pcs)": "sum"
+        })
+        fab_summary["Fulfillment %"] = fab_summary.apply(
+            lambda r: f"{(r['RCVD (Pcs)'] / r['Pcs Under Production'] * 100):.1f}%" if r["Pcs Under Production"] > 0 else "0.0%",
+            axis=1
+        )
+        fab_summary["Avg Mtr/Pc"] = fab_summary.apply(
+            lambda r: f"{(r['Fabric Issue (mtr)'] / r['Pcs Under Production']):.2f}" if r["Pcs Under Production"] > 0 else "0.00",
+            axis=1
+        )
+        fab_summary = fab_summary.sort_values("Pcs Under Production", ascending=False)
+
+        # Stacked fulfillment chart
+        fig_stack = go.Figure()
+        fig_stack.add_trace(go.Bar(
+            name="Received (RCVD)",
+            x=fab_summary["Fabricator"],
+            y=fab_summary["RCVD (Pcs)"],
+            marker_color="#059669"
+        ))
+        fig_stack.add_trace(go.Bar(
+            name="Pending Backlog",
+            x=fab_summary["Fabricator"],
+            y=fab_summary["Remaining (Pcs)"],
+            marker_color="#dc2626"
+        ))
+        fig_stack.update_layout(
+            barmode="stack",
+            title="Fabricator Received vs Pending Backlog (Pcs)",
+            xaxis_title="Fabricator",
+            yaxis_title="Pcs"
+        )
+        st.plotly_chart(style_fig(fig_stack, 390), use_container_width=True)
+
+        st.markdown("#### 📋 Fabricator Scorecard Summary")
+        # Add grand total row
+        tot_summary_row = pd.DataFrame([{
+            "Fabricator": "TOTAL",
+            "Fabric Issue (mtr)": fab_summary["Fabric Issue (mtr)"].sum(),
+            "Pcs Under Production": fab_summary["Pcs Under Production"].sum(),
+            "RCVD (Pcs)": fab_summary["RCVD (Pcs)"].sum(),
+            "Remaining (Pcs)": fab_summary["Remaining (Pcs)"].sum(),
+            "Monthly Incoming (Pcs)": fab_summary["Monthly Incoming (Pcs)"].sum(),
+            "Fulfillment %": f"{(fab_summary['RCVD (Pcs)'].sum() / fab_summary['Pcs Under Production'].sum() * 100):.1f}%" if fab_summary["Pcs Under Production"].sum() > 0 else "0.0%",
+            "Avg Mtr/Pc": f"{(fab_summary['Fabric Issue (mtr)'].sum() / fab_summary['Pcs Under Production'].sum()):.2f}" if fab_summary["Pcs Under Production"].sum() > 0 else "0.00"
+        }])
+        fab_summary_display = pd.concat([fab_summary, tot_summary_row], ignore_index=True)
+
+        st.dataframe(
+            fab_summary_display.style.format({
+                "Fabric Issue (mtr)": "{:,.2f}",
+                "Pcs Under Production": "{:,.0f}",
+                "RCVD (Pcs)": "{:,.0f}",
+                "Remaining (Pcs)": "{:,.0f}",
+                "Monthly Incoming (Pcs)": "{:,.0f}"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    with tab_table:
+        st.subheader("📋 Filtered Month-by-Month Production Records")
+        display_df = filtered[[
+            "Fabricator", "Month", "Fabric Issue (mtr)", "Pcs Under Production",
+            "RCVD (Pcs)", "Remaining (Pcs)", "Monthly Incoming (Pcs)", "Production Status"
+        ]].copy()
+
+        st.dataframe(
+            display_df.style.format({
+                "Fabric Issue (mtr)": "{:,.2f}",
+                "Pcs Under Production": "{:,.0f}",
+                "RCVD (Pcs)": "{:,.0f}",
+                "Remaining (Pcs)": "{:,.0f}",
+                "Monthly Incoming (Pcs)": "{:,.0f}"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    with tab_consolidated:
+        st.subheader("🏛️ Consolidated Position Of Stock (ALL OVER)")
+        if not df_consolidated.empty:
+            c_display = df_consolidated[[
+                "Month", "Fabric Issue (mtr)", "Pcs Under Production",
+                "RCVD (Pcs)", "Remaining (Pcs)", "Monthly Incoming (Pcs)"
+            ]].copy()
+
+            tot_c = pd.DataFrame([{
+                "Month": "GRAND TOTAL",
+                "Fabric Issue (mtr)": c_display["Fabric Issue (mtr)"].sum(),
+                "Pcs Under Production": c_display["Pcs Under Production"].sum(),
+                "RCVD (Pcs)": c_display["RCVD (Pcs)"].sum(),
+                "Remaining (Pcs)": c_display["Remaining (Pcs)"].sum(),
+                "Monthly Incoming (Pcs)": c_display["Monthly Incoming (Pcs)"].sum()
+            }])
+            c_display_tot = pd.concat([c_display, tot_c], ignore_index=True)
+
+            st.dataframe(
+                c_display_tot.style.format({
+                    "Fabric Issue (mtr)": "{:,.2f}",
+                    "Pcs Under Production": "{:,.0f}",
+                    "RCVD (Pcs)": "{:,.0f}",
+                    "Remaining (Pcs)": "{:,.0f}",
+                    "Monthly Incoming (Pcs)": "{:,.0f}"
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
         else:
-            summary_group = filtered_df[fab_col].value_counts().reset_index()
-            summary_group.columns = [fab_col, "Total_Orders"]
+            st.info("Consolidated 'ALL OVER' table sheet me detect nahi hua.")
 
-        st.dataframe(summary_group, use_container_width=True, hide_index=True)
-
-    with t2:
-        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+# -----------------------------------------------------------------------------
+# 8. SIMPLE OVERVIEW SHEET HANDLER
+# -----------------------------------------------------------------------------
+def split_table(values):
+    if not values:
+        return pd.DataFrame(), [], pd.DataFrame()
+    hdr = 0
+    header = values[hdr]
+    body = values[hdr + 1:]
+    df = pd.DataFrame(body, columns=header).astype(str)
+    return df, [], pd.DataFrame()
 
 def render_simple_overview_sheet(sheet_name, cfg):
     sid = cfg["id"]
@@ -774,7 +938,7 @@ def render_simple_overview_sheet(sheet_name, cfg):
     st.dataframe(df_raw, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# 8. MAIN APPLICATION ROUTER
+# 9. MAIN APPLICATION ROUTER
 # -----------------------------------------------------------------------------
 def get_registry():
     return dict(SHEET_REGISTRY)
