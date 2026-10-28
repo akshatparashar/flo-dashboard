@@ -14,7 +14,12 @@ st.set_page_config(
     layout="wide"
 )
 
-SHEET_ID = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"  # fallback/default sheet ID
+# Dropdown mein dikhne wali Google Sheets. Nayi sheet add karne ke liye yahan entry add karein.
+SPREADSHEETS = {
+    "Original Dashboard Sheet": "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU",
+    "Second Google Sheet": "1EfQ08lXGL8YjtoaZ2ygJtNVaED7doDijo2jFvCuS7Kg",
+}
+SHEET_ID = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"  # default/fallback
 DEFAULT_TAB = "CONFIRMATION SHEET"
 MONTHS = ["April", "May", "June", "July", "August", "September",
           "October", "November", "December", "January", "February", "March"]
@@ -517,12 +522,11 @@ def data_check(totals_row, d_all):
 # 7. MAIN APP (filters + tabs)
 # -----------------------------------------------------------------------------
 def main():
-    # Configure multiple spreadsheets in Streamlit Secrets under [spreadsheets].
-    # If that section is not present, the existing spreadsheet is used as the only option.
-    default_sheet_id = st.secrets.get("spreadsheet_id", SHEET_ID)
-    sheet_options = dict(st.secrets.get("spreadsheets", {"Current Orders": default_sheet_id}))
+    # Dono Google Sheets dropdown mein dikhengi. IDs upar SPREADSHEETS mein configured hain.
+    # Optional: Streamlit Secrets ke [spreadsheets] section se is list ko override kar sakte hain.
+    sheet_options = dict(st.secrets.get("spreadsheets", SPREADSHEETS))
     if not sheet_options:
-        st.error("Streamlit Secrets me [spreadsheets] ke andar kam se kam ek Google Sheet add karein.")
+        st.error("Kam se kam ek Google Sheet configure karein.")
         st.stop()
 
     with st.sidebar:
