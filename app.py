@@ -12,11 +12,11 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # -----------------------------------------------------------------------------
-# 1. PAGE CONFIG & MODERN EXECUTIVE STYLING
+# 1. PAGE SETUP & MODERN EXECUTIVE STYLING
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Executive Operations & Production Hub",
-    page_icon="⚡",
+    page_title="Executive Operations & Production Hub 2026-27",
+    page_icon="📊",
     layout="wide"
 )
 
@@ -40,6 +40,8 @@ SHEET_REGISTRY = {
     },
 }
 
+SHEET_ID = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"
+DEFAULT_TAB = "CONFIRMATION SHEET"
 MONTHS = ["April", "May", "June", "July", "August", "September",
           "October", "November", "December", "January", "February", "March"]
 CATEGORIES_LIST = ["CO-ORD SET", "KURTA PANT", "TOP", "KURTA PANT DUPATTA", "DRESS", "KAFTAN", "KURTA"]
@@ -48,8 +50,8 @@ if "dashboard_dark_mode" not in st.session_state:
     st.session_state.dashboard_dark_mode = False
 
 with st.sidebar:
-    st.markdown("### 🎨 Preferences")
-    st.toggle("Dark Appearance", key="dashboard_dark_mode")
+    st.markdown("### 🎨 Appearance")
+    st.toggle("Dark mode", key="dashboard_dark_mode", help="Dashboard appearance mode toggle")
 
 DARK_MODE = st.session_state.dashboard_dark_mode
 if DARK_MODE:
@@ -78,14 +80,14 @@ st.markdown(f"""
     --accent: {ACCENT};
 }}
 .stApp {{ background-color: var(--app-bg); color: var(--text-color); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
-.block-container {{ padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1650px; }}
+.block-container {{ padding-top: 1.15rem; padding-bottom: 2.8rem; max-width: 1650px; }}
 [data-testid="stSidebar"] {{ background-color: var(--panel-bg); border-right: 1px solid var(--border-color); }}
-[data-testid="stSidebar"] h3 {{ font-size: .85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-color); margin-bottom: 0.8rem; }}
-[data-testid="stSidebar"] label {{ font-size: .78rem !important; font-weight: 650 !important; color: var(--text-color) !important; margin-bottom: 4px; }}
+[data-testid="stSidebar"] h3 {{ font-size: .83rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-color); margin-bottom: 0.6rem; }}
+[data-testid="stSidebar"] label {{ font-size: .78rem !important; font-weight: 650 !important; color: var(--text-color) !important; margin-bottom: 3px; }}
 .sidebar-filter-card {{ background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 12px; margin-bottom: 12px; }}
 
-/* Sleek MultiSelect Chips */
-.stMultiSelect [data-baseweb="select"] > div {{ border-radius: 8px; border: 1px solid var(--border-color); background: var(--panel-bg); min-height: 38px; }}
+/* Compact Sleek MultiSelect Chips */
+.stMultiSelect [data-baseweb="select"] > div {{ border-radius: 8px; border: 1px solid var(--border-color); background: var(--panel-bg); min-height: 36px; }}
 .stMultiSelect [data-baseweb="tag"] {{ background-color: var(--chip-bg) !important; border: 1px solid var(--border-color) !important; border-radius: 5px !important; padding: 1px 6px !important; margin: 2px !important; }}
 .stMultiSelect [data-baseweb="tag"] span {{ color: var(--text-color) !important; font-size: 0.76rem !important; font-weight: 550 !important; }}
 
@@ -111,7 +113,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 2. HELPER UTILITIES & SMART MULTISELECT ALL HANDLER
+# 2. HELPER FUNCTIONS & NUMERIC SANITIZATION
 # -----------------------------------------------------------------------------
 def col_to_idx(letter):
     n = 0
@@ -140,6 +142,11 @@ def date_col(s):
     if mask.any():
         res[mask] = pd.to_datetime(s[mask], errors="coerce", dayfirst=False)
     return res
+
+def metrics(items):
+    cols = st.columns(len(items))
+    for c, (label, value) in zip(cols, items):
+        c.metric(label, value)
 
 def fmt(x):
     return f"{x:,.0f}"
@@ -170,12 +177,20 @@ def handle_smart_all_filter(key):
     st.session_state[prev_key] = st.session_state[key]
 
 # -----------------------------------------------------------------------------
-# 3. GOOGLE SHEETS LIVE DATA LOADER
+# 3. GOOGLE SHEETS AUTHENTICATION & CORE SHEET LOADERS (ERROR-SAFE)
 # -----------------------------------------------------------------------------
+def show_access_error(e):
+    email = ""
+    try:
+        email = st.secrets["gcp_service_account"]["client_email"]
+    except Exception:
+        pass
+    st.error("Could not open this Google Sheet. Share it with service account: " + (f"**{email}**" if email else "email from secrets"))
+
 @st.cache_resource(show_spinner=False)
 def get_client():
     if "gcp_service_account" not in st.secrets:
-        st.error("Google credentials missing hain. Streamlit Secrets me 'gcp_service_account' verify karein.")
+        st.error("Google credentials missing hain. Streamlit Settings → Secrets me add karein.")
         st.stop()
 
     creds_dict = dict(st.secrets["gcp_service_account"])
@@ -191,16 +206,53 @@ def get_client():
     )
     return gspread.authorize(creds)
 
-def show_access_error(e):
-    email = st.secrets.get("gcp_service_account", {}).get("client_email", "service account email")
-    st.error(f"Google Sheet open nahi ho saki. Is sheet ko is email ke saath viewer share karein: **{email}**")
+def build_raw(values):
+    first = next((i for i, r in enumerate(values)
+                  if r and re.fullmatch(r"\d+(\.0+)?", str(r[0]).strip())), 4)
+    rows = values[first:]
+
+    max_cols = max(len(r) for r in rows) if rows else 0
+    padded_rows = [r + [""] * (max_cols - len(r)) for r in rows]
+    df_raw = pd.DataFrame(padded_rows)
+
+    if not df_raw.empty:
+        b = df_raw[col_to_idx("B")].astype(str).str.strip() if col_to_idx("B") < df_raw.shape[1] else ""
+        j = df_raw[col_to_idx("J")].astype(str).str.strip() if col_to_idx("J") < df_raw.shape[1] else ""
+        keep = (b != "") | (j != "")
+        df_raw = df_raw[keep].reset_index(drop=True)
+    return df_raw, first + 1
+
+@st.cache_data(ttl=300, show_spinner="Google Sheet se live data load ho raha hai...")
+def load_sheet(sheet_id):
+    try:
+        book = get_client().open_by_key(sheet_id)
+    except Exception as e:
+        show_access_error(e)
+        st.stop()
+
+    try:
+        ws = book.worksheet("CONFIRMATION SHEET")
+    except gspread.WorksheetNotFound:
+        try:
+            ws = book.worksheet("ORDER SHEET")
+        except gspread.WorksheetNotFound:
+            ws = book.get_worksheet(0)
+
+    values = ws.get_all_values()
+    if not values:
+        st.error("Google Sheet empty hai.")
+        st.stop()
+
+    df_raw, first_data_row = build_raw(values)
+    totals_row = values[1] if len(values) > 1 else []
+    return df_raw, totals_row, ws.title, first_data_row
 
 @st.cache_data(ttl=300, show_spinner="Sheet tabs load ho rahe hain...")
 def list_tabs(sheet_id):
     book = get_client().open_by_key(sheet_id)
     return [(ws.title, ws.id) for ws in book.worksheets()]
 
-@st.cache_data(ttl=300, show_spinner="Google Sheet se live data read ho raha hai...")
+@st.cache_data(ttl=300, show_spinner="Google Sheet se data load ho raha hai...")
 def load_tab_values(sheet_id, tab_title):
     return get_client().open_by_key(sheet_id).worksheet(tab_title).get_all_values()
 
@@ -212,12 +264,255 @@ def find_tab(titles, wanted):
     return None
 
 # -----------------------------------------------------------------------------
-# 4. FABRICATOR REPORT ENGINE (PARSER & 2 INTEGRATED TABS)
+# 4. MASTER SHEET DATA PREPARATION & VIEWS (UNCHANGED CORE LOGIC)
+# -----------------------------------------------------------------------------
+def prepare(raw):
+    d = pd.DataFrame()
+
+    def get_raw_col(col_letter):
+        idx = col_to_idx(col_letter)
+        if idx < len(raw.columns):
+            return raw[idx]
+        return pd.Series([""] * len(raw))
+
+    d["date_client"] = date_col(get_raw_col("B"))
+    d["date_prod"] = date_col(get_raw_col("AC"))
+    d["designer"] = get_raw_col("C").astype(str).str.strip()
+    d["type"] = get_raw_col("D").astype(str).str.strip()
+    d["category"] = get_raw_col("F").astype(str).str.strip()
+    d["qty"] = num(get_raw_col("J"))
+    d["client"] = get_raw_col("N").astype(str).str.strip()
+    d["fabricator"] = get_raw_col("AA").astype(str).str.strip()
+    d["delay"] = clean_delay_days(get_raw_col("AH"))
+    d["production"] = num(get_raw_col("AS"))
+    d["received"] = num(get_raw_col("AT"))
+    d["pending"] = num(get_raw_col("AU"))
+    d["status"] = get_raw_col("AX").astype(str).str.strip()
+
+    for c in ["designer", "type", "category", "client", "fabricator", "status"]:
+        d.loc[d[c].str.lower().isin(["nan", "none"]), c] = ""
+
+    d["month_client"] = d["date_client"].dt.month_name()
+    d["month_prod"] = d["date_prod"].dt.month_name()
+    d["type_clean"] = d["type"].str.upper()
+    d["category_clean"] = d["category"].str.upper().str.strip()
+    return d
+
+def overview(d):
+    st.subheader("Executive Overview")
+    metrics([
+        ("Total Designs", f"{len(d[d.qty > 0]):,}"),
+        ("Total Order Qty (J)", fmt(d.qty.sum())),
+        ("In Production PCS (AS)", fmt(d.production.sum())),
+        ("Received PCS (AT)", fmt(d.received.sum())),
+    ])
+    metrics([
+        ("Pending PCS (AU)", fmt(d.pending.sum())),
+        ("Overdue PCS (AH > 0)", fmt(d.loc[d.delay > 0, "production"].sum())),
+        ("On-Time PCS (AH <= 0)", fmt(d.loc[d.delay <= 0, "production"].sum())),
+        ("New Order Qty", fmt(d.loc[d.type_clean.str.contains("NEW", na=False), "qty"].sum())),
+    ])
+    a, b = st.columns(2)
+    with a:
+        m = d.dropna(subset=["date_client"]).assign(Month=lambda x: x.date_client.dt.to_period("M").astype(str)).groupby("Month", as_index=False)["qty"].sum()
+        if not m.empty:
+            st.plotly_chart(style_fig(px.bar(m, x="Month", y="qty", title="Monthly Order Quantity (Column B)", text_auto=".2s")), use_container_width=True)
+    with b:
+        c = d[d.category_clean.ne("")].groupby("category_clean", as_index=False)["qty"].sum().sort_values("qty", ascending=False)
+        if not c.empty:
+            st.plotly_chart(style_fig(px.bar(c, x="category_clean", y="qty", title="Category-wise Order Quantity (Column J)", text_auto=".2s")), use_container_width=True)
+
+def designer_dashboard(d):
+    st.subheader("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
+    x = d[d.designer.ne("")].copy()
+    if x.empty:
+        st.info("Selected filters ke liye designer data nahi hai."); return
+
+    g = x.groupby("designer", as_index=False).agg(**{"Total Volume (Pcs)": ("qty", "sum"), "Total Design Count": ("qty", "size")})
+    new = x[x.type_clean.str.contains("NEW", na=False)].groupby("designer").qty.sum()
+    repeat = x[x.type_clean.str.contains("REPEAT", na=False)].groupby("designer").qty.sum()
+    g["New Orders (Pcs)"] = g.designer.map(new).fillna(0)
+    g["Repeat Orders (Pcs)"] = g.designer.map(repeat).fillna(0)
+
+    tot_vol = g["Total Volume (Pcs)"].sum()
+    g["Share %"] = g["Total Volume (Pcs)"].apply(lambda v: f"{(v / tot_vol * 100):.1f}%" if tot_vol > 0 else "0.0%")
+    g = g.sort_values("Total Volume (Pcs)", ascending=False)
+    top = g.iloc[0]
+
+    metrics([
+        ("TOTAL DESIGNS", f"{len(x):,}"),
+        ("TOTAL QUANTITY (PCS)", fmt(tot_vol)),
+        ("NEW ORDER QTY", fmt(g["New Orders (Pcs)"].sum())),
+        ("REPEAT ORDER QTY", fmt(g["Repeat Orders (Pcs)"].sum())),
+        ("TOP PERFORMER", f"{top.designer} ({fmt(top['Total Volume (Pcs)'])} Pcs)"),
+    ])
+
+    st.markdown("---")
+    st.subheader("📊 Designer Volume & Share Breakdown")
+    des_summary_df = g[["designer", "New Orders (Pcs)", "Repeat Orders (Pcs)", "Total Volume (Pcs)", "Share %", "Total Design Count"]].rename(columns={"designer": "Designer Name"})
+
+    col_t1, col_c1 = st.columns([1.2, 1])
+    with col_t1:
+        st.dataframe(des_summary_df, use_container_width=True, hide_index=True)
+    with col_c1:
+        melted = g.melt(id_vars="designer", value_vars=["New Orders (Pcs)", "Repeat Orders (Pcs)"], var_name="Order Type", value_name="Qty")
+        st.plotly_chart(style_fig(px.bar(melted, x="designer", y="Qty", color="Order Type", barmode="group", title="DESIGNER PERFORMANCE: NEW vs REPEAT ORDERS (PCS)", color_discrete_sequence=["#059669", "#7C3AED"])), use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🧩 Category Wise Designer Breakdown Matrix (Pcs)")
+    cat_matrix = []
+    for des_name in g["designer"]:
+        sub = x[x["designer"].str.upper() == des_name.upper()]
+        row_data = {"Designer": des_name}
+        for cat in CATEGORIES_LIST:
+            row_data[cat] = int(sub[sub["category_clean"] == cat]["qty"].sum())
+        row_data["TOTAL"] = sum(row_data[c] for c in CATEGORIES_LIST)
+        cat_matrix.append(row_data)
+
+    cat_df = pd.DataFrame(cat_matrix)
+    tot_row = {"Designer": "TOTAL"}
+    for cat in CATEGORIES_LIST:
+        tot_row[cat] = cat_df[cat].sum()
+    tot_row["TOTAL"] = cat_df["TOTAL"].sum()
+    cat_df = pd.concat([cat_df, pd.DataFrame([tot_row])], ignore_index=True)
+    st.dataframe(cat_df, use_container_width=True, hide_index=True)
+
+def client_dashboard(d):
+    st.subheader("🏢 Executive Client Performance Dashboard")
+    x = d.copy()
+    total_designs = len(x[x.qty > 0])
+    total_qty = x["qty"].sum()
+    in_prod = x["production"].sum()
+    rec_done = x["received"].sum()
+    pending_qty = x["pending"].sum()
+    repeat_qty = x[x["type_clean"].str.contains("REPEAT", na=False)]["qty"].sum()
+    new_qty = x[x["type_clean"].str.contains("NEW", na=False)]["qty"].sum()
+
+    metrics([
+        ("TOTAL DESIGNS", f"{total_designs:,}"),
+        ("TOTAL QTY (PCS) [Col J]", fmt(total_qty)),
+        ("IN PRODUCTION [Col AS]", fmt(in_prod)),
+        ("RECEIVED / DONE [Col AT]", fmt(rec_done)),
+    ])
+    metrics([
+        ("TOTAL PENDING QTY [Col AU]", fmt(pending_qty)),
+        ("REPEAT ORDERS (PCS)", fmt(repeat_qty)),
+        ("NEW ORDERS (PCS)", fmt(new_qty)),
+        ("CATEGORY TOTAL (PCS)", fmt(total_qty)),
+    ])
+
+    st.markdown("---")
+    st.subheader("📅 Client Fulfillment Breakdown")
+    monthly_ful = []
+    for m in MONTHS:
+        sub_m = x[x["month_client"] == m]
+        monthly_ful.append({
+            "MONTH": m,
+            "ORDER QTY (J)": int(sub_m["qty"].sum()),
+            "IN PRODUCTION (AS)": int(sub_m["production"].sum()),
+            "RECEIVED (AT)": int(sub_m["received"].sum()),
+            "PENDING (AU)": int(sub_m["pending"].sum())
+        })
+    m_df = pd.DataFrame(monthly_ful)
+    m_df_tot = pd.DataFrame([{
+        "MONTH": "TOTAL",
+        "ORDER QTY (J)": m_df["ORDER QTY (J)"].sum(),
+        "IN PRODUCTION (AS)": m_df["IN PRODUCTION (AS)"].sum(),
+        "RECEIVED (AT)": m_df["RECEIVED (AT)"].sum(),
+        "PENDING (AU)": m_df["PENDING (AU)"].sum()
+    }])
+    m_df_display = pd.concat([m_df, m_df_tot], ignore_index=True)
+
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        st.dataframe(m_df_display, use_container_width=True, hide_index=True)
+    with c2:
+        q = pd.DataFrame({"Status": ["RECEIVED QTY", "PENDING QTY"], "Qty": [rec_done, pending_qty]})
+        st.plotly_chart(style_fig(px.pie(q, names="Status", values="Qty", hole=.45, title="ORDER FULFILLMENT RATIO (RECEIVED vs PENDING)", color_discrete_sequence=["#059669", "#DC2626"])), use_container_width=True)
+
+def production_dashboard(d):
+    st.subheader("🏭 Production Executive Process Dashboard")
+    overdue_mask = d["delay"] > 0
+    overdue = d[overdue_mask]
+    avg_overdue = overdue["delay"].mean() if len(overdue) > 0 else 0.0
+
+    metrics([
+        ("TOTAL DESIGN", f"{len(d[d.production > 0]):,} Orders"),
+        ("INPRODUCTION PCS [Col AS]", fmt(d.production.sum())),
+        ("RECIEVED PCS [Col AT]", fmt(d.received.sum())),
+        ("PENDING PCS [Col AU]", fmt(d.pending.sum())),
+        ("OVERDUE PCS (AH > 0)", fmt(d.loc[overdue_mask, "production"].sum())),
+    ])
+    metrics([
+        ("AVG OVERDUE DAYS", f"{avg_overdue:.1f} Days"),
+        ("ON-TIME DELIVERY %", f"{((len(d[d.delay <= 0]) / len(d) * 100) if len(d) > 0 else 0):.1f}%"),
+        ("ON-TIME PCS (AH <= 0)", fmt(d.loc[d.delay <= 0, "production"].sum())),
+        ("OVERDUE ORDERS COUNT", f"{len(overdue):,} Orders"),
+    ])
+
+def data_check(totals_row, d_all):
+    items = [("Total Qty (J)", "J", d_all["qty"].sum()),
+             ("In Production (AS)", "AS", d_all["production"].sum()),
+             ("Received (AT)", "AT", d_all["received"].sum()),
+             ("Pending (AU)", "AU", d_all["pending"].sum())]
+    rows = []
+    for label, letter, mine in items:
+        idx = col_to_idx(letter)
+        cell = totals_row[idx] if idx < len(totals_row) else ""
+        sheet_val = float(num(pd.Series([cell])).iloc[0])
+        rows.append({"Column": label, "Sheet row-2 total": sheet_val, "Dashboard": float(mine), "Diff": float(mine) - sheet_val})
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+def render_tracker(sheet_name, sheet_id):
+    raw, totals_row, tab_name, first_data_row = load_sheet(sheet_id)
+    d_all = prepare(raw)
+
+    with st.sidebar:
+        st.markdown('<div class="sidebar-filter-card">', unsafe_allow_html=True)
+        st.markdown("### 🔍 Master Sheet Filters")
+        months_present = [m for m in MONTHS if m in set(d_all["month_client"].dropna())]
+        month_options = ["All"] + [x for x in months_present if x != "All"]
+        designer_options = ["All"] + sorted(x for x in d_all["designer"].unique() if x and x != "All")
+        client_options = ["All"] + sorted(x for x in d_all["client"].unique() if x and x != "All")
+        fab_options = ["All"] + sorted(x for x in d_all["fabricator"].unique() if x and x != "All")
+
+        for k in [f"{sheet_id}_m", f"{sheet_id}_d", f"{sheet_id}_c", f"{sheet_id}_f"]:
+            if k not in st.session_state: st.session_state[k] = ["All"]
+
+        sel_months = st.multiselect("Order Month", month_options, key=f"{sheet_id}_m", on_change=handle_smart_all_filter, args=(f"{sheet_id}_m",))
+        sel_designers = st.multiselect("Designer", designer_options, key=f"{sheet_id}_d", on_change=handle_smart_all_filter, args=(f"{sheet_id}_d",))
+        sel_clients = st.multiselect("Client", client_options, key=f"{sheet_id}_c", on_change=handle_smart_all_filter, args=(f"{sheet_id}_c",))
+        sel_fabs = st.multiselect("Fabricator", fab_options, key=f"{sheet_id}_f", on_change=handle_smart_all_filter, args=(f"{sheet_id}_f",))
+        if st.button("🔄 Refresh Data", key=f"{sheet_id}_ref"):
+            st.cache_data.clear()
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    d = d_all.copy()
+    if "All" not in sel_months and sel_months: d = d[d["month_client"].isin(sel_months)]
+    if "All" not in sel_designers and sel_designers: d = d[d["designer"].isin(sel_designers)]
+    if "All" not in sel_clients and sel_clients: d = d[d["client"].isin(sel_clients)]
+    if "All" not in sel_fabs and sel_fabs: d = d[d["fabricator"].isin(sel_fabs)]
+
+    st.markdown(
+        f"""<div class="dashboard-hero"><h2>📊 {html.escape(sheet_name)} · Executive Dashboard</h2>
+        <p>Source Tab: <b>{html.escape(tab_name)}</b> · {len(d):,} Rows (Data row {first_data_row} se)</p></div>""",
+        unsafe_allow_html=True
+    )
+
+    t1, t2, t3, t4 = st.tabs(["Overview", "Designer Hub", "Client Fulfillment", "Production Delay Tracker"])
+    with t1: overview(d)
+    with t2: designer_dashboard(d)
+    with t3: client_dashboard(d)
+    with t4: production_dashboard(d)
+    with st.expander("✅ Reconciliation / Sheet Totals Check"): data_check(totals_row, d_all)
+
+# -----------------------------------------------------------------------------
+# 5. FABRICATOR REPORT ENGINE (2 COMBINED TABS: CHARTS + TABLES TOGETHER)
 # -----------------------------------------------------------------------------
 def parse_fabricator_summary_grid(values):
     records = []
-    if not values:
-        return pd.DataFrame()
+    if not values: return pd.DataFrame()
 
     for r_idx, row in enumerate(values):
         for c_idx, cell in enumerate(row):
@@ -225,10 +520,8 @@ def parse_fabricator_summary_grid(values):
             if re.search(r"position\s*of\s*stock", cell_str, re.I):
                 fab_name = re.sub(r"position\s*of\s*stock\s*[:\-]?", "", cell_str, flags=re.I).strip()
                 fab_name = re.sub(r"^[(\[]|[)\]]$", "", fab_name).strip()
-                if "ALL OVER" in fab_name.upper():
-                    fab_name = "ALL OVER (CONSOLIDATED)"
-                if not fab_name:
-                    fab_name = "UNKNOWN"
+                if "ALL OVER" in fab_name.upper(): fab_name = "ALL OVER (CONSOLIDATED)"
+                if not fab_name: fab_name = "UNKNOWN"
 
                 header_row_idx = None
                 for scan_r in range(r_idx + 1, min(r_idx + 4, len(values))):
@@ -236,9 +529,7 @@ def parse_fabricator_summary_grid(values):
                     if c_idx < len(scan_row) and re.search(r"month", str(scan_row[c_idx]), re.I):
                         header_row_idx = scan_r
                         break
-
-                if header_row_idx is None:
-                    continue
+                if header_row_idx is None: continue
 
                 h_row = values[header_row_idx]
                 col_map = {}
@@ -246,33 +537,22 @@ def parse_fabricator_summary_grid(values):
                     curr_col = c_idx + offset
                     if curr_col < len(h_row):
                         h_val = str(h_row[curr_col]).strip().lower()
-                        if not h_val and offset > 4:
-                            break
-                        if "month" in h_val and "month" not in col_map:
-                            col_map["month"] = curr_col
-                        elif ("fabric" in h_val or "issue" in h_val or "mtr" in h_val) and "fabric_issue" not in col_map:
-                            col_map["fabric_issue"] = curr_col
-                        elif ("under" in h_val or "production" in h_val or "pcs" in h_val) and "production" not in col_map:
-                            col_map["production"] = curr_col
-                        elif ("rcvd" in h_val or "received" in h_val) and "received" not in col_map:
-                            col_map["received"] = curr_col
-                        elif ("remain" in h_val or "pending" in h_val) and "remaining" not in col_map:
-                            col_map["remaining"] = curr_col
-                        elif "incoming" in h_val and "incoming" not in col_map:
-                            col_map["incoming"] = curr_col
+                        if not h_val and offset > 4: break
+                        if "month" in h_val and "month" not in col_map: col_map["month"] = curr_col
+                        elif ("fabric" in h_val or "issue" in h_val or "mtr" in h_val) and "fabric_issue" not in col_map: col_map["fabric_issue"] = curr_col
+                        elif ("under" in h_val or "production" in h_val or "pcs" in h_val) and "production" not in col_map: col_map["production"] = curr_col
+                        elif ("rcvd" in h_val or "received" in h_val) and "received" not in col_map: col_map["received"] = curr_col
+                        elif ("remain" in h_val or "pending" in h_val) and "remaining" not in col_map: col_map["remaining"] = curr_col
+                        elif "incoming" in h_val and "incoming" not in col_map: col_map["incoming"] = curr_col
 
-                if "month" not in col_map:
-                    continue
+                if "month" not in col_map: continue
 
                 for data_r in range(header_row_idx + 1, len(values)):
                     d_row = values[data_r]
-                    if c_idx >= len(d_row):
-                        break
+                    if c_idx >= len(d_row): break
                     m_val = str(d_row[c_idx]).strip()
-                    if not m_val or re.search(r"^total|position\s*of\s*stock", m_val, re.I):
-                        break
-                    if not re.search(r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", m_val, re.I):
-                        continue
+                    if not m_val or re.search(r"^total|position\s*of\s*stock", m_val, re.I): break
+                    if not re.search(r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", m_val, re.I): continue
 
                     def get_val(k):
                         idx = col_map.get(k)
@@ -286,16 +566,11 @@ def parse_fabricator_summary_grid(values):
                     rem_val = get_val("remaining")
                     inc_val = get_val("incoming")
 
-                    if prod_val == 0 and issue_val == 0:
-                        status = "No Orders"
-                    elif rem_val == 0 and prod_val > 0:
-                        status = "Completed (100%)"
-                    elif rcvd_val > 0 and rem_val > 0:
-                        status = "In Progress"
-                    elif rcvd_val == 0 and prod_val > 0:
-                        status = "Pending / Not Started"
-                    else:
-                        status = "In Progress" if rem_val > 0 else "Completed (100%)"
+                    if prod_val == 0 and issue_val == 0: status = "No Orders"
+                    elif rem_val == 0 and prod_val > 0: status = "Completed (100%)"
+                    elif rcvd_val > 0 and rem_val > 0: status = "In Progress"
+                    elif rcvd_val == 0 and prod_val > 0: status = "Pending / Not Started"
+                    else: status = "In Progress" if rem_val > 0 else "Completed (100%)"
 
                     records.append({
                         "Fabricator": fab_name,
@@ -337,27 +612,24 @@ def render_fabricator_dashboard(sheet_name, cfg):
     df_vendors = df_parsed[~is_cons].copy()
     df_work = df_vendors if not df_vendors.empty else df_consolidated
 
-    # --- SIDEBAR FILTERS (SLEEK & INTEGRATED) ---
+    # --- SIDEBAR FILTERS ---
     with st.sidebar:
         st.markdown('<div class="sidebar-filter-card">', unsafe_allow_html=True)
         st.markdown("### 🔍 Fabricator Filters")
 
         all_fabs = sorted(df_work["Fabricator"].unique())
         fab_opts = ["All"] + all_fabs
-        if "f_fab" not in st.session_state:
-            st.session_state["f_fab"] = ["All"]
+        if "f_fab" not in st.session_state: st.session_state["f_fab"] = ["All"]
         sel_fabs = st.multiselect("Fabricator Name", options=fab_opts, key="f_fab", on_change=handle_smart_all_filter, args=("f_fab",))
 
         all_months = list(dict.fromkeys(df_work["Month"].tolist()))
         month_opts = ["All"] + all_months
-        if "f_month" not in st.session_state:
-            st.session_state["f_month"] = ["All"]
+        if "f_month" not in st.session_state: st.session_state["f_month"] = ["All"]
         sel_months = st.multiselect("Month", options=month_opts, key="f_month", on_change=handle_smart_all_filter, args=("f_month",))
 
         all_stat = ["Completed (100%)", "In Progress", "Pending / Not Started", "No Orders"]
         status_opts = ["All"] + [s for s in all_stat if s in df_work["Production Status"].values]
-        if "f_stat" not in st.session_state:
-            st.session_state["f_stat"] = ["All"]
+        if "f_stat" not in st.session_state: st.session_state["f_stat"] = ["All"]
         sel_status = st.multiselect("Production Status", options=status_opts, key="f_stat", on_change=handle_smart_all_filter, args=("f_stat",))
 
         hide_zero = st.checkbox("Hide Zero Production Months", value=True)
@@ -367,16 +639,11 @@ def render_fabricator_dashboard(sheet_name, cfg):
         st.markdown('</div>', unsafe_allow_html=True)
 
     filtered = df_work.copy()
-    if "All" not in sel_fabs and sel_fabs:
-        filtered = filtered[filtered["Fabricator"].isin(sel_fabs)]
-    if "All" not in sel_months and sel_months:
-        filtered = filtered[filtered["Month"].isin(sel_months)]
-    if "All" not in sel_status and sel_status:
-        filtered = filtered[filtered["Production Status"].isin(sel_status)]
-    if hide_zero:
-        filtered = filtered[(filtered["Pcs Under Production"] > 0) | (filtered["Fabric Issue (mtr)"] > 0)]
+    if "All" not in sel_fabs and sel_fabs: filtered = filtered[filtered["Fabricator"].isin(sel_fabs)]
+    if "All" not in sel_months and sel_months: filtered = filtered[filtered["Month"].isin(sel_months)]
+    if "All" not in sel_status and sel_status: filtered = filtered[filtered["Production Status"].isin(sel_status)]
+    if hide_zero: filtered = filtered[(filtered["Pcs Under Production"] > 0) | (filtered["Fabric Issue (mtr)"] > 0)]
 
-    # --- HERO HEADER ---
     st.markdown(
         f"""<div class="dashboard-hero">
         <h2>🧵 {sheet_name} · Executive Operations Dashboard</h2>
@@ -389,14 +656,11 @@ def render_fabricator_dashboard(sheet_name, cfg):
         st.warning("Selected filters ke saath koi record match nahi hua. Kripya sidebar filter reset karein.")
         st.stop()
 
-    # --- TOP EXECUTIVE KPIS ---
     tot_fab = filtered["Fabric Issue (mtr)"].sum()
     tot_prod = filtered["Pcs Under Production"].sum()
     tot_rcvd = filtered["RCVD (Pcs)"].sum()
     tot_rem = filtered["Remaining (Pcs)"].sum()
-    tot_inc = filtered["Monthly Incoming (Pcs)"].sum()
     ful_rate = (tot_rcvd / tot_prod * 100) if tot_prod > 0 else 0.0
-    avg_mtr = (tot_fab / tot_prod) if tot_prod > 0 else 0.0
 
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("Fabric Issued", f"{tot_fab:,.1f} Mtr")
@@ -407,7 +671,7 @@ def render_fabricator_dashboard(sheet_name, cfg):
 
     st.markdown("---")
 
-    # --- 2 COMBINED TABS (CHARTS + TABLES TOGETHER) ---
+    # --- EXACTLY 2 COMBINED TABS (CHARTS + TABLES TOGETHER) ---
     t1, t2 = st.tabs([
         "📊 Monthly Trend & Production Pipeline",
         "👥 Vendor Scorecard & Backlog Deep-Dive"
@@ -415,7 +679,7 @@ def render_fabricator_dashboard(sheet_name, cfg):
 
     month_order = [f"{m}-26" for m in MONTHS[:9]] + [f"{m}-27" for m in MONTHS[9:]]
 
-    # TAB 1: Trend Visual + Integrated Monthly Table
+    # TAB 1: Monthly Trends + Monthly Breakdown Table
     with t1:
         st.markdown('<div class="section-badge">📈 Monthly Performance Trends</div>', unsafe_allow_html=True)
         c1, c2 = st.columns([1.35, 1])
@@ -452,7 +716,7 @@ def render_fabricator_dashboard(sheet_name, cfg):
             hide_index=True
         )
 
-    # TAB 2: Vendor Charts + Integrated Scorecard Table
+    # TAB 2: Vendor Visuals + Vendor Scorecard Matrix
     with t2:
         st.markdown('<div class="section-badge">👥 Vendor Comparative Analytics</div>', unsafe_allow_html=True)
         v1, v2 = st.columns([1.3, 1])
@@ -508,19 +772,17 @@ def render_fabricator_dashboard(sheet_name, cfg):
                 st.dataframe(c_tbl, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# 5. SAMPLE SUMMARY DASHBOARD ENGINE (PARSER & 2 INTEGRATED TABS)
+# 6. SAMPLE SUMMARY ENGINE (PARSER & 2 INTEGRATED TABS)
 # -----------------------------------------------------------------------------
 def parse_sample_summary_sheet(values):
-    """Parses Executive Sample Summary Sheet KPIs, Monthly grid and Status blocks."""
     summary_data = {
         "total_samples": 0, "approved": 0, "rejected": 0, "hold": 0,
         "on_process": 0, "approval_ratio": 0.0, "overdue_pcs": 0, "avg_delay": 0.0,
-        "monthly_breakdown": [], "status_counts": []
+        "monthly_breakdown": []
     }
-    if not values:
-        return summary_data
+    if not values: return summary_data
 
-    # 1. Scan for KPIs
+    # Scan for headline KPIs
     for r_idx, row in enumerate(values):
         row_str = " ".join([str(c) for c in row]).upper()
         if "TOTAL SAMPLES" in row_str and "APPROVED" in row_str:
@@ -537,15 +799,14 @@ def parse_sample_summary_sheet(values):
                     if len(nums) >= 7: summary_data["overdue_pcs"] = int(nums[6])
                     if len(nums) >= 8: summary_data["avg_delay"] = nums[7]
 
-    # 2. Scan for Monthly Breakdown
+    # Scan for monthly status breakdown grid
     for r_idx, row in enumerate(values):
         row_str = " ".join([str(c) for c in row]).upper()
         if "MONTH" in row_str and "APPROVED" in row_str and "REJECTED" in row_str:
             for d_idx in range(r_idx + 1, min(r_idx + 15, len(values))):
                 d_row = values[d_idx]
                 m_name = next((str(c).strip() for c in d_row if re.search(r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", str(c), re.I)), None)
-                if not m_name or "TOTAL" in m_name.upper():
-                    continue
+                if not m_name or "TOTAL" in m_name.upper(): continue
                 d_nums = [float(num(pd.Series([c])).iloc[0]) for c in d_row if re.search(r"^\d+(\.\d+)?$", str(c).strip())]
                 if len(d_nums) >= 4:
                     summary_data["monthly_breakdown"].append({
@@ -557,7 +818,6 @@ def parse_sample_summary_sheet(values):
                         "Total": int(d_nums[4]) if len(d_nums) >= 5 else sum(int(x) for x in d_nums[:4])
                     })
 
-    # Fallback to status counts if parsed
     if summary_data["total_samples"] == 0 and summary_data["monthly_breakdown"]:
         m_df = pd.DataFrame(summary_data["monthly_breakdown"])
         summary_data["approved"] = m_df["Approved"].sum()
@@ -583,20 +843,17 @@ def render_sample_summary_dashboard(sheet_name, cfg):
     raw_values = load_tab_values(sid, pref_tab)
     parsed = parse_sample_summary_sheet(raw_values)
 
-    # --- SIDEBAR FILTERS ---
     with st.sidebar:
         st.markdown('<div class="sidebar-filter-card">', unsafe_allow_html=True)
         st.markdown("### 🔍 Sample Dashboard Filters")
 
         m_list = [m["Month"] for m in parsed["monthly_breakdown"]] if parsed["monthly_breakdown"] else [f"{m}-26" for m in MONTHS[:9]]
         month_opts = ["All"] + m_list
-        if "s_month" not in st.session_state:
-            st.session_state["s_month"] = ["All"]
+        if "s_month" not in st.session_state: st.session_state["s_month"] = ["All"]
         sel_months = st.multiselect("Month", options=month_opts, key="s_month", on_change=handle_smart_all_filter, args=("s_month",))
 
         stat_opts = ["All", "APPROVED", "REJECTED", "HOLD", "ON PROCESS"]
-        if "s_stat" not in st.session_state:
-            st.session_state["s_stat"] = ["All"]
+        if "s_stat" not in st.session_state: st.session_state["s_stat"] = ["All"]
         sel_status = st.multiselect("Status Filter", options=stat_opts, key="s_stat", on_change=handle_smart_all_filter, args=("s_stat",))
 
         risk_opts = ["All", "On-Time (0 Days)", "Overdue (>0 Days)"]
@@ -607,22 +864,19 @@ def render_sample_summary_dashboard(sheet_name, cfg):
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- HERO HEADER ---
     st.markdown(
         f"""<div class="dashboard-hero">
-        <h2>🔬 {sheet_name} · Executive Process & Approval Hub</h2>
+        <h2>🔬 {sheet_name} · Executive Process & QA Hub</h2>
         <p>Active Source: <b>{html.escape(pref_tab)}</b> · Real-Time Sampling & QA Workflow Monitoring</p>
         </div>""",
         unsafe_allow_html=True
     )
 
-    # Filter monthly data
     m_records = parsed["monthly_breakdown"]
     df_m = pd.DataFrame(m_records) if m_records else pd.DataFrame(columns=["Month", "Approved", "Rejected", "Hold", "Process", "Total"])
     if not df_m.empty and "All" not in sel_months and sel_months:
         df_m = df_m[df_m["Month"].isin(sel_months)]
 
-    # Dynamic or fallback KPIs
     tot_s = df_m["Total"].sum() if (not df_m.empty and df_m["Total"].sum() > 0) else parsed["total_samples"]
     app_s = df_m["Approved"].sum() if (not df_m.empty and df_m["Approved"].sum() > 0) else parsed["approved"]
     rej_s = df_m["Rejected"].sum() if (not df_m.empty and df_m["Rejected"].sum() > 0) else parsed["rejected"]
@@ -630,7 +884,6 @@ def render_sample_summary_dashboard(sheet_name, cfg):
     prc_s = df_m["Process"].sum() if (not df_m.empty and df_m["Process"].sum() > 0) else parsed["on_process"]
     ratio = (app_s / tot_s * 100) if tot_s > 0 else parsed["approval_ratio"]
 
-    # --- TOP KPIS ---
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("Total Samples", fmt(tot_s) + " Pcs")
     k2.metric("Approved", fmt(app_s) + " Pcs")
@@ -641,13 +894,12 @@ def render_sample_summary_dashboard(sheet_name, cfg):
 
     st.markdown("---")
 
-    # --- 2 COMBINED TABS (CHARTS + TABLES TOGETHER) ---
+    # --- EXACTLY 2 COMBINED TABS ---
     t1, t2 = st.tabs([
         "📊 Sample Pipeline & Approval Health",
         "📋 Monthly Breakdown & Workflow Matrix"
     ])
 
-    # TAB 1: Visual Pipeline + Summary Table
     with t1:
         st.markdown('<div class="section-badge">📊 Sample Funnel & Approval Ratio</div>', unsafe_allow_html=True)
         c1, c2 = st.columns([1.3, 1])
@@ -692,14 +944,12 @@ def render_sample_summary_dashboard(sheet_name, cfg):
         }])
         st.dataframe(summary_tbl, use_container_width=True, hide_index=True)
 
-    # TAB 2: Monthly Grid + Detailed Table
     with t2:
         st.markdown('<div class="section-badge">📅 Monthly Detailed Progression</div>', unsafe_allow_html=True)
         if not df_m.empty:
             df_display = df_m.copy()
             df_display["Approval %"] = df_display.apply(lambda r: f"{(r['Approved'] / r['Total'] * 100):.1f}%" if r["Total"] > 0 else "0.0%", axis=1)
 
-            # Grand Total
             tot_row = pd.DataFrame([{
                 "Month": "GRAND TOTAL",
                 "Approved": df_display["Approved"].sum(),
@@ -729,170 +979,6 @@ def render_sample_summary_dashboard(sheet_name, cfg):
             if raw_values:
                 df_src = pd.DataFrame(raw_values).fillna("")
                 st.dataframe(df_src, use_container_width=True, hide_index=True)
-
-# -----------------------------------------------------------------------------
-# 6. MASTER SHEET DASHBOARD VIEWS
-# -----------------------------------------------------------------------------
-def overview(d):
-    st.subheader("Executive Overview")
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Total Designs", f"{len(d[d.qty > 0]):,}")
-    k2.metric("Total Order Qty (J)", fmt(d.qty.sum()))
-    k3.metric("In Production PCS (AS)", fmt(d.production.sum()))
-    k4.metric("Received PCS (AT)", fmt(d.received.sum()))
-
-    k5, k6, k7, k8 = st.columns(4)
-    k5.metric("Pending PCS (AU)", fmt(d.pending.sum()))
-    k6.metric("Overdue PCS (AH > 0)", fmt(d.loc[d.delay > 0, "production"].sum()))
-    k7.metric("On-Time PCS (AH <= 0)", fmt(d.loc[d.delay <= 0, "production"].sum()))
-    k8.metric("New Order Qty", fmt(d.loc[d.type_clean.str.contains("NEW", na=False), "qty"].sum()))
-
-    a, b = st.columns(2)
-    with a:
-        m = d.dropna(subset=["date_client"]).assign(Month=lambda x: x.date_client.dt.to_period("M").astype(str)).groupby("Month", as_index=False)["qty"].sum()
-        if not m.empty:
-            st.plotly_chart(style_fig(px.bar(m, x="Month", y="qty", title="Monthly Order Quantity", text_auto=".2s")), use_container_width=True)
-    with b:
-        c = d[d.category_clean.ne("")].groupby("category_clean", as_index=False)["qty"].sum().sort_values("qty", ascending=False)
-        if not c.empty:
-            st.plotly_chart(style_fig(px.bar(c, x="category_clean", y="qty", title="Category-wise Order Quantity", text_auto=".2s")), use_container_width=True)
-
-def designer_dashboard(d):
-    st.subheader("👨‍🎨 Executive Designer Performance & Category Breakdown")
-    x = d[d.designer.ne("")].copy()
-    if x.empty:
-        st.info("Selected filters ke liye designer data nahi hai."); return
-
-    g = x.groupby("designer", as_index=False).agg(**{"Total Volume (Pcs)": ("qty", "sum"), "Total Design Count": ("qty", "size")})
-    new = x[x.type_clean.str.contains("NEW", na=False)].groupby("designer").qty.sum()
-    repeat = x[x.type_clean.str.contains("REPEAT", na=False)].groupby("designer").qty.sum()
-    g["New Orders (Pcs)"] = g.designer.map(new).fillna(0)
-    g["Repeat Orders (Pcs)"] = g.designer.map(repeat).fillna(0)
-
-    tot_vol = g["Total Volume (Pcs)"].sum()
-    g["Share %"] = g["Total Volume (Pcs)"].apply(lambda v: f"{(v / tot_vol * 100):.1f}%" if tot_vol > 0 else "0.0%")
-    g = g.sort_values("Total Volume (Pcs)", ascending=False)
-    top = g.iloc[0]
-
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Total Designs", f"{len(x):,}")
-    k2.metric("Total Qty", fmt(tot_vol))
-    k3.metric("New Orders", fmt(g["New Orders (Pcs)"].sum()))
-    k4.metric("Repeat Orders", fmt(g["Repeat Orders (Pcs)"].sum()))
-    k5.metric("Top Performer", f"{top.designer}")
-
-    col_t1, col_c1 = st.columns([1.2, 1])
-    with col_t1:
-        st.dataframe(g[["designer", "New Orders (Pcs)", "Repeat Orders (Pcs)", "Total Volume (Pcs)", "Share %", "Total Design Count"]].rename(columns={"designer": "Designer Name"}), use_container_width=True, hide_index=True)
-    with col_c1:
-        melted = g.melt(id_vars="designer", value_vars=["New Orders (Pcs)", "Repeat Orders (Pcs)"], var_name="Order Type", value_name="Qty")
-        st.plotly_chart(style_fig(px.bar(melted, x="designer", y="Qty", color="Order Type", barmode="group", title="NEW vs REPEAT ORDERS (PCS)", color_discrete_sequence=["#059669", "#7C3AED"])), use_container_width=True)
-
-def client_dashboard(d):
-    st.subheader("🏢 Executive Client Performance Dashboard")
-    x = d.copy()
-    total_qty = x["qty"].sum()
-    in_prod = x["production"].sum()
-    rec_done = x["received"].sum()
-    pending_qty = x["pending"].sum()
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Total Designs", f"{len(x[x.qty > 0]):,}")
-    k2.metric("Total Qty (Col J)", fmt(total_qty))
-    k3.metric("In Production", fmt(in_prod))
-    k4.metric("Received", fmt(rec_done))
-
-    c1, c2 = st.columns([1.2, 1])
-    with c1:
-        monthly_ful = []
-        for m in MONTHS:
-            sub_m = x[x["month_client"] == m]
-            monthly_ful.append({
-                "MONTH": m,
-                "ORDER QTY (J)": int(sub_m["qty"].sum()),
-                "IN PRODUCTION (AS)": int(sub_m["production"].sum()),
-                "RECEIVED (AT)": int(sub_m["received"].sum()),
-                "PENDING (AU)": int(sub_m["pending"].sum())
-            })
-        st.dataframe(pd.DataFrame(monthly_ful), use_container_width=True, hide_index=True)
-    with c2:
-        q = pd.DataFrame({"Status": ["RECEIVED QTY", "PENDING QTY"], "Qty": [rec_done, pending_qty]})
-        st.plotly_chart(style_fig(px.pie(q, names="Status", values="Qty", hole=.45, title="FULFILLMENT RATIO", color_discrete_sequence=["#059669", "#DC2626"])), use_container_width=True)
-
-def production_dashboard(d):
-    st.subheader("🏭 Production Executive Process Dashboard")
-    overdue_mask = d["delay"] > 0
-    overdue = d[overdue_mask]
-    avg_overdue = overdue["delay"].mean() if len(overdue) > 0 else 0.0
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Orders In Production", f"{len(d[d.production > 0]):,}")
-    k2.metric("In Production Pcs", fmt(d.production.sum()))
-    k3.metric("Received Pcs", fmt(d.received.sum()))
-    k4.metric("Pending Pcs", fmt(d.pending.sum()))
-
-    k5, k6, k7, k8 = st.columns(4)
-    k5.metric("Avg Overdue Days", f"{avg_overdue:.1f} Days")
-    k6.metric("On-Time Delivery %", f"{((len(d[d.delay <= 0]) / len(d) * 100) if len(d) > 0 else 0):.1f}%")
-    k7.metric("On-Time Pcs", fmt(d.loc[d.delay <= 0, "production"].sum()))
-    k8.metric("Overdue Orders", f"{len(overdue):,}")
-
-def data_check(totals_row, d_all):
-    items = [("Total Qty (J)", "J", d_all["qty"].sum()),
-             ("In Production (AS)", "AS", d_all["production"].sum()),
-             ("Received (AT)", "AT", d_all["received"].sum()),
-             ("Pending (AU)", "AU", d_all["pending"].sum())]
-    rows = []
-    for label, letter, mine in items:
-        idx = col_to_idx(letter)
-        cell = totals_row[idx] if idx < len(totals_row) else ""
-        sheet_val = float(num(pd.Series([cell])).iloc[0])
-        rows.append({"Column": label, "Sheet row-2 total": sheet_val, "Dashboard": float(mine), "Diff": float(mine) - sheet_val})
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-def render_tracker(sheet_name, sheet_id):
-    raw, totals_row, tab_name, first_data_row = load_sheet(sheet_id)
-    d_all = prepare(raw)
-
-    with st.sidebar:
-        st.markdown('<div class="sidebar-filter-card">', unsafe_allow_html=True)
-        st.markdown("### 🔍 Master Filters")
-        months_present = [m for m in MONTHS if m in set(d_all["month_client"].dropna())]
-        month_options = ["All"] + [x for x in months_present if x != "All"]
-        designer_options = ["All"] + sorted(x for x in d_all["designer"].unique() if x and x != "All")
-        client_options = ["All"] + sorted(x for x in d_all["client"].unique() if x and x != "All")
-        fab_options = ["All"] + sorted(x for x in d_all["fabricator"].unique() if x and x != "All")
-
-        for k in [f"{sheet_id}_m", f"{sheet_id}_d", f"{sheet_id}_c", f"{sheet_id}_f"]:
-            if k not in st.session_state: st.session_state[k] = ["All"]
-
-        sel_months = st.multiselect("Order Month", month_options, key=f"{sheet_id}_m", on_change=handle_smart_all_filter, args=(f"{sheet_id}_m",))
-        sel_designers = st.multiselect("Designer", designer_options, key=f"{sheet_id}_d", on_change=handle_smart_all_filter, args=(f"{sheet_id}_d",))
-        sel_clients = st.multiselect("Client", client_options, key=f"{sheet_id}_c", on_change=handle_smart_all_filter, args=(f"{sheet_id}_c",))
-        sel_fabs = st.multiselect("Fabricator", fab_options, key=f"{sheet_id}_f", on_change=handle_smart_all_filter, args=(f"{sheet_id}_f",))
-        if st.button("🔄 Refresh Data", key=f"{sheet_id}_ref"):
-            st.cache_data.clear()
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    d = d_all.copy()
-    if "All" not in sel_months and sel_months: d = d[d["month_client"].isin(sel_months)]
-    if "All" not in sel_designers and sel_designers: d = d[d["designer"].isin(sel_designers)]
-    if "All" not in sel_clients and sel_clients: d = d[d["client"].isin(sel_clients)]
-    if "All" not in sel_fabs and sel_fabs: d = d[d["fabricator"].isin(sel_fabs)]
-
-    st.markdown(
-        f"""<div class="dashboard-hero"><h2>📊 {html.escape(sheet_name)} · Executive Tracker</h2>
-        <p>Source Tab: <b>{html.escape(tab_name)}</b> · {len(d):,} Records Analyzed</p></div>""",
-        unsafe_allow_html=True
-    )
-
-    t1, t2, t3, t4 = st.tabs(["Overview", "Designer Hub", "Client Fulfillment", "Production Delay Tracker"])
-    with t1: overview(d)
-    with t2: designer_dashboard(d)
-    with t3: client_dashboard(d)
-    with t4: production_dashboard(d)
-    with st.expander("✅ Reconciliation / Totals Check"): data_check(totals_row, d_all)
 
 # -----------------------------------------------------------------------------
 # 7. MAIN ROUTER
