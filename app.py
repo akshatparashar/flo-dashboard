@@ -20,7 +20,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Dropdown mein dikhne wali Google Sheets
 SHEET_REGISTRY = {
     "Master Sheet": {
         "id": "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU",
@@ -75,7 +74,7 @@ st.markdown(f"""
 [data-testid="stMetric"] {{ background: {PANEL_BG}; border: 1px solid {BORDER}; padding: 16px 18px; border-radius: 15px; box-shadow: 0 5px 18px rgba(15,23,42,.07); min-height: 105px; }}
 [data-testid="stMetricLabel"] {{ color: {MUTED}; font-size: .83rem; font-weight: 650; }}
 [data-testid="stMetricValue"] {{ color: {TEXT}; font-weight: 750; letter-spacing: -.025em; }}
-[data-testid="stTabs"] button {{ border-radius: 10px 10px 0 0; font-weight: 650; }}
+[data-testid="stTabs"] button {{ border-radius: 10px 10px 0 0; font-weight: 650; font-size: 1rem; }}
 [data-testid="stDataFrame"] {{ border: 1px solid {BORDER}; border-radius: 12px; overflow: hidden; }}
 [data-testid="stPlotlyChart"] {{ background: {PANEL_BG}; border: 1px solid {BORDER}; border-radius: 14px; padding: 6px; }}
 hr {{ border-color: {BORDER}; }}
@@ -123,6 +122,24 @@ def metrics(items):
 
 def fmt(x):
     return f"{x:,.0f}"
+
+# Helper function to handle 'All' cleanly in multiselects
+def handle_multiselect_all(key):
+    selected = st.session_state.get(key, [])
+    prev_key = f"{key}_previous"
+    prev = st.session_state.get(prev_key, ["All"])
+
+    if not selected:
+        st.session_state[key] = ["All"]
+    elif "All" in selected and len(selected) > 1:
+        if "All" in prev:
+            # User selected a specific item while 'All' was present -> drop 'All'
+            st.session_state[key] = [x for x in selected if x != "All"]
+        else:
+            # User explicitly selected 'All' -> make it only 'All'
+            st.session_state[key] = ["All"]
+
+    st.session_state[prev_key] = st.session_state[key]
 
 # -----------------------------------------------------------------------------
 # 3. GOOGLE SHEETS AUTHENTICATION & LIVE DATA LOAD
@@ -395,7 +412,7 @@ def data_check(totals_row, d_all):
     st.dataframe(out, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# 6. GENERIC TABLE UTILITIES
+# 6. GENERIC UTILITIES
 # -----------------------------------------------------------------------------
 PALETTE = ["#2563eb", "#059669", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#ea580c", "#475569"]
 px.defaults.color_discrete_sequence = PALETTE
@@ -435,14 +452,9 @@ def style_fig(fig, height=380):
     return fig
 
 # -----------------------------------------------------------------------------
-# 7. PARSER & DASHBOARD FOR "MONTHWISE SUMMARY" (FABRICATOR REPORT)
+# 7. PARSER & DEDICATED FABRICATOR REPORT HANDLER (2 TABS + WORKING ALL FILTER)
 # -----------------------------------------------------------------------------
 def parse_monthwise_summary_sheet(values):
-    """
-    Parses the multi-block grid layout in 'MONTHWISE SUMMARY' tab:
-    Position Of Stock <NAME> followed by columns:
-    [Month, fabric issue (mtr), Pcs Under Production, RCVD, Remaining, monthly incoming]
-    """
     records = []
     if not values:
         return pd.DataFrame()
@@ -458,7 +470,6 @@ def parse_monthwise_summary_sheet(values):
                 if not fab_name:
                     fab_name = "UNKNOWN"
 
-                # Find header row right below title
                 header_row_idx = None
                 for scan_r in range(r_idx + 1, min(r_idx + 4, len(values))):
                     scan_row = values[scan_r]
@@ -493,7 +504,6 @@ def parse_monthwise_summary_sheet(values):
                 if "month" not in col_map:
                     continue
 
-                # Read data rows
                 for data_r in range(header_row_idx + 1, len(values)):
                     d_row = values[data_r]
                     if c_idx >= len(d_row):
@@ -521,7 +531,6 @@ def parse_monthwise_summary_sheet(values):
                     rem_val = get_num("remaining")
                     inc_val = get_num("incoming")
 
-                    # Status tagging
                     if prod_val == 0 and issue_val == 0:
                         status = "No Orders"
                     elif rem_val == 0 and prod_val > 0:
@@ -546,7 +555,6 @@ def parse_monthwise_summary_sheet(values):
 
     df = pd.DataFrame(records)
     if not df.empty:
-        # Standardize month sorting
         month_order = [
             "April-26", "May-26", "June-26", "July-26", "August-26", "September-26",
             "October-26", "November-26", "December-26", "January-27", "February-27", "March-27"
@@ -580,19 +588,16 @@ def render_fabricator_sheet(sheet_name, cfg):
 
     df_parsed = parse_monthwise_summary_sheet(raw_values)
     if df_parsed.empty:
-        st.error("Sheet se Fabricator summary data extract nahi ho saka. Format verify karein.")
+        st.error("Sheet se Fabricator summary data extract nahi ho saka. Sheet format check karein.")
         st.stop()
 
-    # Separate 'ALL OVER (CONSOLIDATED)' from individual fabricators
     is_consolidated = df_parsed["Fabricator"].str.contains("ALL OVER", case=False, na=False)
     df_consolidated = df_parsed[is_consolidated].copy()
     df_vendors = df_parsed[~is_consolidated].copy()
-
-    # If all records are consolidated, fallback
     df_work = df_vendors if not df_vendors.empty else df_consolidated
 
     # -------------------------------------------------------------------------
-    # SIDEBAR FILTERS (Fabricator Name, Month, Production Status)
+    # SIDEBAR FILTERS (WITH PROPER 'ALL' HANDLING)
     # -------------------------------------------------------------------------
     with st.sidebar:
         st.markdown("### 🔎 Fabricator Filters")
@@ -600,31 +605,55 @@ def render_fabricator_sheet(sheet_name, cfg):
         # 1. Fabricator Filter
         all_fabs = sorted(df_work["Fabricator"].unique())
         fab_opts = ["All"] + all_fabs
-        sel_fabs = st.multiselect("Fabricator Name", options=fab_opts, default=["All"], key="fab_filter_name")
+        if "fab_filter_name" not in st.session_state:
+            st.session_state["fab_filter_name"] = ["All"]
+        sel_fabs = st.multiselect(
+            "Fabricator Name",
+            options=fab_opts,
+            key="fab_filter_name",
+            on_change=handle_multiselect_all,
+            args=("fab_filter_name",)
+        )
 
         # 2. Month Filter
         all_months = list(dict.fromkeys(df_work["Month"].tolist()))
         month_opts = ["All"] + all_months
-        sel_months = st.multiselect("Month", options=month_opts, default=["All"], key="fab_filter_month")
+        if "fab_filter_month" not in st.session_state:
+            st.session_state["fab_filter_month"] = ["All"]
+        sel_months = st.multiselect(
+            "Month",
+            options=month_opts,
+            key="fab_filter_month",
+            on_change=handle_multiselect_all,
+            args=("fab_filter_month",)
+        )
 
         # 3. Production Status Filter
         all_statuses = ["Completed (100%)", "In Progress", "Pending / Not Started", "No Orders"]
         status_opts = ["All"] + [s for s in all_statuses if s in df_work["Production Status"].values]
-        sel_status = st.multiselect("Production Status", options=status_opts, default=["All"], key="fab_filter_status")
+        if "fab_filter_status" not in st.session_state:
+            st.session_state["fab_filter_status"] = ["All"]
+        sel_status = st.multiselect(
+            "Production Status",
+            options=status_opts,
+            key="fab_filter_status",
+            on_change=handle_multiselect_all,
+            args=("fab_filter_status",)
+        )
 
-        hide_zero_prod = st.checkbox("Hide Zero-Production Rows", value=True, help="Aise months hide karein jisme production start nahi hui")
+        hide_zero_prod = st.checkbox("Hide Zero-Production Months", value=True)
 
         if st.button("🔄 Refresh Data", key="fab_refresh_btn"):
             st.cache_data.clear()
             st.rerun()
 
-    # Filter Application
+    # Apply Filters
     filtered = df_work.copy()
-    if "All" not in sel_fabs and sel_fabs:
+    if "All" not in sel_fabs and len(sel_fabs) > 0:
         filtered = filtered[filtered["Fabricator"].isin(sel_fabs)]
-    if "All" not in sel_months and sel_months:
+    if "All" not in sel_months and len(sel_months) > 0:
         filtered = filtered[filtered["Month"].isin(sel_months)]
-    if "All" not in sel_status and sel_status:
+    if "All" not in sel_status and len(sel_status) > 0:
         filtered = filtered[filtered["Production Status"].isin(sel_status)]
     if hide_zero_prod:
         filtered = filtered[(filtered["Pcs Under Production"] > 0) | (filtered["Fabric Issue (mtr)"] > 0)]
@@ -635,7 +664,7 @@ def render_fabricator_sheet(sheet_name, cfg):
     st.markdown(
         f"""<div class="dashboard-hero">
         <h2>🧵 {sheet_name} · Executive Performance Dashboard</h2>
-        <p>Live Source Tab: <b>{html.escape(summary_tab)}</b> · {filtered['Fabricator'].nunique():,} Active Fabricators · {len(filtered):,} Month-Vendor Records</p>
+        <p>Live Source Tab: <b>{html.escape(summary_tab)}</b> · {filtered['Fabricator'].nunique():,} Active Fabricators Analyzed</p>
         </div>""",
         unsafe_allow_html=True
     )
@@ -645,18 +674,16 @@ def render_fabricator_sheet(sheet_name, cfg):
         st.stop()
 
     # -------------------------------------------------------------------------
-    # EXECUTIVE KPI CARDS
+    # TOP KPI METRICS
     # -------------------------------------------------------------------------
     tot_fabric = filtered["Fabric Issue (mtr)"].sum()
     tot_prod = filtered["Pcs Under Production"].sum()
     tot_rcvd = filtered["RCVD (Pcs)"].sum()
     tot_rem = filtered["Remaining (Pcs)"].sum()
     tot_incoming = filtered["Monthly Incoming (Pcs)"].sum()
-
     fulfillment_rate = (tot_rcvd / tot_prod * 100) if tot_prod > 0 else 0.0
     avg_fabric_pc = (tot_fabric / tot_prod) if tot_prod > 0 else 0.0
 
-    st.markdown("#### 📌 Key Performance Indicators (MONTHWISE SUMMARY)")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Total Fabric Issued", f"{tot_fabric:,.1f} Mtr")
     k2.metric("Pcs Under Production", fmt(tot_prod))
@@ -672,46 +699,46 @@ def render_fabricator_sheet(sheet_name, cfg):
     st.markdown("---")
 
     # -------------------------------------------------------------------------
-    # DASHBOARD TABS
+    # EXACTLY 2 TABS AS REQUESTED
     # -------------------------------------------------------------------------
-    tab_overview, tab_comparison, tab_table, tab_consolidated = st.tabs([
-        "📈 Production & Status Trends",
-        "👥 Fabricator Comparison",
-        "📋 Monthly Breakdown Table",
-        "🏛️ Consolidated All-Over Stock"
+    tab_analytics, tab_details = st.tabs([
+        "📊 Executive Analytics & Visuals",
+        "📋 Breakdown & Summary Tables"
     ])
 
-    with tab_overview:
-        c1, c2 = st.columns([1.3, 1])
-        with c1:
+    month_order = [
+        "April-26", "May-26", "June-26", "July-26", "August-26", "September-26",
+        "October-26", "November-26", "December-26", "January-27", "February-27", "March-27"
+    ]
+
+    # TAB 1: VISUALS, KPIS & PERFORMANCE CHARTS
+    with tab_analytics:
+        col_c1, col_c2 = st.columns([1.3, 1])
+
+        with col_c1:
             # Monthly Production vs RCVD vs Remaining Trend
             m_agg = filtered.groupby("Month", as_index=False).agg({
                 "Pcs Under Production": "sum",
                 "RCVD (Pcs)": "sum",
                 "Remaining (Pcs)": "sum"
             })
-            # Preserve month chronological order
-            month_order = [
-                "April-26", "May-26", "June-26", "July-26", "August-26", "September-26",
-                "October-26", "November-26", "December-26", "January-27", "February-27", "March-27"
-            ]
             m_agg["order"] = m_agg["Month"].apply(lambda m: month_order.index(m) if m in month_order else 99)
             m_agg = m_agg.sort_values("order").drop(columns=["order"])
 
             fig_trend = go.Figure()
             fig_trend.add_trace(go.Bar(name="Under Production", x=m_agg["Month"], y=m_agg["Pcs Under Production"], marker_color="#2563eb"))
             fig_trend.add_trace(go.Bar(name="Received (RCVD)", x=m_agg["Month"], y=m_agg["RCVD (Pcs)"], marker_color="#059669"))
-            fig_trend.add_trace(go.Bar(name="Remaining", x=m_agg["Month"], y=m_agg["Remaining (Pcs)"], marker_color="#dc2626"))
+            fig_trend.add_trace(go.Bar(name="Remaining Backlog", x=m_agg["Month"], y=m_agg["Remaining (Pcs)"], marker_color="#dc2626"))
             fig_trend.update_layout(
                 title="Monthly Production vs Delivery vs Remaining (Pcs)",
                 barmode="group",
                 xaxis_title="Month",
                 yaxis_title="Pieces"
             )
-            st.plotly_chart(style_fig(fig_trend, 400), use_container_width=True)
+            st.plotly_chart(style_fig(fig_trend, 380), use_container_width=True)
 
-        with c2:
-            # Production Status Ratio
+        with col_c2:
+            # Production Status Ratio Pie Chart
             status_counts = filtered["Production Status"].value_counts().reset_index()
             status_counts.columns = ["Status", "Records"]
             status_colors = {
@@ -724,53 +751,72 @@ def render_fabricator_sheet(sheet_name, cfg):
                 status_counts,
                 names="Status",
                 values="Records",
-                title="Vendor Orders Status Breakdown",
+                title="Vendor Orders Status Ratio",
                 hole=0.45,
                 color="Status",
                 color_discrete_map=status_colors
             )
-            st.plotly_chart(style_fig(fig_status, 400), use_container_width=True)
+            st.plotly_chart(style_fig(fig_status, 380), use_container_width=True)
 
         st.markdown("---")
 
-        c3, c4 = st.columns(2)
-        with c3:
-            # Fabric Issue vs Production Correlation
-            m_fab = filtered.groupby("Month", as_index=False).agg({
-                "Fabric Issue (mtr)": "sum",
+        col_c3, col_c4 = st.columns([1.2, 1])
+
+        with col_c3:
+            # Fabricator Delivered vs Pending Backlog Stacked Bar
+            fab_agg = filtered.groupby("Fabricator", as_index=False).agg({
+                "RCVD (Pcs)": "sum",
+                "Remaining (Pcs)": "sum",
                 "Pcs Under Production": "sum"
-            })
-            m_fab["order"] = m_fab["Month"].apply(lambda m: month_order.index(m) if m in month_order else 99)
-            m_fab = m_fab.sort_values("order").drop(columns=["order"])
+            }).sort_values("Pcs Under Production", ascending=False)
 
-            fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
-            fig_dual.add_trace(
-                go.Bar(name="Fabric Issue (mtr)", x=m_fab["Month"], y=m_fab["Fabric Issue (mtr)"], marker_color="#0891b2"),
-                secondary_y=False
+            fig_stack = go.Figure()
+            fig_stack.add_trace(go.Bar(name="Received (RCVD)", x=fab_agg["Fabricator"], y=fab_agg["RCVD (Pcs)"], marker_color="#059669"))
+            fig_stack.add_trace(go.Bar(name="Pending Backlog", x=fab_agg["Fabricator"], y=fab_agg["Remaining (Pcs)"], marker_color="#dc2626"))
+            fig_stack.update_layout(
+                barmode="stack",
+                title="Fabricator Completed vs Pending Backlog (Pcs)",
+                xaxis_title="Fabricator",
+                yaxis_title="Pieces"
             )
-            fig_dual.add_trace(
-                go.Scatter(name="Under Production (Pcs)", x=m_fab["Month"], y=m_fab["Pcs Under Production"], mode="lines+markers", line=dict(color="#ea580c", width=3)),
-                secondary_y=True
-            )
-            fig_dual.update_layout(title="Fabric Issued (Mtrs) vs Production Output (Pcs)")
-            fig_dual.update_yaxes(title_text="Fabric Issued (Mtr)", secondary_y=False)
-            fig_dual.update_yaxes(title_text="Pieces Under Production", secondary_y=True)
-            st.plotly_chart(style_fig(fig_dual, 380), use_container_width=True)
+            st.plotly_chart(style_fig(fig_stack, 380), use_container_width=True)
 
-        with c4:
+        with col_c4:
             # Fabricator Volume Share
-            fab_share = filtered.groupby("Fabricator", as_index=False)["Pcs Under Production"].sum().sort_values("Pcs Under Production", ascending=False)
             fig_fab_pie = px.pie(
-                fab_share,
+                fab_agg,
                 names="Fabricator",
                 values="Pcs Under Production",
-                title="Fabricator Production Volume Share",
+                title="Fabricator Production Share %",
                 hole=0.45
             )
             st.plotly_chart(style_fig(fig_fab_pie, 380), use_container_width=True)
 
-    with tab_comparison:
-        st.subheader("👥 Fabricator Performance & Backlog Analysis")
+        # Fabric Issued vs Output Pcs Dual-Axis
+        m_fab = filtered.groupby("Month", as_index=False).agg({
+            "Fabric Issue (mtr)": "sum",
+            "Pcs Under Production": "sum"
+        })
+        m_fab["order"] = m_fab["Month"].apply(lambda m: month_order.index(m) if m in month_order else 99)
+        m_fab = m_fab.sort_values("order").drop(columns=["order"])
+
+        fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_dual.add_trace(
+            go.Bar(name="Fabric Issued (Mtr)", x=m_fab["Month"], y=m_fab["Fabric Issue (mtr)"], marker_color="#0891b2"),
+            secondary_y=False
+        )
+        fig_dual.add_trace(
+            go.Scatter(name="Under Production (Pcs)", x=m_fab["Month"], y=m_fab["Pcs Under Production"], mode="lines+markers", line=dict(color="#ea580c", width=3)),
+            secondary_y=True
+        )
+        fig_dual.update_layout(title="Monthly Fabric Issued (Mtrs) vs Production Output (Pcs)")
+        fig_dual.update_yaxes(title_text="Fabric Issued (Mtr)", secondary_y=False)
+        fig_dual.update_yaxes(title_text="Pieces Under Production", secondary_y=True)
+        st.plotly_chart(style_fig(fig_dual, 350), use_container_width=True)
+
+    # TAB 2: DETAILED TABLES (SCORECARD + MONTHLY + ALL OVER CONSOLIDATED)
+    with tab_details:
+        st.subheader("👥 Fabricator Performance Scorecard Matrix")
         fab_summary = filtered.groupby("Fabricator", as_index=False).agg({
             "Fabric Issue (mtr)": "sum",
             "Pcs Under Production": "sum",
@@ -788,32 +834,9 @@ def render_fabricator_sheet(sheet_name, cfg):
         )
         fab_summary = fab_summary.sort_values("Pcs Under Production", ascending=False)
 
-        # Stacked fulfillment chart
-        fig_stack = go.Figure()
-        fig_stack.add_trace(go.Bar(
-            name="Received (RCVD)",
-            x=fab_summary["Fabricator"],
-            y=fab_summary["RCVD (Pcs)"],
-            marker_color="#059669"
-        ))
-        fig_stack.add_trace(go.Bar(
-            name="Pending Backlog",
-            x=fab_summary["Fabricator"],
-            y=fab_summary["Remaining (Pcs)"],
-            marker_color="#dc2626"
-        ))
-        fig_stack.update_layout(
-            barmode="stack",
-            title="Fabricator Received vs Pending Backlog (Pcs)",
-            xaxis_title="Fabricator",
-            yaxis_title="Pcs"
-        )
-        st.plotly_chart(style_fig(fig_stack, 390), use_container_width=True)
-
-        st.markdown("#### 📋 Fabricator Scorecard Summary")
-        # Add grand total row
+        # Grand Total Row
         tot_summary_row = pd.DataFrame([{
-            "Fabricator": "TOTAL",
+            "Fabricator": "GRAND TOTAL",
             "Fabric Issue (mtr)": fab_summary["Fabric Issue (mtr)"].sum(),
             "Pcs Under Production": fab_summary["Pcs Under Production"].sum(),
             "RCVD (Pcs)": fab_summary["RCVD (Pcs)"].sum(),
@@ -836,8 +859,8 @@ def render_fabricator_sheet(sheet_name, cfg):
             hide_index=True
         )
 
-    with tab_table:
-        st.subheader("📋 Filtered Month-by-Month Production Records")
+        st.markdown("---")
+        st.subheader("📋 Month-by-Month Filtered Breakdown")
         display_df = filtered[[
             "Fabricator", "Month", "Fabric Issue (mtr)", "Pcs Under Production",
             "RCVD (Pcs)", "Remaining (Pcs)", "Monthly Incoming (Pcs)", "Production Status"
@@ -855,9 +878,9 @@ def render_fabricator_sheet(sheet_name, cfg):
             hide_index=True
         )
 
-    with tab_consolidated:
-        st.subheader("🏛️ Consolidated Position Of Stock (ALL OVER)")
         if not df_consolidated.empty:
+            st.markdown("---")
+            st.subheader("🏛️ Consolidated Position Of Stock (ALL OVER Reference)")
             c_display = df_consolidated[[
                 "Month", "Fabric Issue (mtr)", "Pcs Under Production",
                 "RCVD (Pcs)", "Remaining (Pcs)", "Monthly Incoming (Pcs)"
@@ -884,8 +907,6 @@ def render_fabricator_sheet(sheet_name, cfg):
                 use_container_width=True,
                 hide_index=True
             )
-        else:
-            st.info("Consolidated 'ALL OVER' table sheet me detect nahi hua.")
 
 # -----------------------------------------------------------------------------
 # 8. SIMPLE OVERVIEW SHEET HANDLER
@@ -955,22 +976,32 @@ def render_tracker(sheet_name, sheet_id):
         client_options = ["All"] + sorted(x for x in d_all["client"].unique() if x and x != "All")
         fab_options = ["All"] + sorted(x for x in d_all["fabricator"].unique() if x and x != "All")
 
-        sel_months = st.multiselect("Order month (Col B)", month_options, default=["All"], key=f"{sheet_id}_month")
-        sel_designers = st.multiselect("Designer", designer_options, default=["All"], key=f"{sheet_id}_designer")
-        sel_clients = st.multiselect("Client", client_options, default=["All"], key=f"{sheet_id}_client")
-        sel_fabs = st.multiselect("Fabricator", fab_options, default=["All"], key=f"{sheet_id}_fabricator")
+        if f"{sheet_id}_month" not in st.session_state:
+            st.session_state[f"{sheet_id}_month"] = ["All"]
+        if f"{sheet_id}_designer" not in st.session_state:
+            st.session_state[f"{sheet_id}_designer"] = ["All"]
+        if f"{sheet_id}_client" not in st.session_state:
+            st.session_state[f"{sheet_id}_client"] = ["All"]
+        if f"{sheet_id}_fabricator" not in st.session_state:
+            st.session_state[f"{sheet_id}_fabricator"] = ["All"]
+
+        sel_months = st.multiselect("Order month (Col B)", month_options, key=f"{sheet_id}_month", on_change=handle_multiselect_all, args=(f"{sheet_id}_month",))
+        sel_designers = st.multiselect("Designer", designer_options, key=f"{sheet_id}_designer", on_change=handle_multiselect_all, args=(f"{sheet_id}_designer",))
+        sel_clients = st.multiselect("Client", client_options, key=f"{sheet_id}_client", on_change=handle_multiselect_all, args=(f"{sheet_id}_client",))
+        sel_fabs = st.multiselect("Fabricator", fab_options, key=f"{sheet_id}_fabricator", on_change=handle_multiselect_all, args=(f"{sheet_id}_fabricator",))
+
         if st.button("🔄 Refresh data", key=f"{sheet_id}_refresh"):
             st.cache_data.clear()
             st.rerun()
 
     d = d_all.copy()
-    if "All" not in sel_months:
+    if "All" not in sel_months and len(sel_months) > 0:
         d = d[d["month_client"].isin(sel_months)]
-    if "All" not in sel_designers:
+    if "All" not in sel_designers and len(sel_designers) > 0:
         d = d[d["designer"].isin(sel_designers)]
-    if "All" not in sel_clients:
+    if "All" not in sel_clients and len(sel_clients) > 0:
         d = d[d["client"].isin(sel_clients)]
-    if "All" not in sel_fabs:
+    if "All" not in sel_fabs and len(sel_fabs) > 0:
         d = d[d["fabricator"].isin(sel_fabs)]
 
     st.markdown(
