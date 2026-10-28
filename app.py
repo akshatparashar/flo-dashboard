@@ -14,7 +14,7 @@ st.set_page_config(
     layout="wide"
 )
 
-SHEET_ID = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"
+SHEET_ID = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"  # fallback/default sheet ID
 DEFAULT_TAB = "CONFIRMATION SHEET"
 MONTHS = ["April", "May", "June", "July", "August", "September",
           "October", "November", "December", "January", "February", "March"]
@@ -117,7 +117,7 @@ def build_raw(values):
 
 
 @st.cache_data(ttl=300, show_spinner="Google Sheet se live data load ho raha hai...")
-def load_sheet():
+def load_sheet(sheet_id):
     if "gcp_service_account" not in st.secrets:
         st.error("Google credentials missing hain. Streamlit Settings → Secrets me add karein.")
         st.stop()
@@ -134,7 +134,6 @@ def load_sheet():
         ],
     )
     gc = gspread.authorize(creds)
-    sheet_id = st.secrets.get("spreadsheet_id", SHEET_ID)
     book = gc.open_by_key(sheet_id)
 
     try:
@@ -518,7 +517,20 @@ def data_check(totals_row, d_all):
 # 7. MAIN APP (filters + tabs)
 # -----------------------------------------------------------------------------
 def main():
-    raw, totals_row, tab_name, first_data_row = load_sheet()
+    # Configure multiple spreadsheets in Streamlit Secrets under [spreadsheets].
+    # If that section is not present, the existing spreadsheet is used as the only option.
+    default_sheet_id = st.secrets.get("spreadsheet_id", SHEET_ID)
+    sheet_options = dict(st.secrets.get("spreadsheets", {"Current Orders": default_sheet_id}))
+    if not sheet_options:
+        st.error("Streamlit Secrets me [spreadsheets] ke andar kam se kam ek Google Sheet add karein.")
+        st.stop()
+
+    with st.sidebar:
+        st.markdown("### 📚 Google Sheet")
+        selected_sheet_name = st.selectbox("Select Google Sheet", list(sheet_options.keys()))
+        selected_sheet_id = str(sheet_options[selected_sheet_name]).strip()
+
+    raw, totals_row, tab_name, first_data_row = load_sheet(selected_sheet_id)
     d_all = prepare(raw)
 
     with st.sidebar:
@@ -544,7 +556,7 @@ def main():
 
     st.markdown(
         f"""<div class="dashboard-hero"><h2>📊 Executive Multi-Dashboard 2026-27</h2>
-        <p>Live data: <b>{tab_name}</b> · {len(d):,} rows (data row {first_data_row} se)</p></div>""",
+        <p>Google Sheet: <b>{selected_sheet_name}</b> · Tab: <b>{tab_name}</b> · {len(d):,} rows (data row {first_data_row} se)</p></div>""",
         unsafe_allow_html=True)
 
     if d.empty:
