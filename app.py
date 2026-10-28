@@ -22,11 +22,16 @@ st.set_page_config(
  
 # Dropdown mein dikhne wali Google Sheets. Nayi sheet add karne ke liye yahan ek entry add karein.
 #   type "tracker" -> original order-tracking dashboard (Designer / Client / Production / Fabric)
-#   type "summary" -> auto-analysis dashboard (kisi bhi summary sheet ke liye)
+#   type "orders" -> order analytics (data tab + DASHBOARD tab), filters: month/designer/status/fabricator...
+#   type "fabricators" -> har fabricator ka alag tab combine hota hai + MONTHWISE SUMMARY tab
+#   type "summary" -> generic auto-analysis dashboard (kisi bhi naye sheet ke liye)
 #   gid            -> sheet URL ke "gid=" wala number; wahi tab default khulega
 SHEET_REGISTRY = {
     "📦 Master Order Sheet": {"id": "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU", "type": "tracker", "gid": 0},
-    "📋 Sample Summary Sheet": {"id": "1EfQ08lXGL8YjtoaZ2ygJtNVaED7doDijo2jFvCuS7Kg", "type": "summary", "gid": 78218658},
+    "📋 Summary Sheet 2026-27": {"id": "1EfQ08lXGL8YjtoaZ2ygJtNVaED7doDijo2jFvCuS7Kg", "type": "orders",
+                                 "data_tabs": ["2026-27"], "dash_tabs": ["DASHBOARD 2026-27"], "gid": 78218658},
+    "🧵 Fabricator Report 2026-27": {"id": "1hP9Bkvu2F-qj4tXYhOCb4alfJOZZtAsMQNOjVQyWoo4", "type": "fabricators",
+                                     "summary_tabs": ["MONTHWISE SUMMARY"], "gid": 164418035},
 }
 SHEET_ID = "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU"  # default/fallback
 DEFAULT_TAB = "CONFIRMATION SHEET"
@@ -635,6 +640,9 @@ def split_table(values):
     df = df.apply(lambda c: c.str.strip())
     df = df.loc[(df != "").any(axis=1)]
     df = df.loc[:, (df != "").any(axis=0)]
+    non_id = [c for c in df.columns if not ID_COL_RE.match(c.strip())]
+    if non_id:   # sirf S.No bhari hui (khali) rows hata do
+        df = df.loc[(df[non_id] != "").any(axis=1)]
  
     def first_text(row):
         for v in row:
@@ -1158,6 +1166,898 @@ def show_access_error(e):
  
  
 # -----------------------------------------------------------------------------
+# 10. ORDER-ANALYTICS ENGINE  (Summary Sheet 2026-27  &  Fabricator Report Sheet)
+#     Columns header-name se pehchane jaate hain (Month / Designer / Status / Fabricator ...).
+#     Galat ho to sidebar "Map columns" se badal sakte hain.
+# -----------------------------------------------------------------------------
+STD = {"date": "Order Date", "month": "Month", "designer": "Designer", "status": "Status",
+       "fabricator": "Fabricator", "category": "Category", "client": "Client", "type": "Order Type",
+       "qty": "Order Qty", "production": "In Production", "received": "Received",
+       "pending": "Pending", "delay": "Delay Days"}
+TEXT_ROLES = ["designer", "status", "fabricator", "category", "client", "type"]
+NUM_ROLES = ["qty", "production", "received", "pending", "delay"]
+ROLE_LABELS = {"date": "Order date", "month": "Month (if no date)", "designer": "Designer", "status": "Status",
+               "fabricator": "Fabricator", "category": "Category", "client": "Client", "type": "Order type",
+               "qty": "Order qty (pcs)", "production": "In production (pcs)", "received": "Received (pcs)",
+               "pending": "Pending (pcs)", "delay": "Delay days"}
+ROLE_RULES = {
+    "date": [r"order\s*date", r"^date$", r"\bdate\b"],
+    "month": [r"^month$", r"\bmonth\b"],
+    "designer": [r"designer"],
+    "status": [r"status"],
+    "fabricator": [r"fabricator", r"vendor", r"karigar", r"supplier"],
+    "category": [r"category"],
+    "client": [r"client", r"customer", r"buyer"],
+    "type": [r"order\s*type", r"^type$", r"\btype\b"],
+    "qty": [r"no\.?\s*of\s*pc", r"\bqty\b", r"quantity", r"\bpcs\b", r"pieces"],
+    "production": [r"in\s*production", r"production"],
+    "received": [r"receiv"],
+    "pending": [r"pending", r"balance"],
+    "delay": [r"delay", r"overdue\s*days"],
+}
+ROLE_KINDS = {r: {"category", "text"} for r in TEXT_ROLES}
+ROLE_KINDS.update({r: {"numeric", "percent"} for r in NUM_ROLES})
+ROLE_KINDS.update({"date": {"date"}, "month": {"category", "text", "date"}})
+NEG_DATE = r"prod|deliver|receiv|dispatch|due|ship"
+CAL_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
+              "october", "november", "december"]
+DASH_RE = re.compile(r"dashboard", re.I)
+SKIP_TAB_RE = re.compile(r"summary|dashboard|master|total|index|instruction|readme|config|template", re.I)
+ 
+ 
+def norm_name(s):
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+ 
+ 
+def find_tab(titles, wanted, exclude_re=None):
+    nw = norm_name(wanted)
+    pool = [t for t in titles if not (exclude_re and exclude_re.search(t))]
+    for t in pool:
+        if norm_name(t) == nw:
+            return t
+    for t in pool:
+        if nw and nw in norm_name(t):
+            return t
+    return None
+ 
+ 
+def month_name_of(x):
+    t = str(x).strip().lower()
+    if re.fullmatch(r"\d{1,2}", t) and 1 <= int(t) <= 12:
+        return CAL_MONTHS[int(t) - 1].capitalize()
+    t = t[:3]
+    return MONTHS[MONTH_ABBR.index(t)] if t in MONTH_ABBR else ""
+ 
+ 
+def month_idx(m):
+    return MONTHS.index(m) if m in MONTHS else 99
+ 
+ 
+# ---------------- loading many tabs in ONE api call ----------------
+@st.cache_data(ttl=300, show_spinner="Loading data from Google Sheets...")
+def load_many_tabs(sheet_id, titles):
+    book = get_client().open_by_key(sheet_id)
+    out = {}
+    titles = list(titles)
+    for i in range(0, len(titles), 15):
+        chunk = titles[i:i + 15]
+        try:
+            res = book.values_batch_get(["'" + t.replace("'", "''") + "'" for t in chunk])
+            for t, vr in zip(chunk, res.get("valueRanges", [])):
+                out[t] = vr.get("values", [])
+        except Exception:
+            for t in chunk:
+                out[t] = book.worksheet(t).get_all_values()
+    return out
+ 
+ 
+# ---------------- "DASHBOARD" / "MONTHWISE SUMMARY" tab -> tables + charts ----------------
+def extract_blocks(values):
+    """Ek tab me jitni bhi tables hain (blank row/column se alag) unhe alag-alag nikalta hai."""
+    if not values:
+        return []
+    w = max(len(r) for r in values)
+    grid = [[str(c).strip() for c in r] + [""] * (w - len(r)) for r in values]
+    n = len(grid)
+    row_has = [any(r) for r in grid]
+    regions, r = [], 0
+    while r < n:
+        if not row_has[r]:
+            r += 1
+            continue
+        r0 = r
+        while r < n and row_has[r]:
+            r += 1
+        band = grid[r0:r]
+        col_has = [any(row[j] for row in band) for j in range(w)]
+        j = 0
+        while j < w:
+            if not col_has[j]:
+                j += 1
+                continue
+            c0 = j
+            while j < w and col_has[j]:
+                j += 1
+            regions.append([row[c0:j] for row in band])
+ 
+    blocks, pending_title = [], ""
+    for reg in regions:
+        rows = reg
+        title = [pending_title] if pending_title else []
+        pending_title = ""
+        while len(rows) > 1 and sum(1 for c in rows[0] if c) == 1 and len(rows[0]) > 1:
+            title.append(next(c for c in rows[0] if c))
+            rows = rows[1:]
+        filled_cells = sum(1 for row in rows for c in row if c)
+        if len(rows) == 1 and filled_cells == 1:
+            pending_title = next(c for c in rows[0] if c)
+            continue
+        if len(rows) < 2:
+            blocks.append({"title": " · ".join(title) or "Values", "note": " | ".join(c for c in rows[0] if c), "df": None})
+            continue
+        hdr = make_unique(rows[0])
+        df = pd.DataFrame(rows[1:], columns=hdr).astype(str)
+        df = df.loc[:, (df != "").any(axis=0)]
+        df = df.loc[(df != "").any(axis=1)].reset_index(drop=True)
+        if df.empty:
+            continue
+        blocks.append({"title": " · ".join(title) or "Table", "note": "", "df": df})
+    return blocks[:40]
+ 
+ 
+def render_blocks(blocks, key):
+    if not blocks:
+        st.info("No tables found in this tab.")
+        return
+    for i, b in enumerate(blocks):
+        st.markdown(f"#### {html.escape(b['title'])}", unsafe_allow_html=True)
+        if b["df"] is None:
+            st.caption(b["note"])
+            continue
+        df = b["df"]
+        typed, kd = infer_table(df)
+        label_col = df.columns[0]
+        mask_total = df[label_col].astype(str).str.match(TOTAL_RE)
+        nums = [c for c in typed.columns if kd.get(c) in ("numeric", "percent")]
+        plain = [c for c in nums if kd[c] == "numeric"] or nums
+        left, right = st.columns([1.25, 1])
+        with left:
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        with right:
+            if plain and 2 <= int((~mask_total).sum()) <= 80 and label_col not in plain:
+                pick = st.multiselect("Columns to chart", plain, default=plain[:4], key=f"{key}_blk{i}")
+                if pick:
+                    plot = typed.loc[~mask_total, [label_col] + pick].copy()
+                    labels = plot[label_col].astype(str)
+                    if kd.get(label_col) == "date":
+                        plot[label_col] = labels
+                    long = plot.melt(id_vars=label_col, var_name="Measure", value_name="Value")
+                    months_like = all(v.strip().lower()[:3] in MONTH_ABBR for v in labels if v.strip())
+                    if months_like:
+                        fig = px.line(long, x=label_col, y="Value", color="Measure", markers=True)
+                    else:
+                        fig = px.bar(long, x=label_col, y="Value", color="Measure", barmode="group")
+                    st.plotly_chart(style_fig(fig, 360), use_container_width=True)
+            else:
+                st.caption("No chart for this table (needs a label column + numeric columns).")
+        st.markdown("---")
+ 
+ 
+# ---------------- column roles & standard order frame ----------------
+def detect_roles(kinds):
+    roles, used = {}, set()
+    for role, pats in ROLE_RULES.items():
+        want = ROLE_KINDS[role]
+        for pat in pats:
+            hit = next((c for c, kd in kinds.items()
+                        if c not in used and kd in want and re.search(pat, c.lower())
+                        and not (role == "date" and re.search(NEG_DATE, c.lower()))), None)
+            if hit:
+                roles[role] = hit
+                used.add(hit)
+                break
+    return roles
+ 
+ 
+def build_orders(df_all, kinds, roles):
+    d = pd.DataFrame(index=df_all.index)
+    has = {}
+    dc = roles.get("date")
+    d[STD["date"]] = df_all[dc] if dc and kinds.get(dc) == "date" else pd.NaT
+    d[STD["date"]] = pd.to_datetime(d[STD["date"]], errors="coerce")
+    has["date"] = bool(d[STD["date"]].notna().any())
+ 
+    month = d[STD["date"]].dt.month_name().fillna("").astype(object) if has["date"] else pd.Series("", index=df_all.index, dtype=object)
+    mc = roles.get("month")
+    if mc:
+        alt = df_all[mc].dt.month_name().fillna("") if kinds.get(mc) == "date" else df_all[mc].astype(str).map(month_name_of)
+        month = month.where(month != "", alt.astype(object))
+    d[STD["month"]] = month
+    has["month"] = bool((month != "").any())
+ 
+    for r in TEXT_ROLES:
+        col = roles.get(r)
+        s = df_all[col].astype(str).str.strip() if col else pd.Series("", index=df_all.index)
+        s = s.where(~s.str.lower().isin(BLANKS), "")
+        if r in ("status", "category", "type"):
+            s = s.str.upper()
+        d[STD[r]] = s
+        has[r] = bool((s != "").any())
+ 
+    for r in NUM_ROLES:
+        col = roles.get(r)
+        if col:
+            s = df_all[col]
+            has[r] = bool(s.notna().any())
+            s = s.fillna(0.0).astype(float)
+            if r == "delay":
+                s = s.mask(s > 1000, 0.0)
+        else:
+            s, has[r] = pd.Series(0.0, index=df_all.index), False
+        d[STD[r]] = s
+ 
+    mapped = set(c for c in roles.values() if c)
+    for c in df_all.columns:
+        if c in mapped:
+            continue
+        d[c + " (sheet)" if c in STD.values() else c] = df_all[c]
+    return d, has
+ 
+ 
+def nb(d, col):
+    return d[d[col] != ""]
+ 
+ 
+# ---------------- KPIs with month comparison ----------------
+def kpi_defs(has):
+    q, p, r, pe, dl = STD["qty"], STD["production"], STD["received"], STD["pending"], STD["delay"]
+ 
+    def pct(d):
+        base = d[p].sum() if has["production"] and d[p].sum() > 0 else d[q].sum()
+        return float(d[r].sum() / base * 100) if base else 0.0
+ 
+    defs = [("Total Orders", lambda d: float(len(d[d[q] > 0]) if has["qty"] else len(d)), "int", False, True)]
+    if has["qty"]:
+        defs.append(("Order Qty (Pcs)", lambda d: float(d[q].sum()), "int", False, True))
+    if has["production"]:
+        defs.append(("In Production", lambda d: float(d[p].sum()), "int", False, True))
+    if has["received"]:
+        defs.append(("Received", lambda d: float(d[r].sum()), "int", False, True))
+    if has["pending"]:
+        defs.append(("Pending", lambda d: float(d[pe].sum()), "int", True, True))
+    if has["received"]:
+        defs.append(("Received %", pct, "pct", False, False))
+    if has["delay"]:
+        defs.append(("Overdue Orders", lambda d: float((d[dl] > 0).sum()), "int", True, True))
+        defs.append(("Avg Overdue Days", lambda d: float(d.loc[d[dl] > 0, dl].mean()) if (d[dl] > 0).any() else 0.0,
+                     "days", True, False))
+    if has["fabricator"]:
+        defs.append(("Fabricators", lambda d: float(nb(d, STD["fabricator"])[STD["fabricator"]].nunique()), "int", False, False))
+    if has["designer"]:
+        defs.append(("Designers", lambda d: float(nb(d, STD["designer"])[STD["designer"]].nunique()), "int", False, False))
+    return defs
+ 
+ 
+def fmt_kpi(x, kind):
+    if kind == "pct":
+        return f"{x:.1f}%"
+    if kind == "days":
+        return f"{x:.1f} d"
+    return f"{x:,.0f}"
+ 
+ 
+def delta_text(cur, prev, kind):
+    if kind == "pct":
+        diff = cur - prev
+        return (f"{diff:+.1f} pp" if abs(diff) >= 0.05 else "0.0 pp"), diff
+    if prev == 0:
+        return ("new" if cur else None), (cur - prev)
+    pct = (cur - prev) / abs(prev) * 100
+    return f"{pct:+.1f}%", pct
+ 
+ 
+def render_kpis(d, d_nm, sel_months, defs, cmp_mode, key):
+    cur = {lbl: fn(d) for lbl, fn, *_ in defs}
+    prev, note = None, ""
+    if sel_months:
+        sel = sorted(sel_months, key=month_idx)
+        first, n = month_idx(sel[0]), len(sel)
+        present = {m for m in d_nm["Month"].unique() if m}
+        if cmp_mode == "Previous month(s)":
+            pm = MONTHS[max(0, first - n):first]
+            pm = [m for m in pm if m in present] or pm
+            base = d_nm[d_nm["Month"].isin(pm)]
+            if pm and len(base):
+                prev = {lbl: fn(base) for lbl, fn, *_ in defs}
+                note = f"**{', '.join(sel)}** vs previous: **{', '.join(pm)}**"
+        else:
+            em = [m for m in MONTHS[:first] if m in present]
+            base = d_nm[d_nm["Month"].isin(em)]
+            if em and len(base):
+                prev = {}
+                for lbl, fn, _k, _i, additive in defs:
+                    v = fn(base)
+                    prev[lbl] = v / len(em) * n if additive else v
+                note = f"**{', '.join(sel)}** vs average of earlier months (**{em[0]} → {em[-1]}**, {len(em)} month(s))"
+        if prev is None:
+            st.info("No earlier month found in the data to compare with (April is the first month of the FY).")
+        else:
+            st.caption("📊 Comparison: " + note + "  ·  green = better, red = worse")
+    else:
+        st.caption("💡 Select a month in the sidebar to see how every KPI changed vs previous month(s).")
+ 
+    for i in range(0, len(defs), 5):
+        cols = st.columns(5)
+        for c, (lbl, fn, kind, inverse, additive) in zip(cols, defs[i:i + 5]):
+            if prev is None:
+                c.metric(lbl, fmt_kpi(cur[lbl], kind))
+            else:
+                txt, raw = delta_text(cur[lbl], prev[lbl], kind)
+                color = "off" if (raw is None or abs(raw) < 0.05) else ("inverse" if inverse else "normal")
+                c.metric(lbl, fmt_kpi(cur[lbl], kind), delta=txt, delta_color=color,
+                         help=f"Comparison value: {fmt_kpi(prev[lbl], kind)}")
+    return cur, prev
+ 
+ 
+# ---------------- summaries ----------------
+def entity_summary(d, dim, has):
+    x = nb(d, dim)
+    q, p, r, pe, dl = STD["qty"], STD["production"], STD["received"], STD["pending"], STD["delay"]
+    aggs = {"Orders": (q, "size")}
+    for role, name in (("qty", "Order Qty"), ("production", "In Production"), ("received", "Received"), ("pending", "Pending")):
+        if has[role]:
+            aggs[name] = (STD[role], "sum")
+    g = x.groupby(dim).agg(**aggs).reset_index()
+    if has["received"]:
+        base = g["In Production"] if has["production"] and g["In Production"].sum() > 0 else (g["Order Qty"] if has["qty"] else None)
+        if base is not None:
+            g["Received %"] = (g["Received"] / base.where(base > 0) * 100).round(1)
+    if has["delay"]:
+        od = x[x[dl] > 0]
+        g["Overdue Orders"] = g[dim].map(od.groupby(dim).size()).fillna(0).astype(int)
+        g["Avg Overdue Days"] = g[dim].map(od.groupby(dim)[dl].mean()).fillna(0).round(1)
+    sort_col = "Order Qty" if has["qty"] else "Orders"
+    g = g.sort_values(sort_col, ascending=False).reset_index(drop=True)
+    if has["qty"] and g["Order Qty"].sum() > 0:
+        g["Share %"] = (g["Order Qty"] / g["Order Qty"].sum() * 100).round(1)
+    return g
+ 
+ 
+def monthly_table(d, has):
+    x = nb(d, "Month")
+    aggs = {"Orders": (STD["qty"], "size")}
+    for role, name in (("qty", "Order Qty"), ("production", "In Production"), ("received", "Received"), ("pending", "Pending")):
+        if has[role]:
+            aggs[name] = (STD[role], "sum")
+    g = x.groupby("Month").agg(**aggs)
+    g = g.reindex([m for m in MONTHS if m in g.index]).reset_index()
+    if has["received"]:
+        base = g["In Production"] if has["production"] and g["In Production"].sum() > 0 else (g["Order Qty"] if has["qty"] else None)
+        if base is not None:
+            g["Received %"] = (g["Received"] / base.where(base > 0) * 100).round(1)
+    for c in ("Order Qty", "Pending", "Received"):
+        if c in g.columns:
+            g[f"{c} MoM %"] = (g[c].pct_change() * 100).replace([np.inf, -np.inf], np.nan).round(1)
+    return g
+ 
+ 
+def order_insights(d, d_nm, has, cur, prev, sel_months):
+    items = []
+    q, pe, dl = STD["qty"], STD["pending"], STD["delay"]
+    if has["designer"]:
+        g = entity_summary(d, STD["designer"], has)
+        if len(g) and has["qty"] and g["Order Qty"].sum() > 0:
+            t = g.iloc[0]
+            items.append(f"🎨 Top designer <b>{html.escape(str(t['Designer']))}</b> – {t['Order Qty']:,.0f} pcs ({t['Share %']:.1f}% of orders).")
+    if has["fabricator"] and has["pending"]:
+        g = entity_summary(d, STD["fabricator"], has).sort_values("Pending", ascending=False)
+        if len(g) and g["Pending"].sum() > 0:
+            t = g.iloc[0]
+            items.append(f"🧵 Highest pending: <b>{html.escape(str(t['Fabricator']))}</b> with {t['Pending']:,.0f} pcs "
+                         f"({t['Pending'] / g['Pending'].sum() * 100:.1f}% of all pending).")
+        if has["received"] and "Received %" in g.columns:
+            gg = g[g["Orders"] >= 2].dropna(subset=["Received %"])
+            if len(gg) >= 2:
+                b = gg.sort_values("Received %").iloc[0]
+                items.append(f"🐢 Lowest received %: <b>{html.escape(str(b['Fabricator']))}</b> ({b['Received %']:.1f}%).")
+    if has["status"]:
+        s = nb(d, STD["status"]).groupby(STD["status"]).size().sort_values(ascending=False)
+        if len(s):
+            items.append(f"📌 Most common status: <b>{html.escape(str(s.index[0]))}</b> ({s.iloc[0] / s.sum() * 100:.0f}% of orders).")
+    if has["delay"] and has["pending"]:
+        late = d[(d[dl] > 30) & (d[pe] > 0)][pe].sum()
+        if late > 0:
+            items.append(f"⏰ <b>{late:,.0f} pcs</b> are pending for more than 30 days overdue.")
+    if has["delay"] and len(d):
+        share = (d[dl] > 0).mean() * 100
+        items.append(f"🚨 {share:.0f}% of orders are overdue (delay days > 0).")
+    if has["qty"] and has["month"]:
+        mt = d_nm[d_nm["Month"] != ""].groupby("Month")[q].sum()
+        if len(mt):
+            items.append(f"📅 Busiest month: <b>{html.escape(mt.idxmax())}</b> ({mt.max():,.0f} pcs).")
+    if prev is not None and sel_months:
+        for lbl in ("Order Qty (Pcs)", "Pending", "Received"):
+            if lbl in cur and prev.get(lbl):
+                ch = (cur[lbl] - prev[lbl]) / abs(prev[lbl]) * 100
+                arrow = "▲" if ch > 0 else "▼"
+                items.append(f"{arrow} {lbl} is <b>{ch:+.1f}%</b> vs comparison period.")
+    return items
+ 
+ 
+def pivot_ui(d, dims, measures, key, default_row=0):
+    c1, c2, c3, c4 = st.columns(4)
+    rows_dim = c1.selectbox("Rows", dims, index=min(default_row, len(dims) - 1), key=f"{key}_r")
+    cols_dim = c2.selectbox("Columns", ["(none)"] + [x for x in dims if x != rows_dim], key=f"{key}_c")
+    measure = c3.selectbox("Measure", measures + ["(Order count)"], key=f"{key}_m")
+    agg = c4.selectbox("Aggregation", ["Sum", "Average", "Max", "Min", "Count"],
+                       index=4 if measure == "(Order count)" else 0, key=f"{key}_a")
+    sub = nb(d, rows_dim)
+    if cols_dim != "(none)":
+        sub = nb(sub, cols_dim)
+        if sub[cols_dim].nunique() > 40:
+            st.warning("Too many distinct values in Columns - pick another field.")
+            return
+    cnt = measure == "(Order count)" or agg == "Count"
+    if cols_dim == "(none)":
+        pt = (sub.groupby(rows_dim).size().to_frame("Orders") if cnt
+              else sub.groupby(rows_dim)[measure].agg(AGGS[agg]).to_frame(f"{agg} of {measure}"))
+    elif cnt:
+        pt = pd.crosstab(sub[rows_dim], sub[cols_dim], margins=True, margins_name="TOTAL")
+    else:
+        pt = pd.pivot_table(sub, index=rows_dim, columns=cols_dim, values=measure, aggfunc=AGGS[agg],
+                            fill_value=0, margins=True, margins_name="TOTAL")
+    pt.columns = [str(c) for c in pt.columns]
+    if cols_dim != "(none)":
+        order = order_values(sub[cols_dim]) if cols_dim == "Month" else sorted(c for c in pt.columns if c != "TOTAL")
+        pt = pt[[c for c in order if c in pt.columns] + ["TOTAL"]]
+        if rows_dim == "Month":
+            idx = [m for m in MONTHS if m in pt.index] + ["TOTAL"]
+            pt = pt.reindex(idx)
+    st.dataframe(pt.reset_index(), use_container_width=True, hide_index=True)
+    core = pt.drop(index="TOTAL", errors="ignore").drop(columns="TOTAL", errors="ignore")
+    if cols_dim != "(none)" and core.shape[0] >= 1 and core.shape[1] >= 1:
+        fig = px.imshow(core, text_auto=".2s", aspect="auto", color_continuous_scale="Blues",
+                        title=f"Heatmap · {rows_dim} × {cols_dim}")
+        st.plotly_chart(style_fig(fig, 460), use_container_width=True)
+ 
+ 
+# ---------------- the dashboard ----------------
+def orders_dashboard(df_all, kinds, ctx, block_sources, force_roles=None):
+    key = ctx["key"]
+    k = lambda s: f"{key}_{s}"
+    auto = detect_roles(kinds)
+    auto.update({r: c for r, c in (force_roles or {}).items() if c in kinds})
+ 
+    with st.sidebar:
+        with st.expander("🧭 Map columns (if auto-detect is wrong)"):
+            roles = {}
+            for role, label in ROLE_LABELS.items():
+                opts = ["(none)"] + [c for c, kd in kinds.items() if kd in ROLE_KINDS[role]]
+                a = auto.get(role)
+                pick = st.selectbox(label, opts, index=opts.index(a) if a in opts else 0, key=k(f"map_{role}"))
+                roles[role] = None if pick == "(none)" else pick
+ 
+    d_all, has = build_orders(df_all, kinds, roles)
+ 
+    # ---------- filters ----------
+    keys_multi, keys_toggle, keys_other = [], [], []
+    sel = {}
+    with st.sidebar:
+        st.markdown("### 🔎 Filters")
+        if has["month"]:
+            opts = [m for m in MONTHS if m in set(d_all["Month"])]
+            keys_multi.append(k("f_Month"))
+            sel["Month"] = st.multiselect("📅 Month", opts, key=k("f_Month"))
+        for role, label in (("designer", "🎨 Designer"), ("status", "📌 Status"), ("fabricator", "🧵 Fabricator"),
+                            ("category", "👗 Category"), ("client", "🏢 Client"), ("type", "🆕 Order type")):
+            if has[role]:
+                keys_multi.append(k(f"f_{role}"))
+                sel[STD[role]] = st.multiselect(label, sorted(v for v in d_all[STD[role]].unique() if v), key=k(f"f_{role}"))
+        date_range = None
+        if has["date"]:
+            lo, hi = d_all[STD["date"]].min().date(), d_all[STD["date"]].max().date()
+            if lo < hi:
+                keys_other.append(k("f_dates"))
+                date_range = st.date_input("🗓️ Order date range", value=(lo, hi), min_value=lo, max_value=hi, key=k("f_dates"))
+        only_overdue = only_pending = False
+        if has["delay"]:
+            keys_toggle.append(k("f_over"))
+            only_overdue = st.toggle("⏰ Overdue orders only (delay > 0)", key=k("f_over"))
+        if has["pending"]:
+            keys_toggle.append(k("f_pend"))
+            only_pending = st.toggle("⏳ Pending orders only (pending > 0)", key=k("f_pend"))
+        extra_cols = [c for c in d_all.columns if c not in STD.values() and kinds.get(c.replace(" (sheet)", "")) == "category"
+                      and 1 < d_all[c].nunique() <= 30 and c != "Fabricator (Tab)"][:6]
+        extra_sel = {}
+        if extra_cols:
+            with st.expander("➕ More filters"):
+                for c in extra_cols:
+                    keys_multi.append(k(f"x_{c}"))
+                    extra_sel[c] = st.multiselect(c, sorted(v for v in d_all[c].unique() if v), key=k(f"x_{c}"))
+ 
+        def _reset():
+            for kk in keys_multi:
+                st.session_state[kk] = []
+            for kk in keys_toggle:
+                st.session_state[kk] = False
+            for kk in keys_other:
+                st.session_state.pop(kk, None)
+ 
+        st.button("↺ Reset all filters", on_click=_reset, key=k("reset"))
+        if st.button("🔄 Refresh data", key=k("refresh")):
+            st.cache_data.clear()
+            st.rerun()
+ 
+    d_nm = d_all.copy()
+    for col, vals in list(sel.items()) + list(extra_sel.items()):
+        if col != "Month" and vals:
+            d_nm = d_nm[d_nm[col].isin(vals)]
+    if date_range and len(date_range) == 2:
+        dd = d_nm[STD["date"]].dt.date
+        d_nm = d_nm[d_nm[STD["date"]].isna() | ((dd >= date_range[0]) & (dd <= date_range[1]))]
+    if only_overdue:
+        d_nm = d_nm[d_nm[STD["delay"]] > 0]
+    if only_pending:
+        d_nm = d_nm[d_nm[STD["pending"]] > 0]
+    sel_months = sel.get("Month", [])
+    d = d_nm[d_nm["Month"].isin(sel_months)] if sel_months else d_nm
+ 
+    chips = [f"{len(d):,} of {len(d_all):,} rows"]
+    if has["fabricator"]:
+        chips.append(f"{nb(d, STD['fabricator'])[STD['fabricator']].nunique()} fabricators")
+    if has["designer"]:
+        chips.append(f"{nb(d, STD['designer'])[STD['designer']].nunique()} designers")
+    if sel_months:
+        chips.append("Months: " + ", ".join(sorted(sel_months, key=month_idx)))
+    chips_html = "".join(f'<span class="chip">{html.escape(c)}</span>' for c in chips)
+    st.markdown(f"""<div class="dashboard-hero"><h2>{html.escape(ctx['title'])}</h2>
+        <p>{html.escape(ctx['subtitle'])}</p>{chips_html}</div>""", unsafe_allow_html=True)
+ 
+    if d.empty:
+        st.warning("No rows match the selected filters.")
+        st.stop()
+ 
+    tabs = st.tabs(["📊 Overview", "🎨 Designer", "🧵 Fabricator", "📌 Status & Aging", "📈 Monthly & MoM",
+                    "🧮 Pivot", "📑 Sheet Tables", "🗃️ Data & Quality"])
+    q, p, r, pe, dl = STD["qty"], STD["production"], STD["received"], STD["pending"], STD["delay"]
+    defs = kpi_defs(has)
+ 
+    # ======================= OVERVIEW =======================
+    with tabs[0]:
+        cmp_mode = "Previous month(s)"
+        if sel_months:
+            cmp_mode = st.radio("Compare selected month(s) with", ["Previous month(s)", "Average of earlier months"],
+                                horizontal=True, key=k("cmp"))
+        cur, prev = render_kpis(d, d_nm, sel_months, defs, cmp_mode, key)
+ 
+        if prev is not None:
+            add = [(lbl, cur[lbl], prev[lbl]) for lbl, _f, _k, _i, ad in defs if ad and lbl not in ("Total Orders", "Overdue Orders")]
+            if add:
+                cdf = pd.DataFrame([{"KPI": a, "Period": "Selected", "Value": b} for a, b, _ in add] +
+                                   [{"KPI": a, "Period": "Comparison", "Value": c} for a, _, c in add])
+                fig = px.bar(cdf, x="KPI", y="Value", color="Period", barmode="group", text_auto=".3s",
+                             title="Selected month(s) vs comparison period")
+                st.plotly_chart(style_fig(fig, 340), use_container_width=True)
+ 
+        st.markdown("#### 💡 Key insights")
+        render_insights(order_insights(d, d_nm, has, cur, prev, sel_months))
+ 
+        c1, c2 = st.columns(2)
+        with c1:
+            if has["month"] and has["qty"]:
+                mt = monthly_table(d_nm, has)
+                cols = [c for c in ("Order Qty", "Received", "Pending") if c in mt.columns]
+                fig = px.bar(mt.melt(id_vars="Month", value_vars=cols), x="Month", y="value", color="variable",
+                             barmode="group", title="Monthly Order Qty / Received / Pending (all months)")
+                st.plotly_chart(style_fig(fig), use_container_width=True)
+        with c2:
+            if has["status"]:
+                sg = nb(d, STD["status"]).groupby(STD["status"]).agg(Value=(q, "sum" if has["qty"] else "size")).reset_index()
+                if (sg["Value"] > 0).any():
+                    fig = px.pie(top_n_with_others(sg[sg["Value"] > 0], 8), names=STD["status"], values="Value", hole=0.5,
+                                 title="Status split" + (" (pcs)" if has["qty"] else " (orders)"))
+                    st.plotly_chart(style_fig(fig), use_container_width=True)
+        c3, c4 = st.columns(2)
+        with c3:
+            if has["category"]:
+                g = nb(d, STD["category"]).groupby(STD["category"]).agg(Value=(q, "sum" if has["qty"] else "size")).reset_index()
+                g = g.sort_values("Value", ascending=False).head(12)
+                st.plotly_chart(style_fig(px.bar(g, x=STD["category"], y="Value", text_auto=".3s", title="Category-wise qty")),
+                                use_container_width=True)
+        with c4:
+            if has["designer"]:
+                g = entity_summary(d, STD["designer"], has).head(10).sort_values("Order Qty" if has["qty"] else "Orders")
+                st.plotly_chart(style_fig(px.bar(g, x="Order Qty" if has["qty"] else "Orders", y=STD["designer"],
+                                                 orientation="h", text_auto=".3s", title="Top designers")),
+                                use_container_width=True)
+ 
+    # ======================= DESIGNER =======================
+    with tabs[1]:
+        if not has["designer"]:
+            st.info("No Designer column detected - map it in the sidebar (Map columns).")
+        else:
+            g = entity_summary(d, STD["designer"], has)
+            if has["type"]:
+                t = nb(d, STD["designer"])
+                new = t[t[STD["type"]].str.contains("NEW", na=False)].groupby(STD["designer"])[q].sum()
+                rep = t[t[STD["type"]].str.contains("REPEAT", na=False)].groupby(STD["designer"])[q].sum()
+                g["New Qty"] = g["Designer"].map(new).fillna(0)
+                g["Repeat Qty"] = g["Designer"].map(rep).fillna(0)
+            metrics([("Designers", f"{len(g):,}"), ("Total Orders", f"{int(g['Orders'].sum()):,}")] +
+                    ([("Total Qty", fmt(g["Order Qty"].sum())), ("Top Designer", str(g.iloc[0]["Designer"]))] if has["qty"] else []))
+            l, rt = st.columns([1.3, 1])
+            l.dataframe(g, use_container_width=True, hide_index=True)
+            ycols = [c for c in (["New Qty", "Repeat Qty"] if has["type"] else ["Received", "Pending"]) if c in g.columns]
+            if ycols:
+                fig = px.bar(g.melt(id_vars="Designer", value_vars=ycols), x="Designer", y="value", color="variable",
+                             barmode="group", title="Designer performance")
+                rt.plotly_chart(style_fig(fig, 420), use_container_width=True)
+            if has["category"]:
+                st.markdown("#### Designer × Category (pcs)")
+                m = nb(nb(d, STD["designer"]), STD["category"])
+                pv = pd.pivot_table(m, index=STD["designer"], columns=STD["category"], values=q if has["qty"] else p,
+                                    aggfunc="sum" if has["qty"] else "sum", fill_value=0, margins=True, margins_name="TOTAL")
+                st.dataframe(pv.reset_index(), use_container_width=True, hide_index=True)
+ 
+    # ======================= FABRICATOR =======================
+    with tabs[2]:
+        if not has["fabricator"]:
+            st.info("No Fabricator column detected - map it in the sidebar (Map columns).")
+        else:
+            g = entity_summary(d, STD["fabricator"], has)
+            if "Pending" in g.columns:
+                g = g.sort_values("Pending", ascending=False)
+            metrics([("Fabricators", f"{len(g):,}")] +
+                    ([("In Production", fmt(g["In Production"].sum()))] if has["production"] else []) +
+                    ([("Received", fmt(g["Received"].sum()))] if has["received"] else []) +
+                    ([("Pending", fmt(g["Pending"].sum()))] if has["pending"] else []))
+            l, rt = st.columns([1.35, 1])
+            l.dataframe(g, use_container_width=True, hide_index=True, height=420)
+            vc = [c for c in ("Received", "Pending") if c in g.columns]
+            if vc:
+                fig = px.bar(g.head(15), x="Fabricator", y=vc, barmode="stack", title="Received vs Pending (top 15)")
+                rt.plotly_chart(style_fig(fig, 420), use_container_width=True)
+            a, b = st.columns(2)
+            if "Avg Overdue Days" in g.columns and (g["Avg Overdue Days"] > 0).any():
+                a.plotly_chart(style_fig(px.bar(g.sort_values("Avg Overdue Days", ascending=False).head(15), x="Fabricator",
+                                                y="Avg Overdue Days", text_auto=".1f", title="Average overdue days")),
+                               use_container_width=True)
+            if "Received %" in g.columns:
+                gg = g.dropna(subset=["Received %"])
+                if len(gg):
+                    b.plotly_chart(style_fig(px.bar(gg.sort_values("Received %").head(15), x="Fabricator", y="Received %",
+                                                    text_auto=".1f", title="Lowest received % (bottom 15)")),
+                                   use_container_width=True)
+            if has["month"]:
+                st.markdown("#### Fabricator × Month")
+                mm = st.selectbox("Measure", [m for m in (q, p, r, pe) if has[{q: 'qty', p: 'production', r: 'received', pe: 'pending'}[m]]] + ["(Order count)"],
+                                  key=k("fm_measure"))
+                x = nb(nb(d_nm, STD["fabricator"]), "Month")
+                if mm == "(Order count)":
+                    pv = pd.crosstab(x[STD["fabricator"]], x["Month"], margins=True, margins_name="TOTAL")
+                else:
+                    pv = pd.pivot_table(x, index=STD["fabricator"], columns="Month", values=mm, aggfunc="sum",
+                                        fill_value=0, margins=True, margins_name="TOTAL")
+                pv = pv[[m for m in MONTHS if m in pv.columns] + ["TOTAL"]]
+                st.dataframe(pv.reset_index(), use_container_width=True, hide_index=True)
+                core = pv.drop(index="TOTAL", errors="ignore").drop(columns="TOTAL", errors="ignore")
+                if core.shape[0] and core.shape[1]:
+                    st.plotly_chart(style_fig(px.imshow(core, text_auto=".2s", aspect="auto", color_continuous_scale="Blues",
+                                                        title="Fabricator × Month heatmap"), 460), use_container_width=True)
+ 
+    # ======================= STATUS & AGING =======================
+    with tabs[3]:
+        if has["status"]:
+            aggs = {"Orders": (q, "size")}
+            if has["qty"]:
+                aggs["Order Qty"] = (q, "sum")
+            if has["pending"]:
+                aggs["Pending"] = (pe, "sum")
+            sg = nb(d, STD["status"]).groupby(STD["status"]).agg(**aggs).reset_index().sort_values("Orders", ascending=False)
+            sg["Share %"] = (sg["Orders"] / sg["Orders"].sum() * 100).round(1)
+            l, rt = st.columns([1, 1.2])
+            l.dataframe(sg, use_container_width=True, hide_index=True)
+            rt.plotly_chart(style_fig(px.bar(sg, x=STD["status"], y="Orders", text_auto=True, title="Orders by status")),
+                            use_container_width=True)
+            a, b = st.columns(2)
+            if has["month"]:
+                x = nb(nb(d_nm, STD["status"]), "Month").groupby(["Month", STD["status"]]).size().reset_index(name="Orders")
+                a.plotly_chart(style_fig(px.bar(x, x="Month", y="Orders", color=STD["status"], barmode="stack",
+                                                title="Status by month", category_orders={"Month": MONTHS})),
+                               use_container_width=True)
+            other = [x for x in (STD["designer"], STD["fabricator"], STD["category"]) if has[{v: kk for kk, v in STD.items()}[x]]]
+            if other:
+                dim2 = b.selectbox("Status by", other, key=k("st_dim"))
+                ct = pd.crosstab(nb(nb(d, STD["status"]), dim2)[dim2], nb(nb(d, STD["status"]), dim2)[STD["status"]])
+                if ct.shape[0] and ct.shape[1]:
+                    b.plotly_chart(style_fig(px.imshow(ct, text_auto=True, aspect="auto", color_continuous_scale="Blues",
+                                                       title=f"Status × {dim2}"), 380), use_container_width=True)
+        else:
+            st.info("No Status column detected - map it in the sidebar (Map columns).")
+ 
+        if has["delay"]:
+            st.markdown("#### ⏰ Pending aging (by delay days)")
+            pend = d[d[pe] > 0] if has["pending"] else d
+            bins = [-np.inf, 0, 7, 15, 30, 60, np.inf]
+            labels = ["Not overdue", "1-7 days", "8-15 days", "16-30 days", "31-60 days", "60+ days"]
+            b_ = pd.cut(pend[dl], bins=bins, labels=labels)
+            ag = pend.groupby(b_, observed=False).agg(Orders=(dl, "size"), **({"Pending Pcs": (pe, "sum")} if has["pending"] else {})).reset_index()
+            ag.columns = ["Aging bucket"] + list(ag.columns[1:])
+            l, rt = st.columns([1, 1.2])
+            l.dataframe(ag, use_container_width=True, hide_index=True)
+            rt.plotly_chart(style_fig(px.bar(ag, x="Aging bucket", y=ag.columns[-1], text_auto=".3s",
+                                             color_discrete_sequence=["#dc2626"], title="Aging of pending work")),
+                            use_container_width=True)
+            show_cols = [c for c in (STD["date"], STD["designer"], STD["fabricator"], STD["category"], STD["client"],
+                                     STD["status"], q, pe, dl) if c in d.columns and (c == STD["date"] and has["date"] or c != STD["date"])]
+            late = pend[pend[dl] > 0].sort_values(dl, ascending=False).head(25)
+            if len(late):
+                st.markdown("**Most overdue orders (top 25)**")
+                st.dataframe(late[show_cols], use_container_width=True, hide_index=True)
+ 
+    # ======================= MONTHLY & MoM =======================
+    with tabs[4]:
+        if not has["month"]:
+            st.info("No month / order-date column detected - map it in the sidebar (Map columns).")
+        else:
+            st.caption("All months shown (month filter ignored here so trends stay visible); other filters apply.")
+            mt = monthly_table(d_nm, has)
+            l, rt = st.columns([1.35, 1])
+            l.dataframe(mt, use_container_width=True, hide_index=True)
+            cols = [c for c in ("Order Qty", "In Production", "Received", "Pending") if c in mt.columns]
+            if cols:
+                rt.plotly_chart(style_fig(px.line(mt, x="Month", y=cols, markers=True, title="Monthly trend"), 400),
+                                use_container_width=True)
+            mom = [c for c in mt.columns if c.endswith("MoM %")]
+            if mom:
+                mm = mt.melt(id_vars="Month", value_vars=mom, var_name="KPI", value_name="MoM %").dropna()
+                st.plotly_chart(style_fig(px.bar(mm, x="Month", y="MoM %", color="KPI", barmode="group", text_auto=".1f",
+                                                 title="Month-on-month change %"), 380), use_container_width=True)
+            dims = [c for c in (STD["designer"], STD["fabricator"], STD["category"], STD["status"]) if has[{v: kk for kk, v in STD.items()}[c]]]
+            if dims and has["qty"]:
+                dim = st.selectbox("Monthly qty split by", dims, key=k("mo_dim"))
+                x = nb(nb(d_nm, dim), "Month").groupby(["Month", dim])[q].sum().reset_index()
+                st.plotly_chart(style_fig(px.bar(x, x="Month", y=q, color=dim, barmode="stack", title=f"Monthly qty by {dim}",
+                                                 category_orders={"Month": MONTHS}), 420), use_container_width=True)
+        if has["date"] and has["qty"]:
+            per = st.selectbox("Order-date trend", ["Weekly", "Daily"], key=k("tr_per"))
+            x = d_nm.dropna(subset=[STD["date"]]).copy()
+            x["Period"] = x[STD["date"]].dt.to_period("W" if per == "Weekly" else "D").dt.start_time
+            g = x.groupby("Period")[q].sum().reset_index()
+            if len(g):
+                st.plotly_chart(style_fig(px.area(g, x="Period", y=q, markers=True, title=f"{per} order qty"), 360),
+                                use_container_width=True)
+ 
+    # ======================= PIVOT =======================
+    with tabs[5]:
+        dims = [c for c in ["Month", STD["designer"], STD["status"], STD["fabricator"], STD["category"], STD["client"], STD["type"]]
+                if c == "Month" and has["month"] or (c != "Month" and has[{v: kk for kk, v in STD.items()}[c]])] + extra_cols
+        meas = [STD[x] for x in NUM_ROLES if has[x]]
+        if len(dims) < 1:
+            st.info("No category columns detected for a pivot.")
+        else:
+            pivot_ui(d, dims, meas, k("pv"))
+ 
+    # ======================= SHEET TABLES =======================
+    with tabs[6]:
+        if not block_sources:
+            st.info("No calculation/summary tab selected.")
+        for ti, (tname, vals) in enumerate(block_sources):
+            st.markdown(f"### 📑 {html.escape(tname)}")
+            st.caption("Tables below are exactly as calculated in your Google Sheet - they do not react to the sidebar filters.")
+            render_blocks(extract_blocks(vals), k(f"blk{ti}"))
+ 
+    # ======================= DATA & QUALITY =======================
+    with tabs[7]:
+        st.markdown("#### Filtered data")
+        st.dataframe(d, use_container_width=True, hide_index=True, height=380)
+        st.download_button("⬇️ Download filtered data (CSV)", d.to_csv(index=False).encode("utf-8"),
+                           file_name=f"{ctx['title']}.csv".replace(" ", "_"), mime="text/csv", key=k("dl"))
+        st.markdown("#### Column mapping used")
+        st.dataframe(pd.DataFrame([{"Role": ROLE_LABELS[x], "Sheet column": roles.get(x) or "— not mapped —"} for x in ROLE_LABELS]),
+                     use_container_width=True, hide_index=True)
+        if ctx.get("skipped"):
+            st.warning("Tabs skipped (no usable data): " + ", ".join(ctx["skipped"]))
+        if ctx.get("tabs_used"):
+            st.caption("Tabs used as data: " + ", ".join(ctx["tabs_used"]))
+        with st.expander("Detected column types"):
+            st.dataframe(pd.DataFrame([{"Column": c, "Type": kd} for c, kd in kinds.items()]),
+                         use_container_width=True, hide_index=True)
+ 
+ 
+# ---------------- sheet-type renderers ----------------
+def _pick_tabs_ui(titles, cfg):
+    data_default = None
+    for w in cfg.get("data_tabs", []):
+        data_default = find_tab(titles, w, DASH_RE) or data_default
+    dash_default = None
+    for w in cfg.get("dash_tabs", []):
+        dash_default = find_tab(titles, w) or dash_default
+    with st.sidebar:
+        with st.expander("🗂️ Tabs used", expanded=False):
+            di = titles.index(data_default) if data_default in titles else 0
+            data_tab = st.selectbox("Data tab", titles, index=di, key=f"dt_{cfg['id']}")
+            opts = ["(none)"] + titles
+            dsi = opts.index(dash_default) if dash_default in opts else 0
+            dash_tab = st.selectbox("Calculations / dashboard tab", opts, index=dsi, key=f"dsh_{cfg['id']}")
+    return data_tab, (None if dash_tab == "(none)" else dash_tab)
+ 
+ 
+def render_orders_sheet(sheet_name, cfg):
+    sid = cfg["id"]
+    try:
+        titles = [t for t, _ in list_tabs(sid)]
+        data_tab, dash_tab = _pick_tabs_ui(titles, cfg)
+        wanted = tuple(dict.fromkeys([data_tab] + ([dash_tab] if dash_tab else [])))
+        vals = load_many_tabs(sid, wanted)
+    except Exception as e:
+        show_access_error(e)
+        st.stop()
+    if not vals.get(data_tab) or not any(str(c).strip() for r in vals[data_tab] for c in r):
+        st.warning(f"The tab '{data_tab}' is empty - pick the correct data tab under 'Tabs used' in the sidebar.")
+        st.stop()
+    df_raw, _pre, _tot = split_table(vals[data_tab])
+    if df_raw.empty:
+        st.warning("Header found but no data rows below it.")
+        st.stop()
+    df_all, kinds = infer_table(df_raw)
+    ctx = {"key": f"{sid}_{data_tab}", "title": f"📋 {sheet_name}",
+           "subtitle": f"Data tab: {data_tab}" + (f" · Calculations: {dash_tab}" if dash_tab else ""),
+           "tabs_used": list(wanted)}
+    sources = [(dash_tab, vals[dash_tab])] if dash_tab and vals.get(dash_tab) else []
+    orders_dashboard(df_all, kinds, ctx, sources)
+ 
+ 
+def render_fabricator_sheet(sheet_name, cfg):
+    sid = cfg["id"]
+    try:
+        titles = [t for t, _ in list_tabs(sid)]
+    except Exception as e:
+        show_access_error(e)
+        st.stop()
+    sum_defaults = [t for t in (find_tab(titles, w) for w in cfg.get("summary_tabs", [])) if t]
+    fab_defaults = [t for t in titles if t not in sum_defaults and not SKIP_TAB_RE.search(t)]
+    with st.sidebar:
+        with st.expander("🗂️ Tabs used", expanded=False):
+            fab_tabs = st.multiselect("Fabricator tabs", titles, default=fab_defaults, key=f"fab_{sid}")
+            sum_tabs = st.multiselect("Summary tabs (shown as tables)", titles, default=sum_defaults, key=f"sum_{sid}")
+    if not fab_tabs:
+        st.warning("Select at least one fabricator tab under 'Tabs used' in the sidebar.")
+        st.stop()
+    try:
+        vals = load_many_tabs(sid, tuple(dict.fromkeys(fab_tabs + sum_tabs)))
+    except Exception as e:
+        show_access_error(e)
+        st.stop()
+ 
+    frames, skipped, canon = [], [], {}
+    for t in fab_tabs:
+        v = vals.get(t) or []
+        if not v or not any(str(c).strip() for r in v for c in r):
+            skipped.append(t)
+            continue
+        df, _pre, _tot = split_table(v)
+        if df.empty:
+            skipped.append(t)
+            continue
+        df.columns = [canon.setdefault(norm_name(c) or c, c) for c in df.columns]
+        df = df.loc[:, ~df.columns.duplicated()]
+        df["Fabricator (Tab)"] = t
+        frames.append(df)
+    if not frames:
+        st.warning("No usable data found in the selected fabricator tabs.")
+        st.stop()
+    df_raw = pd.concat(frames, ignore_index=True, sort=False).fillna("").astype(str)
+    df_all, kinds = infer_table(df_raw)
+    ctx = {"key": f"{sid}_fab", "title": f"🧵 {sheet_name}",
+           "subtitle": f"{len(frames)} fabricator tabs combined · {len(df_all):,} rows",
+           "skipped": skipped, "tabs_used": [t for t in fab_tabs if t not in skipped]}
+    sources = [(t, vals[t]) for t in sum_tabs if vals.get(t)]
+    orders_dashboard(df_all, kinds, ctx, sources, force_roles={"fabricator": "Fabricator (Tab)"})
+ 
+ 
+ 
+# -----------------------------------------------------------------------------
 # 9. MAIN APP  (sheet dropdown -> matching dashboard)
 # -----------------------------------------------------------------------------
 def get_registry():
@@ -1273,12 +2173,16 @@ def main():
         selected = st.selectbox("Google Sheet", list(registry.keys()), key="sheet_choice")
         cfg = registry[selected]
  
-    if cfg.get("type", "tracker") == "tracker":
+    kind = cfg.get("type", "tracker")
+    if kind == "tracker":
         render_tracker(selected, cfg["id"])
+    elif kind == "orders":
+        render_orders_sheet(selected, cfg)
+    elif kind == "fabricators":
+        render_fabricator_sheet(selected, cfg)
     else:
         render_summary(selected, cfg)
  
  
 if __name__ == "__main__":
     main()
- 
