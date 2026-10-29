@@ -90,6 +90,10 @@ st.markdown(f"""
 .stMultiSelect [data-baseweb="select"] > div {{ border-radius: 8px; border: 1px solid var(--border-color); background: var(--panel-bg); min-height: 36px; }}
 .stMultiSelect [data-baseweb="tag"] {{ background-color: var(--chip-bg) !important; border: 1px solid var(--border-color) !important; border-radius: 5px !important; padding: 1px 6px !important; margin: 2px !important; }}
 .stMultiSelect [data-baseweb="tag"] span {{ color: var(--text-color) !important; font-size: 0.76rem !important; font-weight: 550 !important; }}
+/* Compact horizontal Master Sheet filter toolbar */
+div[data-testid="stHorizontalBlock"] [data-testid="stMultiSelect"] label,
+div[data-testid="stHorizontalBlock"] [data-testid="stSelectbox"] label {{ font-size: .76rem !important; font-weight: 700 !important; }}
+div[data-testid="stHorizontalBlock"] [data-baseweb="select"] > div {{ min-height: 38px; border-radius: 8px; }}
 
 /* Executive Metric Cards */
 [data-testid="stMetric"] {{ background: var(--panel-bg); border: 1px solid var(--border-color); border-top: 3px solid var(--accent); padding: 14px 18px; border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.04); }}
@@ -472,9 +476,9 @@ def production_dashboard(d):
 
     metrics([
         ("TOTAL DESIGN", f"{len(d[d.production > 0]):,} Orders"),
-        ("INPRODUCTION PCS [Col AS]", fmt(d.production.sum())),
-        ("RECIEVED PCS [Col AT]", fmt(d.received.sum())),
-        ("PENDING PCS [Col AU]", fmt(d.pending.sum())),
+        ("IN-PRODUCTION PCS (AS)", fmt(d.production.sum())),
+        ("RECEIVED PCS (AT)", fmt(d.received.sum())),
+        ("PENDING PCS (AU)", fmt(d.pending.sum())),
         ("OVERDUE PCS (AH > 0)", fmt(d.loc[overdue_mask, "production"].sum())),
     ])
     metrics([
@@ -483,6 +487,88 @@ def production_dashboard(d):
         ("ON-TIME PCS (AH <= 0)", fmt(d.loc[d.delay <= 0, "production"].sum())),
         ("OVERDUE ORDERS COUNT", f"{len(overdue):,} Orders"),
     ])
+
+    st.markdown("---")
+    st.markdown('<div class="section-badge">📊 Category-wise Production Performance</div>', unsafe_allow_html=True)
+    category = d[d["category_clean"].ne("")].groupby("category_clean", as_index=False).agg(
+        **{"IN-PRODUCTION (AS)": ("production", "sum"),
+           "RECEIVED (AT)": ("received", "sum"),
+           "PENDING (AU)": ("pending", "sum")}
+    )
+    category = category.sort_values("IN-PRODUCTION (AS)", ascending=False)
+    c1, c2 = st.columns([1.05, 1.35])
+    with c1:
+        cat_display = category.rename(columns={"category_clean": "CATEGORY"}).copy()
+        if not cat_display.empty:
+            total_row = pd.DataFrame([{
+                "CATEGORY": "TOTAL",
+                "IN-PRODUCTION (AS)": cat_display["IN-PRODUCTION (AS)"].sum(),
+                "RECEIVED (AT)": cat_display["RECEIVED (AT)"].sum(),
+                "PENDING (AU)": cat_display["PENDING (AU)"].sum()
+            }])
+            st.dataframe(pd.concat([cat_display, total_row], ignore_index=True).style.format({
+                "IN-PRODUCTION (AS)": "{:,.0f}", "RECEIVED (AT)": "{:,.0f}", "PENDING (AU)": "{:,.0f}"
+            }), use_container_width=True, hide_index=True)
+        else:
+            st.info("Selected filters ke liye category data nahi hai.")
+    with c2:
+        if not category.empty:
+            chart_df = category.melt(id_vars="category_clean",
+                value_vars=["IN-PRODUCTION (AS)", "RECEIVED (AT)", "PENDING (AU)"],
+                var_name="Metric", value_name="PCS")
+            fig = px.bar(chart_df, x="category_clean", y="PCS", color="Metric", barmode="group",
+                         title="Category-wise Volume Comparison",
+                         color_discrete_sequence=["#2563eb", "#ef4444", "#f59e0b"])
+            fig.update_xaxes(tickangle=-35, title="Category")
+            st.plotly_chart(style_fig(fig, 350), use_container_width=True)
+
+    st.markdown('<div class="section-badge">🧵 Fabricator Pending PCS Share</div>', unsafe_allow_html=True)
+    fab_pending = d[d["fabricator"].ne("")].groupby("fabricator", as_index=False)["pending"].sum()
+    fab_pending = fab_pending[fab_pending["pending"] > 0].sort_values("pending", ascending=False)
+    if not fab_pending.empty:
+        f1, f2 = st.columns([1, 1.35])
+        with f1:
+            fig = px.pie(fab_pending, names="fabricator", values="pending", hole=0.48,
+                         title="Fabricator Pending PCS Share")
+            st.plotly_chart(style_fig(fig, 330), use_container_width=True)
+        with f2:
+            st.dataframe(fab_pending.rename(columns={"fabricator": "FABRICATOR", "pending": "PENDING PCS"}).style.format(
+                {"PENDING PCS": "{:,.0f}"}), use_container_width=True, hide_index=True)
+    else:
+        st.info("Selected filters ke liye fabricator pending data nahi hai.")
+
+    st.markdown('<div class="section-badge">📅 Monthly Fulfillment Trend</div>', unsafe_allow_html=True)
+    month_col = "month_prod" if d["month_prod"].notna().any() else "month_client"
+    month_df = d[d[month_col].notna()].groupby(month_col, as_index=False).agg(
+        **{"ORDERS": ("qty", "count"), "IN-PRODUCTION (AS)": ("production", "sum"),
+           "RECEIVED (AT)": ("received", "sum"), "PENDING (AU)": ("pending", "sum")}
+    )
+    month_rank = {m: i for i, m in enumerate(MONTHS)}
+    month_df["_order"] = month_df[month_col].map(month_rank).fillna(99)
+    month_df = month_df.sort_values("_order").drop(columns="_order").rename(columns={month_col: "MONTH"})
+    if not month_df.empty:
+        m1, m2 = st.columns([1.35, 1])
+        with m1:
+            line_df = month_df.melt(id_vars="MONTH",
+                value_vars=["IN-PRODUCTION (AS)", "RECEIVED (AT)", "PENDING (AU)"],
+                var_name="Metric", value_name="PCS")
+            fig = px.line(line_df, x="MONTH", y="PCS", color="Metric", markers=True,
+                          title="Monthly Fulfillment Trend Analysis",
+                          color_discrete_sequence=["#2563eb", "#ef4444", "#f59e0b"])
+            st.plotly_chart(style_fig(fig, 350), use_container_width=True)
+        with m2:
+            total_month = pd.DataFrame([{
+                "MONTH": "TOTAL",
+                "ORDERS": month_df["ORDERS"].sum(),
+                "IN-PRODUCTION (AS)": month_df["IN-PRODUCTION (AS)"].sum(),
+                "RECEIVED (AT)": month_df["RECEIVED (AT)"].sum(),
+                "PENDING (AU)": month_df["PENDING (AU)"].sum()
+            }])
+            st.dataframe(pd.concat([month_df, total_month], ignore_index=True).style.format({
+                "ORDERS": "{:,.0f}", "IN-PRODUCTION (AS)": "{:,.0f}",
+                "RECEIVED (AT)": "{:,.0f}", "PENDING (AU)": "{:,.0f}"
+            }), use_container_width=True, hide_index=True)
+
 
 def data_check(totals_row, d_all):
     items = [("Total Qty (J)", "J", d_all["qty"].sum()),
@@ -501,32 +587,43 @@ def render_tracker(sheet_name, sheet_id):
     raw, totals_row, tab_name, first_data_row = load_sheet(sheet_id)
     d_all = prepare(raw)
 
-    with st.sidebar:
-        st.markdown('<div class="sidebar-filter-card">', unsafe_allow_html=True)
-        st.markdown("### 🔍 Master Sheet Filters")
-        months_present = [m for m in MONTHS if m in set(d_all["month_client"].dropna())]
-        month_options = ["All"] + [x for x in months_present if x != "All"]
-        designer_options = ["All"] + sorted(x for x in d_all["designer"].unique() if x and x != "All")
-        client_options = ["All"] + sorted(x for x in d_all["client"].unique() if x and x != "All")
-        fab_options = ["All"] + sorted(x for x in d_all["fabricator"].unique() if x and x != "All")
-
-        for k in [f"{sheet_id}_m", f"{sheet_id}_d", f"{sheet_id}_c", f"{sheet_id}_f"]:
-            if k not in st.session_state: st.session_state[k] = ["All"]
-
-        sel_months = st.multiselect("Order Month", month_options, key=f"{sheet_id}_m", on_change=handle_smart_all_filter, args=(f"{sheet_id}_m",))
-        sel_designers = st.multiselect("Designer", designer_options, key=f"{sheet_id}_d", on_change=handle_smart_all_filter, args=(f"{sheet_id}_d",))
-        sel_clients = st.multiselect("Client", client_options, key=f"{sheet_id}_c", on_change=handle_smart_all_filter, args=(f"{sheet_id}_c",))
-        sel_fabs = st.multiselect("Fabricator", fab_options, key=f"{sheet_id}_f", on_change=handle_smart_all_filter, args=(f"{sheet_id}_f",))
-        if st.button("🔄 Refresh Data", key=f"{sheet_id}_ref"):
-            st.cache_data.clear()
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+    # Master Sheet filters are displayed in a compact horizontal toolbar.
+    st.markdown('<div class="section-badge">🔎 Interactive Dashboard Filters</div>', unsafe_allow_html=True)
+    months_present = [m for m in MONTHS if m in set(d_all["month_client"].dropna())]
+    month_options = ["All"] + months_present
+    designer_options = ["All"] + sorted(x for x in d_all["designer"].unique() if x and x != "All")
+    client_options = ["All"] + sorted(x for x in d_all["client"].unique() if x and x != "All")
+    fab_options = ["All"] + sorted(x for x in d_all["fabricator"].unique() if x and x != "All")
+    status_options = ["All"] + sorted(x for x in d_all["status"].unique() if x and x != "All")
+    category_options = ["All"] + sorted(x for x in d_all["category"].unique() if x and x != "All")
+    filter_cols = st.columns([1, 1.25, 1.2, 1.2, 1.2, 1.15, 1])
+    with filter_cols[0]:
+        sel_months = st.multiselect("Month", month_options, default=["All"], key=f"{sheet_id}_m")
+    with filter_cols[1]:
+        sel_fabs = st.multiselect("Fabricator", fab_options, default=["All"], key=f"{sheet_id}_f")
+    with filter_cols[2]:
+        sel_status = st.multiselect("Status", status_options, default=["All"], key=f"{sheet_id}_s")
+    with filter_cols[3]:
+        sel_categories = st.multiselect("Category", category_options, default=["All"], key=f"{sheet_id}_cat")
+    with filter_cols[4]:
+        sel_designers = st.multiselect("Designer", designer_options, default=["All"], key=f"{sheet_id}_d")
+    with filter_cols[5]:
+        delay_risk = st.selectbox("Delay Risk", ["All", "Overdue (>0 days)", "On-time (≤0 days)"], key=f"{sheet_id}_risk")
+    with filter_cols[6]:
+        sel_clients = st.multiselect("Client", client_options, default=["All"], key=f"{sheet_id}_c")
+    if st.button("🔄 Refresh Data", key=f"{sheet_id}_ref"):
+        st.cache_data.clear()
+        st.rerun()
 
     d = d_all.copy()
     if "All" not in sel_months and sel_months: d = d[d["month_client"].isin(sel_months)]
     if "All" not in sel_designers and sel_designers: d = d[d["designer"].isin(sel_designers)]
     if "All" not in sel_clients and sel_clients: d = d[d["client"].isin(sel_clients)]
     if "All" not in sel_fabs and sel_fabs: d = d[d["fabricator"].isin(sel_fabs)]
+    if "All" not in sel_status and sel_status: d = d[d["status"].isin(sel_status)]
+    if "All" not in sel_categories and sel_categories: d = d[d["category"].isin(sel_categories)]
+    if delay_risk == "Overdue (>0 days)": d = d[d["delay"] > 0]
+    elif delay_risk == "On-time (≤0 days)": d = d[d["delay"] <= 0]
 
     st.markdown(
         f"""<div class="dashboard-hero"><h2>📊 {html.escape(sheet_name)} · Executive Dashboard</h2>
