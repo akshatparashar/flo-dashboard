@@ -23,9 +23,7 @@ SHEET_REGISTRY = {
     "Master Sheet": {
         "id": "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU",
         "type": "tracker",
-        # Data tab the sheet dashboards are built from (first match wins).
         "source_tabs": ["CONFIRMATION SHEET", "ORDER SHEET"],
-        # The sheet's own dashboard tabs (used only by the Data Check tab).
         "dashboard_tabs": {
             "designer": "DESIGNER DASHBOARD",
             "production": "PRODUCTION PROCESS DASHBOARD",
@@ -46,7 +44,6 @@ SHEET_REGISTRY = {
     },
 }
 
-# Financial year shown on the dashboards (April 2026 – March 2027)
 FY_START_YEAR = 2026
 MONTHS = ["April", "May", "June", "July", "August", "September",
           "October", "November", "December", "January", "February", "March"]
@@ -61,35 +58,31 @@ FY_MONTH_LABELS = [
 ]
 
 CATEGORIES_LIST = ["CO-ORD SET", "KURTA PANT", "TOP", "KURTA PANT DUPATTA", "DRESS", "KAFTAN", "KURTA"]
-# Designers always listed on the Designer Dashboard (even with 0 volume), like the sheet.
 KNOWN_DESIGNERS = ["ANAMIKA", "AYUSHI", "CHARU", "DEEPIKA", "JYOTI", "KEERTI",
                    "KRISHNA", "MANSI", "MUSKAN", "REKHA"]
 
-# Source-tab columns used by the Master Sheet dashboards
 MASTER_COLS = {
-    "date_client": "B",   # order date -> month
+    "date_client": "B",
     "designer": "C",
-    "type": "D",          # NEW / REPEAT
+    "type": "D",
     "category": "F",
-    "qty": "J",           # order qty
+    "qty": "J",
     "client": "N",
     "fabricator": "AA",
     "date_prod": "AC",
-    "delay": "AH",        # delay days (>0 overdue)
-    "production": "AS",   # in production pcs
-    "received": "AT",     # received pcs
-    "pending": "AU",      # pending pcs
+    "delay": "AH",
+    "production": "AS",
+    "received": "AT",
+    "pending": "AU",
     "status": "AX",
 }
 
 def _stretch_kwargs():
-    """Full-width kwarg that works on both old and new Streamlit versions."""
     try:
         major, minor = (int(p) for p in st.__version__.split(".")[:2])
     except Exception:
         return {"use_container_width": True}
     return {"width": "stretch"} if (major, minor) >= (1, 50) else {"use_container_width": True}
-
 
 STRETCH = _stretch_kwargs()
 
@@ -97,9 +90,7 @@ PALETTE = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#d
            "#ea580c", "#0d9488", "#9333ea", "#ca8a04"]
 PLOT_TEMPLATE = "plotly_white"
 
-
 def apply_theme():
-    """Sidebar dark-mode toggle + global CSS."""
     global PLOT_TEMPLATE
     if "dashboard_dark_mode" not in st.session_state:
         st.session_state.dashboard_dark_mode = False
@@ -139,6 +130,30 @@ def apply_theme():
 [data-testid="stMetric"] {{ background: var(--panel-bg); border: 1px solid var(--border-color); border-top: 3px solid var(--accent); padding: 14px 18px; border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.04); }}
 [data-testid="stMetricLabel"] {{ color: var(--muted-color); font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }}
 [data-testid="stMetricValue"] {{ color: var(--text-color); font-weight: 800; font-size: 1.45rem; }}
+
+/* Sticky Tabs and Filter Section Header */
+[data-testid="stTabs"] [role="tablist"] {{
+    position: sticky;
+    top: 0;
+    z-index: 999;
+    background-color: var(--app-bg);
+    padding-top: 5px;
+    padding-bottom: 5px;
+    border-bottom: 2px solid var(--border-color);
+}}
+
+.sticky-filter-row {{
+    position: sticky;
+    top: 45px;
+    z-index: 998;
+    background-color: var(--panel-bg);
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    margin-bottom: 15px;
+}}
+
 [data-testid="stTabs"] button {{ border-radius: 8px 8px 0 0; font-weight: 700; font-size: .92rem; padding: 10px 20px; }}
 [data-testid="stPlotlyChart"] {{ background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 8px; }}
 [data-testid="stDataFrame"] {{ border: 1px solid var(--border-color); border-radius: 10px; overflow: hidden; }}
@@ -163,13 +178,10 @@ def col_to_idx(letter):
         n = n * 26 + ord(c) - 64
     return n - 1
 
-
 def norm_key(x):
     return re.sub(r"[^A-Z0-9]", "", str(x).upper())
 
-
 def num(s):
-    """Convert a Series (numbers or text like '1,234', '(50)', '12%', '5 Days') to float; blanks -> 0."""
     if not isinstance(s, pd.Series):
         s = pd.Series(s)
     out = pd.to_numeric(s, errors="coerce").astype(float)
@@ -184,19 +196,15 @@ def num(s):
         out.loc[need] = val
     return out.fillna(0).astype(float)
 
-
 def clean_delay_days(s):
     parsed = num(s)
-    # Blank-date formulas (e.g. TODAY()-blank) produce huge numbers -> treat as 0
     return parsed.mask(parsed.abs() > 1000, 0)
-
 
 def clean_text(s):
     t = s.astype("string").fillna("")
     t = t.str.replace("\xa0", " ", regex=False).str.replace(r"\s+", " ", regex=True).str.strip()
     t = t.mask(t.str.lower().isin(["nan", "none", "<na>", "#n/a", "#ref!", "#value!"]), "")
     return t.astype(str)
-
 
 def _parse_one_date(v):
     for dayfirst in (True, False):
@@ -208,13 +216,11 @@ def _parse_one_date(v):
             return d
     return pd.NaT
 
-
 def parse_dates(s):
-    """Handles Google Sheets serial numbers (unformatted) and text dates (dd/mm/yyyy first)."""
     s = pd.Series(s)
     out = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
     numeric = pd.to_numeric(s, errors="coerce")
-    serial = numeric.between(20000, 80000)  # valid sheet serials ~1954..2119
+    serial = numeric.between(20000, 80000)
     if serial.any():
         out.loc[serial] = pd.to_datetime(numeric[serial].astype(float), unit="D", origin="1899-12-30")
     text = s.astype(str).str.strip()
@@ -225,13 +231,11 @@ def parse_dates(s):
             out.loc[rest] = pd.to_datetime(text[rest].apply(_parse_one_date), errors="coerce")
     return out
 
-
 def month_label(dts):
     lab = pd.Series("(NO DATE)", index=dts.index, dtype=object)
     valid = dts.notna()
     lab[valid] = [f"{MONTH_NAME_BY_NUM[d.month]}-{d.year % 100:02d}" for d in dts[valid]]
     return lab
-
 
 def month_sort_key(label):
     m = re.match(r"\s*([A-Za-z]+)[\s\-']*(\d{2,4})?", str(label))
@@ -243,14 +247,12 @@ def month_sort_key(label):
         yr += 2000
     return (yr if yr else 9998, mon)
 
-
 def fmt(x):
     return f"{x:,.0f}"
 
-
 def fmt_kpi(value, kind):
-    if kind == "orders":
-        return f"{value:,.0f} Orders"
+    if kind in ("orders", "int"):
+        return f"{value:,.0f}"
     if kind == "pcs":
         return f"{value:,.0f} Pcs"
     if kind == "days":
@@ -261,19 +263,15 @@ def fmt_kpi(value, kind):
         return str(value)
     return f"{value:,.0f}"
 
-
 def metrics(items):
     cols = st.columns(len(items))
     for c, (label, value) in zip(cols, items):
         c.metric(label, value)
 
-
 def render_kpis(kpis, per_row=4):
-    """kpis: list of (label, sheet_label, value, kind)."""
     for i in range(0, len(kpis), per_row):
         chunk = kpis[i:i + per_row]
         metrics([(k[0], fmt_kpi(k[2], k[3])) for k in chunk])
-
 
 def style_fig(fig, height=360):
     fig.update_layout(
@@ -286,22 +284,18 @@ def style_fig(fig, height=360):
     )
     return fig
 
-
 def badge(text):
     st.markdown(f'<div class="section-badge">{html.escape(text)}</div>', unsafe_allow_html=True)
-
 
 def add_total(df, label_col, label="TOTAL"):
     tot = {c: (df[c].sum() if pd.api.types.is_numeric_dtype(df[c]) else "") for c in df.columns}
     tot[label_col] = label
     return pd.concat([df, pd.DataFrame([tot])], ignore_index=True)
 
-
 def _highlight_total(row):
     is_total = str(row.iloc[0]).strip().upper() in ("TOTAL", "GRAND TOTAL")
     style = "font-weight: 700; background-color: rgba(37, 99, 235, 0.14)" if is_total else ""
     return [style] * len(row)
-
 
 def show_table(df, pct_cols=(), dec_cols=(), height=None):
     fmt_map = {}
@@ -317,7 +311,6 @@ def show_table(df, pct_cols=(), dec_cols=(), height=None):
     if height:
         kwargs["height"] = height
     st.dataframe(styler, **kwargs)
-
 
 def handle_smart_all_filter(key):
     selected = st.session_state.get(key, [])
@@ -347,7 +340,6 @@ def show_access_error(e=None):
              + (f"**{email}**" if email else "email from secrets")
              + (f"\n\nDetails: `{e}`" if e else ""))
 
-
 @st.cache_resource(show_spinner=False)
 def get_client():
     if "gcp_service_account" not in st.secrets:
@@ -367,7 +359,6 @@ def get_client():
     )
     return gspread.authorize(creds)
 
-
 def _open_book(sheet_id):
     try:
         return get_client().open_by_key(sheet_id)
@@ -375,19 +366,15 @@ def _open_book(sheet_id):
         show_access_error(e)
         st.stop()
 
-
 def _a1_tab(title):
     return "'" + str(title).replace("'", "''") + "'"
-
 
 @st.cache_data(ttl=300, show_spinner=False)
 def list_tabs(sheet_id):
     return [ws.title for ws in _open_book(sheet_id).worksheets()]
 
-
 @st.cache_data(ttl=300, show_spinner="Google Sheet se live data load ho raha hai...")
 def load_tab_raw(sheet_id, tab_title):
-    """Unformatted values: numbers as numbers, dates as serial numbers (no locale/format parsing errors)."""
     book = _open_book(sheet_id)
     resp = book.values_get(_a1_tab(tab_title), params={
         "valueRenderOption": "UNFORMATTED_VALUE",
@@ -395,14 +382,11 @@ def load_tab_raw(sheet_id, tab_title):
     })
     return resp.get("values", [])
 
-
 @st.cache_data(ttl=300, show_spinner=False)
 def load_tab_formatted(sheet_id, tab_title):
-    """Values exactly as displayed in the sheet (used to read the sheet's own dashboard KPIs)."""
     book = _open_book(sheet_id)
     resp = book.values_get(_a1_tab(tab_title))
     return resp.get("values", [])
-
 
 def find_tab(tabs, wanted):
     w = norm_key(wanted)
@@ -411,10 +395,8 @@ def find_tab(tabs, wanted):
             return t
     return None
 
-
 @st.cache_data(ttl=300, show_spinner="Sheet data load ho raha hai...")
 def load_worksheet_smart(sheet_id, cfg, signature_text=None):
-    """Safely retrieves worksheet by GID, Title or Content Signature."""
     book = _open_book(sheet_id)
     worksheets = book.worksheets()
     target_gid = cfg.get("gid")
@@ -466,16 +448,14 @@ CATEGORY_ALIASES.update({
     "DRESSES": "DRESS", "KAFTANS": "KAFTAN", "KURTAS": "KURTA",
 })
 
-
 def canon_category(v):
     v = str(v).strip()
     if not v:
         return ""
     return CATEGORY_ALIASES.get(norm_key(v), v.upper())
 
-
 def build_raw(values):
-    """Returns data rows (index = actual sheet row number) and the first data row number."""
+    """Updated logic: Row 5 se data detect karta hai (Header/Totals Rows ko proper skip karke)"""
     needed_width = col_to_idx("AX") + 1
 
     def is_row_no(v):
@@ -484,14 +464,14 @@ def build_raw(values):
 
     first = None
     for i, r in enumerate(values):
-        if i < 2 or not r:          # row 1 = title, row 2 = totals row
+        if i < 3 or not r: # Row 1, 2, 3 Title aur Header Rows ko pass karta hai
             continue
         if is_row_no(r[0]) and len(r) > 1 and str(r[1]).strip():
             first = i
             break
+
     if first is None:
-        first = next((i for i, r in enumerate(values) if i >= 2 and r and is_row_no(r[0])),
-                     min(4, len(values)))
+        first = 4 # Row 5 (index 4) baseline fallback
 
     rows = values[first:]
     if not rows:
@@ -506,7 +486,6 @@ def build_raw(values):
     is_total_row = first_cells.isin(["TOTAL", "GRANDTOTAL"]).any(axis=1)
     keep = ((b != "") | (j_val != 0)) & ~is_total_row
     return df[keep], first + 1
-
 
 def prepare(raw):
     def col(key):
@@ -539,19 +518,15 @@ def prepare(raw):
     d["month"] = month_label(d["date_client"])
     return d
 
-
 def month_list(d):
-    """12 FY months always, plus any other month labels that actually carry data (e.g. (NO DATE))."""
     active = d[(d["qty"] != 0) | (d["production"] != 0)]
     extra = [m for m in active["month"].unique() if m not in FY_MONTH_LABELS]
     return FY_MONTH_LABELS + sorted(extra, key=month_sort_key)
-
 
 def opt_list(d, col, known=(), first=()):
     present = {v for v in d[col].unique() if v}
     rest = sorted((present | set(known)) - set(first))
     return ["All"] + list(first) + rest
-
 
 def filter_data(d, f):
     x = d
@@ -566,16 +541,18 @@ def filter_data(d, f):
         x = x[x["delay"] <= 0]
     return x
 
-
-def filter_row(spec, key_prefix):
+def filter_row_sticky(spec, key_prefix):
+    """Filter Panel UI with sticky design as per Google Sheets screenshot layout"""
+    st.markdown('<div class="sticky-filter-row">', unsafe_allow_html=True)
     cols = st.columns(len(spec))
     out = {}
     for c, (field, label, options) in zip(cols, spec):
-        out[field] = c.selectbox(label, options, key=f"{key_prefix}_{field}")
+        out[field] = c.selectbox(f"🔍 {label}", options, key=f"{key_prefix}_{field}")
+    st.markdown('</div>', unsafe_allow_html=True)
     return out
 
 
-# --- KPI definitions: (display label, label used on the sheet dashboard, value, format) ---
+# --- KPI definitions ---
 def designer_kpis(x):
     return [
         ("TOTAL DESIGNS", "TOTAL DESIGNS", int((x["qty"] > 0).sum()), "int"),
@@ -583,7 +560,6 @@ def designer_kpis(x):
         ("NEW ORDER QTY", "NEW ORDER QTY", x.loc[x["order_type"] == "NEW", "qty"].sum(), "int"),
         ("REPEAT ORDER QTY", "REPEAT ORDER QTY", x.loc[x["order_type"] == "REPEAT", "qty"].sum(), "int"),
     ]
-
 
 def client_kpis(x):
     return [
@@ -597,9 +573,8 @@ def client_kpis(x):
         ("CATEGORY TOTAL (PCS)", "CATEGORY TOTAL (PCS)", x.loc[x["category"].isin(CATEGORIES_LIST), "qty"].sum(), "int"),
     ]
 
-
 def production_kpis(x):
-    base = x[x["production"] > 0]                 # an "order" = a design that is in production
+    base = x[x["production"] > 0]
     overdue = base[base["delay"] > 0]
     ontime = base[base["delay"] <= 0]
     n = len(base)
@@ -620,15 +595,13 @@ def production_kpis(x):
 # -----------------------------------------------------------------------------
 def designer_dashboard(d_all, key):
     st.subheader("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
-    badge("🔎 Interactive Designer Dashboard Filters")
-    f = filter_row([
+    f = filter_row_sticky([
         ("month", "Select Month", ["All"] + month_list(d_all)),
         ("designer", "Select Designer", opt_list(d_all, "designer", known=KNOWN_DESIGNERS)),
         ("order_type", "Order Type", opt_list(d_all, "order_type", first=("NEW", "REPEAT"))),
     ], f"{key}_des")
     x = filter_data(d_all, f)
 
-    # Designer rows: fixed list (like the sheet) + any designer with volume
     if f["designer"] != "All":
         designers = [f["designer"]]
     else:
@@ -705,8 +678,7 @@ def designer_dashboard(d_all, key):
 
 def client_dashboard(d_all, key):
     st.subheader("🏢 Executive Client Performance Dashboard")
-    badge("🔎 Interactive Client Dashboard Filters")
-    f = filter_row([
+    f = filter_row_sticky([
         ("month", "Month", ["All"] + month_list(d_all)),
         ("client", "Client Name", opt_list(d_all, "client")),
         ("order_type", "Order Type", opt_list(d_all, "order_type", first=("NEW", "REPEAT"))),
@@ -776,8 +748,7 @@ def client_dashboard(d_all, key):
 
 def production_dashboard(d_all, key):
     st.subheader("🏭 Production Executive Process Dashboard")
-    badge("🔎 Interactive Dashboard Filters")
-    f = filter_row([
+    f = filter_row_sticky([
         ("month", "Month", ["All"] + month_list(d_all)),
         ("fabricator", "Fabricator", opt_list(d_all, "fabricator")),
         ("status", "Status", opt_list(d_all, "status")),
@@ -851,10 +822,9 @@ def production_dashboard(d_all, key):
 
 
 # -----------------------------------------------------------------------------
-# 6. MASTER SHEET – DATA CHECK (app vs sheet)
+# 6. MASTER SHEET – DATA CHECK
 # -----------------------------------------------------------------------------
 def find_sheet_kpis(values, labels):
-    """Finds each KPI label on a dashboard tab and reads the value in the row below it."""
     wanted = {norm_key(lbl) for lbl in labels}
     out = {}
     for r, row in enumerate(values):
@@ -867,7 +837,6 @@ def find_sheet_kpis(values, labels):
                         out[k] = float(num(pd.Series([nxt[cc]])).iloc[0])
                         break
     return out
-
 
 def compare_block(sheet_id, tabs, tab_name, kpis):
     tab = find_tab(tabs, tab_name)
@@ -895,14 +864,12 @@ def compare_block(sheet_id, tabs, tab_name, kpis):
     st.dataframe(df.style.format({"Sheet dashboard": "{:,.1f}", "Streamlit app": "{:,.1f}", "Diff": "{:,.1f}"}),
                  **STRETCH, hide_index=True)
 
-
 def data_check(sheet_id, cfg, tabs, src_tab, first_row, totals_row, d_all):
     st.subheader("✅ Data Check – Streamlit vs Google Sheet")
     st.caption(f"Source tab: **{src_tab}** · data from sheet row {first_row} · {len(d_all):,} rows loaded "
                f"· {int((d_all['qty'] > 0).sum()):,} designs with qty > 0")
 
     badge("1 · Sheet dashboard tabs vs app (all filters = ALL)")
-    st.caption("Sheet dashboard ke dropdown filters ALL par hone chahiye, warna numbers alag dikhenge.")
     dash = cfg.get("dashboard_tabs", {})
     st.markdown("**Client Dashboard**")
     compare_block(sheet_id, tabs, dash.get("client", "CLIENT DASHBOARD"), client_kpis(d_all))
@@ -973,10 +940,12 @@ def render_tracker(sheet_name, cfg):
     if default is None:
         default = next((t for t in tabs if "DASHBOARD" not in t.upper()), tabs[0])
 
+    # Left Sidebar Se Data Tab Selectbox Hta Diya Gaya Hai (Automatic internal selection)
+    src_tab = default
+
     with st.sidebar:
-        st.markdown("### 📄 Master Data Source")
-        src_tab = st.selectbox("Data tab", tabs, index=tabs.index(default), key=f"{sheet_id}_src_tab",
-                               help="Jis tab se dashboards bante hain (order data). Data Check tab se verify karein.")
+        st.markdown("### 📄 Master Sheet Actions")
+        st.caption(f"Active Tab: **{src_tab}**")
         if st.button("🔄 Refresh Data", key=f"{sheet_id}_ref"):
             st.cache_data.clear()
             st.rerun()
@@ -988,14 +957,14 @@ def render_tracker(sheet_name, cfg):
 
     raw, first_row = build_raw(values)
     if raw.empty:
-        st.error(f"Tab '{src_tab}' me data rows nahi mile (column A me serial number aur column B me date expected hai).")
+        st.error(f"Tab '{src_tab}' me data rows nahi mile.")
         st.stop()
     totals_row = values[1] if len(values) > 1 else []
     d_all = prepare(raw)
 
     st.markdown(
         f"""<div class="dashboard-hero"><h2>📊 {html.escape(sheet_name)} · Executive Dashboard 2026-27</h2>
-        <p>Source Tab: <b>{html.escape(src_tab)}</b> · {len(d_all):,} rows (data from sheet row {first_row}) · auto-refresh every 5 min</p></div>""",
+        <p>Source Tab: <b>{html.escape(src_tab)}</b> · {len(d_all):,} rows (data starting from row {first_row}) · auto-refresh active</p></div>""",
         unsafe_allow_html=True,
     )
 
@@ -1122,7 +1091,7 @@ def render_fabricator_dashboard(sheet_name, cfg):
     df_parsed = parse_fabricator_summary_grid(raw_values)
 
     if df_parsed.empty:
-        st.error(f"Tab '{tab_title}' me fabricator block structure detect nahi hua. Make sure sheet me 'Position Of Stock' blocks hain.")
+        st.error(f"Tab '{tab_title}' me fabricator block structure detect nahi hua.")
         st.stop()
 
     is_cons = df_parsed["Fabricator"].str.contains("ALL OVER", case=False, na=False)
@@ -1130,31 +1099,26 @@ def render_fabricator_dashboard(sheet_name, cfg):
     df_vendors = df_parsed[~is_cons].copy()
     df_work = df_vendors if not df_vendors.empty else df_consolidated
 
-    with st.sidebar:
-        st.markdown("### 🔍 Fabricator Filters")
+    # Updated Sticky Top Filters Layout
+    st.markdown('<div class="sticky-filter-row">', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
         fab_opts = ["All"] + sorted(df_work["Fabricator"].unique())
-        if "f_fab" not in st.session_state:
-            st.session_state["f_fab"] = ["All"]
-        sel_fabs = st.multiselect("Fabricator Name", options=fab_opts, key="f_fab",
-                                  on_change=handle_smart_all_filter, args=("f_fab",))
-
+        if "f_fab" not in st.session_state: st.session_state["f_fab"] = ["All"]
+        sel_fabs = st.multiselect("🔍 Fabricator Name", options=fab_opts, key="f_fab", on_change=handle_smart_all_filter, args=("f_fab",))
+    with c2:
         month_opts = ["All"] + list(dict.fromkeys(df_work["Month"].tolist()))
-        if "f_month" not in st.session_state:
-            st.session_state["f_month"] = ["All"]
-        sel_months = st.multiselect("Month", options=month_opts, key="f_month",
-                                    on_change=handle_smart_all_filter, args=("f_month",))
-
+        if "f_month" not in st.session_state: st.session_state["f_month"] = ["All"]
+        sel_months = st.multiselect("🔍 Month", options=month_opts, key="f_month", on_change=handle_smart_all_filter, args=("f_month",))
+    with c3:
         all_stat = ["Completed (100%)", "In Progress", "Pending / Not Started", "No Orders"]
         status_opts = ["All"] + [s for s in all_stat if s in df_work["Production Status"].values]
-        if "f_stat" not in st.session_state:
-            st.session_state["f_stat"] = ["All"]
-        sel_status = st.multiselect("Production Status", options=status_opts, key="f_stat",
-                                    on_change=handle_smart_all_filter, args=("f_stat",))
-
-        hide_zero = st.checkbox("Hide Zero Production Months", value=True)
-        if st.button("🔄 Refresh Data", key="fab_ref"):
-            st.cache_data.clear()
-            st.rerun()
+        if "f_stat" not in st.session_state: st.session_state["f_stat"] = ["All"]
+        sel_status = st.multiselect("🔍 Production Status", options=status_opts, key="f_stat", on_change=handle_smart_all_filter, args=("f_stat",))
+    with c4:
+        st.write("")
+        hide_zero = st.checkbox("Hide Zero Prod Months", value=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     filtered = df_work.copy()
     if "All" not in sel_fabs and sel_fabs:
@@ -1169,13 +1133,13 @@ def render_fabricator_dashboard(sheet_name, cfg):
     st.markdown(
         f"""<div class="dashboard-hero">
         <h2>🧵 {html.escape(sheet_name)} · Executive Operations Dashboard</h2>
-        <p>Active Source: <b>{html.escape(tab_title)}</b> · {filtered['Fabricator'].nunique():,} Fabricator(s) Filtered · Live Sync 2026-27</p>
+        <p>Active Source: <b>{html.escape(tab_title)}</b> · {filtered['Fabricator'].nunique():,} Fabricator(s) Filtered</p>
         </div>""",
         unsafe_allow_html=True,
     )
 
     if filtered.empty:
-        st.warning("Selected filters ke saath koi record match nahi hua. Kripya sidebar filter reset karein.")
+        st.warning("Selected filters ke saath koi record match nahi hua.")
         st.stop()
 
     tot_fab = filtered["Fabric Issue (mtr)"].sum()
@@ -1260,12 +1224,6 @@ def render_fabricator_dashboard(sheet_name, cfg):
         show_table(pd.concat([fab_summary, tot_row], ignore_index=True),
                    pct_cols=("Fulfillment %",), dec_cols=("Fabric Issue (mtr)", "Avg Mtr/Pc"))
 
-        if not df_consolidated.empty:
-            with st.expander("🏛️ Consolidated Position Of Stock (ALL OVER Reference Table)"):
-                c_tbl = df_consolidated[["Month", "Fabric Issue (mtr)", "Pcs Under Production", "RCVD (Pcs)",
-                                         "Remaining (Pcs)", "Monthly Incoming (Pcs)"]]
-                st.dataframe(c_tbl, **STRETCH, hide_index=True)
-
 
 # -----------------------------------------------------------------------------
 # 8. SAMPLE SUMMARY ENGINE
@@ -1344,25 +1302,22 @@ def render_sample_summary_dashboard(sheet_name, cfg):
     tab_title, raw_values = load_worksheet_smart(cfg["id"], cfg, signature_text="total samples")
     parsed = parse_sample_summary_sheet(raw_values)
 
-    with st.sidebar:
-        st.markdown("### 🔍 Sample Dashboard Filters")
+    # Updated Sticky Top Filters Layout
+    st.markdown('<div class="sticky-filter-row">', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
         m_list = [m["Month"] for m in parsed["monthly_breakdown"]] or FY_MONTH_LABELS
-        if "s_month" not in st.session_state:
-            st.session_state["s_month"] = ["All"]
-        sel_months = st.multiselect("Month", options=["All"] + m_list, key="s_month",
-                                    on_change=handle_smart_all_filter, args=("s_month",))
-        if "s_stat" not in st.session_state:
-            st.session_state["s_stat"] = ["All"]
-        sel_status = st.multiselect("Status Filter", options=["All", "Approved", "Rejected", "On Hold", "In Process"],
-                                    key="s_stat", on_change=handle_smart_all_filter, args=("s_stat",))
-        if st.button("🔄 Refresh Data", key="samp_ref"):
-            st.cache_data.clear()
-            st.rerun()
+        if "s_month" not in st.session_state: st.session_state["s_month"] = ["All"]
+        sel_months = st.multiselect("🔍 Month", options=["All"] + m_list, key="s_month", on_change=handle_smart_all_filter, args=("s_month",))
+    with c2:
+        if "s_stat" not in st.session_state: st.session_state["s_stat"] = ["All"]
+        sel_status = st.multiselect("🔍 Status Filter", options=["All", "Approved", "Rejected", "On Hold", "In Process"], key="s_stat", on_change=handle_smart_all_filter, args=("s_stat",))
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown(
         f"""<div class="dashboard-hero">
         <h2>🔬 {html.escape(sheet_name)} · Executive Process & QA Hub</h2>
-        <p>Active Source: <b>{html.escape(tab_title)}</b> · Real-Time Sampling & QA Workflow Monitoring 2026-27</p>
+        <p>Active Source: <b>{html.escape(tab_title)}</b> · Real-Time Sampling & QA Workflow Monitoring</p>
         </div>""",
         unsafe_allow_html=True,
     )
@@ -1426,14 +1381,6 @@ def render_sample_summary_dashboard(sheet_name, cfg):
                 "Approval %": (df_display["Approved"].sum() / tot * 100) if tot > 0 else 0.0,
             }])], ignore_index=True)
             show_table(df_display, pct_cols=("Approval %",))
-        else:
-            st.info("Monthly progression table sheet me blank hai. Headline summary statistics display ho rahe hain.")
-
-        with st.expander("📄 View Source Sheet Raw Matrix"):
-            if raw_values:
-                width = max(len(r) for r in raw_values)
-                st.dataframe(pd.DataFrame([r + [""] * (width - len(r)) for r in raw_values]),
-                             **STRETCH, hide_index=True)
 
 
 # -----------------------------------------------------------------------------
