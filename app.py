@@ -437,7 +437,7 @@ def load_worksheet_smart(sheet_id, cfg, signature_text=None):
 
 
 # -----------------------------------------------------------------------------
-# 4. MASTER SHEET – DATA PREPARATION (UNCHANGED)
+# 4. MASTER SHEET – DATA PREPARATION (UNTOUCHED)
 # -----------------------------------------------------------------------------
 CATEGORY_ALIASES = {norm_key(c): c for c in CATEGORIES_LIST}
 CATEGORY_ALIASES.update({
@@ -550,7 +550,6 @@ def filter_row_sticky(spec, key_prefix):
     st.markdown('</div>', unsafe_allow_html=True)
     return out
 
-# --- Master KPI definitions ---
 def designer_kpis(x):
     return [
         ("TOTAL DESIGNS", "TOTAL DESIGNS", int((x["qty"] > 0).sum()), "int"),
@@ -589,7 +588,7 @@ def production_kpis(x):
 
 
 # -----------------------------------------------------------------------------
-# 5. MASTER SHEET – DASHBOARDS (UNCHANGED)
+# 5. MASTER SHEET – DASHBOARDS (UNTOUCHED)
 # -----------------------------------------------------------------------------
 def designer_dashboard(d_all, key):
     st.subheader("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
@@ -897,22 +896,105 @@ def render_tracker(sheet_name, cfg):
 
 
 # -----------------------------------------------------------------------------
-# 7. FABRICATOR ENGINE (EXACT MATCH TO GOOGLE SHEET DASHBOARD IMAGE 1)
+# 7. FABRICATOR ENGINE (EXACT MATCH TO GOOGLE SHEET DASHBOARD)
 # -----------------------------------------------------------------------------
+def parse_fabricator_summary_grid(values):
+    records = []
+    if not values:
+        return pd.DataFrame()
+
+    for r_idx, row in enumerate(values):
+        for c_idx, cell in enumerate(row):
+            cell_str = str(cell).strip()
+            if re.search(r"position\s*of\s*stock", cell_str, re.I):
+                fab_name = re.sub(r"position\s*of\s*stock\s*[:\-]?", "", cell_str, flags=re.I).strip()
+                fab_name = re.sub(r"^[(\[]|[)\]]$", "", fab_name).strip()
+                if "ALL OVER" in fab_name.upper():
+                    fab_name = "ALL OVER (CONSOLIDATED)"
+                if not fab_name:
+                    fab_name = "UNKNOWN"
+
+                header_row_idx = None
+                for scan_r in range(r_idx + 1, min(r_idx + 6, len(values))):
+                    scan_row = values[scan_r]
+                    for offset in range(0, 3):
+                        check_c = c_idx + offset
+                        if check_c < len(scan_row) and re.search(r"month", str(scan_row[check_c]), re.I):
+                            header_row_idx = scan_r
+                            break
+                    if header_row_idx is not None:
+                        break
+                if header_row_idx is None:
+                    continue
+
+                h_row = values[header_row_idx]
+                col_map = {}
+                for offset in range(0, 8):
+                    curr_col = c_idx + offset
+                    if curr_col < len(h_row):
+                        h_val = str(h_row[curr_col]).strip().lower()
+                        if "month" in h_val and "month" not in col_map:
+                            col_map["month"] = curr_col
+                        elif ("fabric" in h_val or "issue" in h_val or "mtr" in h_val) and "fabric_issue" not in col_map:
+                            col_map["fabric_issue"] = curr_col
+                        elif ("under" in h_val or "production" in h_val or "pcs" in h_val) and "production" not in col_map:
+                            col_map["production"] = curr_col
+                        elif ("rcvd" in h_val or "received" in h_val) and "received" not in col_map:
+                            col_map["received"] = curr_col
+                        elif ("remain" in h_val or "pending" in h_val) and "remaining" not in col_map:
+                            col_map["remaining"] = curr_col
+                        elif "incoming" in h_val and "incoming" not in col_map:
+                            col_map["incoming"] = curr_col
+
+                month_col = col_map.get("month", c_idx)
+                for data_r in range(header_row_idx + 1, len(values)):
+                    d_row = values[data_r]
+                    if month_col >= len(d_row):
+                        break
+                    m_val = str(d_row[month_col]).strip()
+                    if not m_val:
+                        continue
+                    if re.search(r"^total\b", m_val, re.I) or re.search(r"position\s*of\s*stock", m_val, re.I):
+                        break
+                    if not re.search(r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", m_val, re.I):
+                        continue
+
+                    def get_val(k):
+                        idx = col_map.get(k)
+                        if idx is not None and idx < len(d_row):
+                            return float(num(pd.Series([d_row[idx]])).iloc[0])
+                        return 0.0
+
+                    issue_val = get_val("fabric_issue")
+                    prod_val = get_val("production")
+                    rcvd_val = get_val("received")
+                    rem_val = get_val("remaining")
+                    inc_val = get_val("incoming")
+
+                    records.append({
+                        "Fabricator": fab_name,
+                        "Month": m_val,
+                        "Fabric Issue (mtr)": issue_val,
+                        "Pcs Under Production": int(prod_val),
+                        "RCVD (Pcs)": int(rcvd_val),
+                        "Remaining (Pcs)": int(rem_val),
+                        "Monthly Incoming (Pcs)": int(inc_val),
+                    })
+
+    return pd.DataFrame(records)
+
+
 def parse_fabricator_dashboard_data(values):
-    """Parses Fabricator Scorecard and Monthwise Matrix accurately from Sheet"""
     records = []
     month_matrix = []
     if not values:
         return pd.DataFrame(), pd.DataFrame()
 
-    header_found = False
     for r_idx, row in enumerate(values):
         row_str = [str(c).strip() for c in row]
         row_joined = " ".join(row_str).upper()
 
-        if "FABRICATOR" in row_joined and ("FABRIC ISSUE" in row_joined or "Pcs Under Production" in row_joined or "PRODUCTION" in row_joined):
-            header_found = True
+        if "FABRICATOR" in row_joined and ("FABRIC ISSUE" in row_joined or "PRODUCTION" in row_joined):
             col_map = {}
             for col_i, h_val in enumerate(row_str):
                 h_low = h_val.lower()
@@ -948,7 +1030,6 @@ def parse_fabricator_dashboard_data(values):
 
     df_scorecard = pd.DataFrame(records)
 
-    # Secondary scan for Month Matrix block if present
     for r_idx, row in enumerate(values):
         row_joined = " ".join(str(c).strip().upper() for c in row)
         if "MONTH" in row_joined and ("APR" in row_joined or "MAY" in row_joined or "JUN" in row_joined):
@@ -973,9 +1054,7 @@ def render_fabricator_dashboard(sheet_name, cfg):
     df_scorecard, df_matrix = parse_fabricator_dashboard_data(raw_values)
 
     if df_scorecard.empty:
-        # Fallback grid parser if tab structured as individual block grids
-        from parse_grid_fallback import parse_fabricator_summary_grid if 'parse_fabricator_summary_grid' in globals() else None
-        df_scorecard = parse_fabricator_summary_grid(raw_values) if 'parse_fabricator_summary_grid' in globals() else pd.DataFrame()
+        df_scorecard = parse_fabricator_summary_grid(raw_values)
 
     with st.sidebar:
         st.markdown("### 📄 Fabricator Sheet Actions")
@@ -984,7 +1063,6 @@ def render_fabricator_dashboard(sheet_name, cfg):
             st.cache_data.clear()
             st.rerun()
 
-    # Exact Top Filters Header like Google Sheet UI
     st.markdown('<div class="sticky-filter-row">', unsafe_allow_html=True)
     f1, f2, f3, f4 = st.columns(4)
     with f1:
@@ -1020,7 +1098,6 @@ def render_fabricator_dashboard(sheet_name, cfg):
     tot_inc = filtered["Monthly Incoming (Pcs)"].sum() if not filtered.empty else 102610
     ful_rate = (tot_rcvd / tot_prod * 100) if tot_prod > 0 else 72.5
 
-    # Top KPI Bar Matching Image 1 Sheet
     k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
     k1.metric("FABRIC ISSUED", f"{tot_fab:,.0f} mtr")
     k2.metric("RCVD (PCS)", fmt(tot_rcvd) + " Pcs")
@@ -1074,7 +1151,7 @@ def render_fabricator_dashboard(sheet_name, cfg):
                                              score_df["RCVD (Pcs)"] / score_df["Pcs Under Production"] * 100, 0.0)
                 show_table(add_total(score_df, "Fabricator"), pct_cols=("RCVD %",))
             else:
-                st.info("Scorecard data currently synchronized with Google Sheet.")
+                st.info("Scorecard data synchronized with Sheet.")
 
         with c_chart:
             badge("📊 FABRICATOR SHARE ANALYSIS")
@@ -1092,10 +1169,9 @@ def render_fabricator_dashboard(sheet_name, cfg):
 
 
 # -----------------------------------------------------------------------------
-# 8. SAMPLE SUMMARY ENGINE (EXACT MATCH TO GOOGLE SHEET DASHBOARD IMAGE 2)
+# 8. SAMPLE SUMMARY ENGINE (EXACT MATCH TO GOOGLE SHEET DASHBOARD)
 # -----------------------------------------------------------------------------
 def parse_sample_dashboard_data(values):
-    """Parses Executive Sample Performance and Designer/Vendor Scorecards"""
     monthly_rows = []
     designer_rows = []
     vendor_rows = []
@@ -1103,7 +1179,6 @@ def parse_sample_dashboard_data(values):
     if not values:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    # 1. Parse Monthly Sample Breakdown
     for r_idx, row in enumerate(values):
         row_str = [str(c).strip() for c in row]
         row_joined = " ".join(row_str).upper()
@@ -1118,7 +1193,6 @@ def parse_sample_dashboard_data(values):
                 elif "hold" in h_low and "hold" not in col_map: col_map["hold"] = col_i
                 elif "process" in h_low and "process" not in col_map: col_map["process"] = col_i
                 elif "total" in h_low and "total" not in col_map: col_map["total"] = col_i
-                elif "appr" in h_low and "appr" not in col_map: col_map["appr_pct"] = col_i
 
             m_col = col_map.get("month", 0)
             for d_idx in range(r_idx + 1, len(values)):
@@ -1146,7 +1220,6 @@ def parse_sample_dashboard_data(values):
                     "HOLD": hld, "PROCESS": prc, "TOTAL": tot, "APPR %": rate
                 })
 
-    # 2. Parse Designer Scorecard
     for r_idx, row in enumerate(values):
         row_str = [str(c).strip() for c in row]
         if any("DESIGNER" in c.upper() for c in row_str) and any("APPROVED" in c.upper() for c in row_str):
@@ -1166,7 +1239,6 @@ def parse_sample_dashboard_data(values):
                             "TOTAL": tot, "APPR %": rate
                         })
 
-    # 3. Parse Vendor Scorecard
     for r_idx, row in enumerate(values):
         row_str = [str(c).strip() for c in row]
         if any("VENDOR" in c.upper() for c in row_str) and any("APPROVED" in c.upper() for c in row_str):
@@ -1200,7 +1272,6 @@ def render_sample_summary_dashboard(sheet_name, cfg):
             st.cache_data.clear()
             st.rerun()
 
-    # Exact Top Sticky Filter Bar Matching Google Sheet Image 2
     st.markdown('<div class="sticky-filter-row">', unsafe_allow_html=True)
     f1, f2, f3, f4 = st.columns(4)
     with f1:
@@ -1235,7 +1306,6 @@ def render_sample_summary_dashboard(sheet_name, cfg):
     prc_s = df_m["PROCESS"].sum() if not df_m.empty else 35
     ratio = (app_s / tot_s * 100) if tot_s > 0 else 50.4
 
-    # KPI Header matching Image 2
     k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
     k1.metric("TOTAL SAMPLES QTY", fmt(tot_s) + " Pcs")
     k2.metric("APPROVED SAMPLES", fmt(app_s) + " Pcs")
