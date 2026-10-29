@@ -228,25 +228,25 @@ def render_kpi_cards(kpis, per_row=4):
             col.metric(title, value, delta=sub or None, delta_color="off")
 
 
-def show_filter_chips(grid, spec):
+def show_filter_chips_from_dict(filters_dict):
     chips = "".join(
-        f'<span class="chip">{html.escape(label)}: <b>{html.escape(_txt(_cell(grid, r, c)) or "ALL")}</b></span>'
-        for label, r, c in spec)
+        f'<span class="chip">{html.escape(label)}: <b>{html.escape(str(val))}</b></span>'
+        for label, val in filters_dict.items())
     st.markdown(
-        f'<div class="filter-chips"><span class="lead">🔎 Sheet dashboard ke current filters:</span>{chips}</div>',
+        f'<div class="filter-chips"><span class="lead">🔎 Selected Live Filters:</span>{chips}</div>',
         unsafe_allow_html=True)
 
 
 def hero(title, source_tab, extra=""):
     st.markdown(
         f"""<div class="dashboard-hero"><h2>{html.escape(title)}</h2>
-        <p>Source: Google Sheet tab <b>{html.escape(source_tab)}</b> · Live sync (har {LIVE_TTL} sec) ·
+        <p>Source Data: <b>{html.escape(source_tab)}</b> · Live Dynamic Calculation ·
         Loaded: {datetime.now().strftime('%d %b %Y, %H:%M')}{extra}</p></div>""",
         unsafe_allow_html=True)
 
 
 # -----------------------------------------------------------------------------
-# 3. GOOGLE SHEETS AUTH & LOADERS
+# 3. GOOGLE SHEETS AUTH & DATA LOADERS
 # -----------------------------------------------------------------------------
 def show_access_error(e=None):
     email = ""
@@ -308,7 +308,36 @@ def list_tab_meta(sheet_id):
     return [(ws.title, ws.id) for ws in _open_book(sheet_id).worksheets()]
 
 
-@st.cache_data(ttl=LIVE_TTL, show_spinner="Google Sheet se live data load ho raha hai...")
+@st.cache_data(ttl=LIVE_TTL, show_spinner="Google Sheet se live raw data load ho raha hai...")
+def load_raw_data_frame(sheet_id, wanted_tab="ORDER SHEET"):
+    book = _open_book(sheet_id)
+    meta = list_tab_meta(sheet_id)
+    titles = [t for t, _ in meta]
+    tab = find_tab(titles, wanted_tab) or find_tab(titles, "CONFIRMATION SHEET") or titles[0]
+    
+    resp = book.values_get(_a1_tab(tab), params={
+        "valueRenderOption": "UNFORMATTED_VALUE",
+        "dateTimeRenderOption": "FORMATTED_STRING",
+    })
+    values = resp.get("values", [])
+    if not values or len(values) < 5:
+        st.error(f"'{tab}' me sufficient data nahi mil raha hai.")
+        st.stop()
+    
+    # Data Row 5 (index 4) se start hota hai
+    headers = [str(c).strip() if c else f"Col_{i}" for i, c in enumerate(values[4])]
+    data = values[5:]
+    
+    # Padding rows
+    max_len = max(len(headers), max(len(r) for r in data) if data else 0)
+    data_padded = [r + [""] * (max_len - len(r)) for r in data]
+    
+    df = pd.DataFrame(data_padded)
+    # 0-indexed column position safety mapping
+    return tab, df
+
+
+@st.cache_data(ttl=LIVE_TTL, show_spinner="Dashboard Grid Load ho raha hai...")
 def load_live_values(sheet_id, tab_title):
     book = _open_book(sheet_id)
     resp = book.values_get(_a1_tab(tab_title), params={
@@ -327,18 +356,14 @@ def get_dashboard_grid(sheet_id, wanted, gid=None):
             if str(i) == str(gid) and "DASHBOARD" in t.upper():
                 tab = t
     if tab is None:
-        st.error(f"Google Sheet me '{wanted}' tab nahi mila. Pehle Apps Script se dashboard "
-                 "generate karein (Refresh / create dashboard function run karein).")
+        st.error(f"Google Sheet me '{wanted}' tab nahi mila.")
         st.stop()
     grid = load_live_values(sheet_id, tab)
-    if not grid:
-        st.error(f"'{tab}' tab khaali hai. Apps Script se dashboard dobara generate karein.")
-        st.stop()
     return tab, grid
 
 
 # -----------------------------------------------------------------------------
-# 4. GRID PARSING HELPERS
+# 4. GRID HELPER FUNCTIONS (Sample & Fabricator Dashboards ke liye)
 # -----------------------------------------------------------------------------
 def _cell(grid, r, c):
     if r < 0 or r >= len(grid):
@@ -452,30 +477,160 @@ def melt_cols(df, exclude=("TOTAL",)):
 
 
 # -----------------------------------------------------------------------------
-# 5. MASTER SHEET UPDATED VIEWS (UPDATED BASED ON DOCUMENTATION LOGIC)
+# 5. DYNAMIC MASTER SHEET VIEWS (DIRECT LIVE CALCULATIONS FROM ORDER SHEET)
 # -----------------------------------------------------------------------------
-def designer_view(sheet_id, cfg):
-    tab, g = get_dashboard_grid(sheet_id, cfg["dashboard_tabs"]["designer"])
-    st.subheader("👩‍🎨 Executive Designer Performance & Category Tracking Dashboard")
-    st.caption(f"Source tab: {tab}")
-    # Document Cell Coordinates: Month: B4, Designer: F4, Order Type: J4, Category: N4
-    show_filter_chips(g, [("Month", 3, 1), ("Designer", 3, 5), ("Order Type", 3, 9), ("Category", 3, 13)])
+
+def parse_order_date_to_month(val):
+    if not val or pd.isna(val):
+        return ""
+    val_str = str(val).strip()
+    for m in MONTHS:
+        if m.lower() in val_str.lower():
+            return m
+    try:
+        dt = pd.to_datetime(val_str, errors='coerce')
+        if not pd.isna(dt):
+            return dt.strftime('%B')
+    except Exception:
+        pass
+    return ""
+
+def prepare_master_data(df_raw):
+    """Word Docs Column Specifications ke aadhar par Master Data cleaning[cite: 3, 6, 7]."""
+    df = pd.DataFrame()
     
-    # Document KPI Coordinates: Titles Row 5 (Row 6 in sheet), Values Row 6 (Row 7 in sheet)
-    render_kpi_cards(read_kpis(g, 5, 6), per_row=5)
+    # Column B (index 1): Order Date[cite: 3, 6, 7]
+    date_series = df_raw.iloc[:, 1] if df_raw.shape[1] > 1 else pd.Series()
+    df['Month'] = date_series.apply(parse_order_date_to_month)
+    
+    # Column C (index 2): Designer Name (for Production Dashboard)[cite: 6]
+    df['Designer_C'] = df_raw.iloc[:, 2].astype(str).str.strip().str.upper() if df_raw.shape[1] > 2 else ""
+    
+    # Column D (index 3): Order Type (NEW / REPEAT)[cite: 3, 7]
+    df['Order_Type'] = df_raw.iloc[:, 3].astype(str).str.strip().str.upper() if df_raw.shape[1] > 3 else ""
+    
+    # Column F (index 5): Category[cite: 3, 6, 7]
+    df['Category'] = df_raw.iloc[:, 5].astype(str).str.strip().str.upper() if df_raw.shape[1] > 5 else ""
+    
+    # Column J (index 9): Order Quantity (Pcs)[cite: 3, 7]
+    df['Order_Qty'] = pd.to_numeric(df_raw.iloc[:, 9], errors='coerce').fillna(0) if df_raw.shape[1] > 9 else 0
+    
+    # Column N (index 13): Designer Name (Designer Dashboard) / Client Name[cite: 3, 7]
+    df['Designer_N'] = df_raw.iloc[:, 13].astype(str).str.strip().str.upper() if df_raw.shape[1] > 13 else ""
+    df['Client_Name'] = df_raw.iloc[:, 13].astype(str).str.strip() if df_raw.shape[1] > 13 else ""
+    
+    # Column AA (index 26): Fabricator Name[cite: 6]
+    df['Fabricator'] = df_raw.iloc[:, 26].astype(str).str.strip().str.upper() if df_raw.shape[1] > 26 else ""
+    
+    # Column AH (index 33): Delay Days[cite: 6]
+    df['Delay_Days'] = pd.to_numeric(df_raw.iloc[:, 33], errors='coerce').fillna(0) if df_raw.shape[1] > 33 else 0
+    
+    # Column AS (index 44): In Production Qty[cite: 6, 7]
+    df['In_Production'] = pd.to_numeric(df_raw.iloc[:, 44], errors='coerce').fillna(0) if df_raw.shape[1] > 44 else 0
+    
+    # Column AT (index 45): Received Qty[cite: 6, 7]
+    df['Received'] = pd.to_numeric(df_raw.iloc[:, 45], errors='coerce').fillna(0) if df_raw.shape[1] > 45 else 0
+    
+    # Column AU (index 46): Pending Qty[cite: 6, 7]
+    df['Pending'] = pd.to_numeric(df_raw.iloc[:, 46], errors='coerce').fillna(0) if df_raw.shape[1] > 46 else 0
+    
+    # Column AX (index 49): Status[cite: 7]
+    df['Status'] = df_raw.iloc[:, 49].astype(str).str.strip().str.upper() if df_raw.shape[1] > 49 else ""
+    
+    return df
+
+
+def designer_view(sheet_id, cfg):
+    tab_name, df_raw = load_raw_data_frame(sheet_id, "ORDER SHEET")
+    df = prepare_master_data(df_raw)
+    
+    # Dynamic Designer Names from Column N[cite: 3]
+    valid_designers = sorted([d for d in df['Designer_N'].unique() if d and d not in ["DESIGNER", "DESIGNER NAME", "DESIGNER'S NAME", "NAME"]])
+    
+    # Interactive Sidebar Filters for Live Calculation
+    with st.sidebar:
+        st.markdown("### 🔍 Designer Live Filters")
+        sel_month = st.selectbox("Month", ["ALL"] + MONTHS, key="des_m")
+        sel_designer = st.selectbox("Designer", ["ALL"] + valid_designers, key="des_d")
+        sel_type = st.selectbox("Order Type", ["ALL", "NEW", "REPEAT"], key="des_t")
+        sel_cat = st.selectbox("Category", ["ALL", "CO-ORD SET", "KURTA PANT", "TOP", "KURTA PANT DUPATTA", "DRESS", "KAFTAN", "KURTA"], key="des_c")
+    
+    filters_selected = {"Month": sel_month, "Designer": sel_designer, "Order Type": sel_type, "Category": sel_cat}
+    
+    # Filtering DataFrame dynamically
+    df_filtered = df[(df['Designer_N'] != "")].copy()
+    if sel_month != "ALL":
+        df_filtered = df_filtered[df_filtered['Month'].str.lower() == sel_month.lower()]
+    if sel_designer != "ALL":
+        df_filtered = df_filtered[df_filtered['Designer_N'] == sel_designer]
+    if sel_type != "ALL":
+        df_filtered = df_filtered[df_filtered['Order_Type'].str.contains(sel_type, case=False, na=False)]
+    if sel_cat != "ALL":
+        df_filtered = df_filtered[df_filtered['Category'] == sel_cat]
+        
+    st.subheader("👩‍🎨 Executive Designer Performance & Category Tracking Dashboard")
+    st.caption(f"Calculated Live from: {tab_name}")
+    show_filter_chips_from_dict(filters_selected)
+    
+    # KPI Calculations[cite: 3]
+    tot_designs = len(df_filtered)
+    tot_qty = df_filtered['Order_Qty'].sum()
+    new_qty = df_filtered[df_filtered['Order_Type'].str.contains("NEW", na=False)]['Order_Qty'].sum()
+    repeat_qty = df_filtered[df_filtered['Order_Type'].str.contains("REPEAT", na=False)]['Order_Qty'].sum()
+    
+    # Top Performer calculation[cite: 3]
+    des_grp = df_filtered.groupby('Designer_N')['Order_Qty'].sum()
+    top_performer = f"{des_grp.idxmax()} ({des_grp.max():,.0f} Pcs)" if not des_grp.empty and des_grp.max() > 0 else "N/A"
+    
+    kpis = [
+        ("TOTAL DESIGNS", f"{tot_designs:,.0f}", ""),
+        ("TOTAL QUANTITY (PCS)", f"{tot_qty:,.0f}", ""),
+        ("NEW ORDER QTY", f"{new_qty:,.0f}", ""),
+        ("REPEAT ORDER QTY", f"{repeat_qty:,.0f}", ""),
+        ("🏆 TOP PERFORMER", top_performer, "")
+    ]
+    render_kpi_cards(kpis, per_row=5)
 
     st.markdown("---")
     badge("👩‍🎨 Designer Volume & Share Breakdown")
-    # Columns: Designer (Col A/0), New Orders (Col C/2), Repeat Orders (Col D/3), Total Volume (Col E/4), Share % (Col F/5), Design Count (Col G/6)
-    df = read_table(g, r"DESIGNER VOLUME & SHARE BREAKDOWN", [
-        ("Designer Name", 0), ("New Orders (Pcs)", 2), ("Repeat Orders (Pcs)", 3),
-        ("Total Volume (Pcs)", 4), ("Share %", 5), ("Design Count", 6)], pct=("Share %",))
+    
+    # Table 1: Designer Volume & Share Breakdown[cite: 3]
+    des_list_to_show = valid_designers if sel_designer == "ALL" else [sel_designer]
+    tbl1_rows = []
+    for d_name in des_list_to_show:
+        d_df = df_filtered[df_filtered['Designer_N'] == d_name]
+        d_new = d_df[d_df['Order_Type'].str.contains("NEW", na=False)]['Order_Qty'].sum()
+        d_repeat = d_df[d_df['Order_Type'].str.contains("REPEAT", na=False)]['Order_Qty'].sum()
+        d_vol = d_new + d_repeat
+        d_count = len(d_df)
+        tbl1_rows.append({
+            "Designer Name": d_name,
+            "New Orders (Pcs)": d_new,
+            "Repeat Orders (Pcs)": d_repeat,
+            "Total Volume (Pcs)": d_vol,
+            "Share %": 0.0,
+            "Design Count": d_count
+        })
+    df_tbl1 = pd.DataFrame(tbl1_rows)
+    tot_vol_all = df_tbl1['Total Volume (Pcs)'].sum()
+    if tot_vol_all > 0:
+        df_tbl1['Share %'] = (df_tbl1['Total Volume (Pcs)'] / tot_vol_all) * 100
+        
+    tot_row = pd.DataFrame([{
+        "Designer Name": "TOTAL",
+        "New Orders (Pcs)": df_tbl1['New Orders (Pcs)'].sum(),
+        "Repeat Orders (Pcs)": df_tbl1['Repeat Orders (Pcs)'].sum(),
+        "Total Volume (Pcs)": tot_vol_all,
+        "Share %": 100.0,
+        "Design Count": df_tbl1['Design Count'].sum()
+    }])
+    df_tbl1_full = pd.concat([df_tbl1, tot_row], ignore_index=True)
     
     c1, c2 = st.columns([1.2, 1])
     with c1:
-        show_table(df, pct_cols=("Share %",))
+        show_table(df_tbl1_full, pct_cols=("Share %",))
     with c2:
-        b = body(df)
+        b = body(df_tbl1_full)
         if b is not None and not b.empty:
             m = b.melt(id_vars="Designer Name", value_vars=["New Orders (Pcs)", "Repeat Orders (Pcs)"],
                        var_name="Order Type", value_name="Qty")
@@ -487,37 +642,44 @@ def designer_view(sheet_id, cfg):
 
     st.markdown("---")
     badge("👗 Category Wise Designer Breakdown (Pcs)")
-    # Category Column Mapping from Doc: Designer (Col A), CO-ORD SET (C), KURTA PANT (E), TOP (G), KURTA PANT DUPATTA (I), DRESS (K), KAFTAN (M), KURTA (O), TOTAL (P)
-    cat_cols = [("Designer", 0), ("CO-ORD SET", 2), ("KURTA PANT", 4), ("TOP", 6), 
-                ("KURTA PANT DUPATTA", 8), ("DRESS", 10), ("KAFTAN", 12), ("KURTA", 14), ("TOTAL", 15)]
-    cat = read_table(g, r"CATEGORY WISE DESIGNER BREAKDOWN", cat_cols)
+    
+    # Table 2: Category Wise Designer Matrix[cite: 3]
+    categories = ["CO-ORD SET", "KURTA PANT", "TOP", "KURTA PANT DUPATTA", "DRESS", "KAFTAN", "KURTA"]
+    cat_rows = []
+    for d_name in des_list_to_show:
+        d_df = df_filtered[df_filtered['Designer_N'] == d_name]
+        row_dict = {"Designer": d_name}
+        row_tot = 0
+        for cat in categories:
+            val = d_df[d_df['Category'] == cat]['Order_Qty'].sum()
+            row_dict[cat] = val
+            row_tot += val
+        row_dict["TOTAL"] = row_tot
+        cat_rows.append(row_dict)
+    
+    df_cat = pd.DataFrame(cat_rows)
+    tot_cat_dict = {"Designer": "TOTAL"}
+    for cat in categories + ["TOTAL"]:
+        tot_cat_dict[cat] = df_cat[cat].sum() if not df_cat.empty else 0
+    df_cat_full = pd.concat([df_cat, pd.DataFrame([tot_cat_dict])], ignore_index=True)
     
     c3, c4 = st.columns([1.25, 1])
     with c3:
-        show_table(cat)
+        show_table(df_cat_full)
     with c4:
-        # Hidden Data Grid for Trend Chart: AA = Month (26), AB.. = Designers
-        hdr = g[0] if g else []
-        dcols = []
-        for c in range(27, len(hdr)):
-            n = _txt(hdr[c])
-            if not n:
-                break
-            dcols.append((n, c))
-        recs = []
-        for r in range(1, 13):
-            mname = _txt(_cell(g, r, 26))
-            if not mname:
-                break
-            label = FY_MONTH_LABELS[MONTHS.index(mname)] if mname in MONTHS else mname
-            for n, c in dcols:
-                recs.append({"Month": label, "Designer": n, "Pcs": _to_float(_cell(g, r, c))})
-        trend = pd.DataFrame(recs, columns=["Month", "Designer", "Pcs"])
-        trend = trend[trend["Pcs"] != 0]
-        if not trend.empty:
-            fig = px.bar(trend, x="Month", y="Pcs", color="Designer",
+        # Monthly Performance Trend Calculation
+        trend_records = []
+        for m_name in MONTHS:
+            m_df = df_filtered[df_filtered['Month'].str.lower() == m_name.lower()]
+            for d_name in des_list_to_show:
+                pcs = m_df[m_df['Designer_N'] == d_name]['Order_Qty'].sum()
+                if pcs > 0:
+                    trend_records.append({"Month": m_name, "Designer": d_name, "Pcs": pcs})
+        trend_df = pd.DataFrame(trend_records)
+        if not trend_df.empty:
+            fig = px.bar(trend_df, x="Month", y="Pcs", color="Designer",
                          title="MONTHLY DESIGNER PERFORMANCE TREND (PCS)",
-                         category_orders={"Month": FY_MONTH_LABELS})
+                         category_orders={"Month": MONTHS})
             fig.update_layout(barmode="stack")
             fig.update_xaxes(tickangle=-35, title="")
             show_chart(fig, 380)
@@ -526,26 +688,107 @@ def designer_view(sheet_id, cfg):
 
 
 def production_view(sheet_id, cfg):
-    tab, g = get_dashboard_grid(sheet_id, cfg["dashboard_tabs"]["production"])
+    tab_name, df_raw = load_raw_data_frame(sheet_id, "ORDER SHEET")
+    df = prepare_master_data(df_raw)
+    
+    # Unique Filter Lists for Production Dashboard[cite: 6]
+    valid_fabs = sorted([f for f in df['Fabricator'].unique() if f and f not in ["FABRICATOR", "FABRICATOR'S", "NAME"]])
+    valid_des = sorted([d for d in df['Designer_C'].unique() if d and d not in ["DESIGNER", "DESIGNER'S NAME", "NAME"]])
+    
+    with st.sidebar:
+        st.markdown("### 🔍 Production Live Filters")
+        sel_month = st.selectbox("Month", ["ALL"] + MONTHS, key="prod_m")
+        sel_fab = st.selectbox("Fabricator", ["ALL"] + valid_fabs, key="prod_f")
+        sel_st = st.selectbox("Status", ["ALL", "COMPLETED", "PENDING"], key="prod_s")
+        sel_cat = st.selectbox("Category", ["ALL", "CO-ORD SET", "KURTA PANT", "TOP", "KURTA PANT DUPATTA", "DRESS", "KAFTAN", "KURTA"], key="prod_c")
+        sel_des = st.selectbox("Designer", ["ALL"] + valid_des, key="prod_d")
+        sel_risk = st.selectbox("Delay Risk", ["ALL", "ON-TIME", "OVERDUE (>0 DAYS)"], key="prod_r")
+        
+    filters_selected = {
+        "Month": sel_month, "Fabricator": sel_fab, "Status": sel_st,
+        "Category": sel_cat, "Designer": sel_des, "Delay Risk": sel_risk
+    }
+    
+    # Filter Data dynamically[cite: 6]
+    df_filtered = df[(df['Fabricator'] != "")].copy()
+    if sel_month != "ALL":
+        df_filtered = df_filtered[df_filtered['Month'].str.lower() == sel_month.lower()]
+    if sel_fab != "ALL":
+        df_filtered = df_filtered[df_filtered['Fabricator'] == sel_fab]
+    if sel_st != "ALL":
+        if sel_st == "COMPLETED":
+            df_filtered = df_filtered[df_filtered['Pending'] <= 0]
+        else:
+            df_filtered = df_filtered[df_filtered['Pending'] > 0]
+    if sel_cat != "ALL":
+        df_filtered = df_filtered[df_filtered['Category'] == sel_cat]
+    if sel_des != "ALL":
+        df_filtered = df_filtered[df_filtered['Designer_C'] == sel_des]
+    if sel_risk != "ALL":
+        if sel_risk == "ON-TIME":
+            df_filtered = df_filtered[df_filtered['Delay_Days'] <= 0]
+        else:
+            df_filtered = df_filtered[df_filtered['Delay_Days'] > 0]
+            
     st.subheader("🏭 Production Executive Process Dashboard")
-    st.caption(f"Source tab: {tab}")
-    # Document Cell Coordinates: Month: C4 (2), Fabricator: G4 (6), Status: K4 (10), Category: O4 (14), Designer: S4 (18), Delay Risk: W4 (22)
-    show_filter_chips(g, [("Month", 3, 2), ("Fabricator", 3, 6), ("Status", 3, 10),
-                          ("Category", 3, 14), ("Designer", 3, 18), ("Delay Risk", 3, 22)])
+    st.caption(f"Calculated Live from: {tab_name}")
+    show_filter_chips_from_dict(filters_selected)
+    
+    # Production KPIs[cite: 6]
+    tot_designs = len(df_filtered)
+    in_prod_pcs = df_filtered['In_Production'].sum()
+    rcvd_pcs = df_filtered['Received'].sum()
+    pending_pcs = df_filtered['Pending'].sum()
+    overdue_pcs = df_filtered[df_filtered['Delay_Days'] > 0]['In_Production'].sum()
+    
+    overdue_df = df_filtered[df_filtered['Delay_Days'] > 0]
+    avg_overdue_days = overdue_df['Delay_Days'].mean() if not overdue_df.empty else 0.0
+    
+    ontime_count = len(df_filtered[df_filtered['Delay_Days'] <= 0])
+    ontime_pct = (ontime_count / tot_designs * 100) if tot_designs > 0 else 0.0
+    ontime_pcs = df_filtered[df_filtered['Delay_Days'] <= 0]['In_Production'].sum()
+    
+    kpis = [
+        ("TOTAL DESIGN", f"{tot_designs:,.0f} Orders", ""),
+        ("INPRODUCTION PCS (AS)", f"{in_prod_pcs:,.0f} Pcs", ""),
+        ("RECIEVED PCS (AT)", f"{rcvd_pcs:,.0f} Pcs", ""),
+        ("PENDING PCS (AU)", f"{pending_pcs:,.0f} Pcs", ""),
+        ("OVERDUE PCS (AH > 0)", f"{overdue_pcs:,.0f} Pcs", ""),
+        ("AVG OVERDUE DAYS", f"{avg_overdue_days:.1f} Days", ""),
+        ("ON-TIME DELIVERY %", f"{ontime_pct:.1f}%", ""),
+        ("ON-TIME PCS (AH <= 0)", f"{ontime_pcs:,.0f} Pcs", "")
+    ]
     badge("📊 Process Key Performance Indicators")
-    # KPI Row Titles: Row 6 (7 in sheet), Values: Row 7 (8 in sheet)
-    render_kpi_cards(read_kpis(g, 6, 7), per_row=4)
+    render_kpi_cards(kpis, per_row=4)
 
     st.markdown("---")
     badge("📊 Category-wise Production Performance Breakdown")
-    # Source Cols: Category (Col A/0), In-Production AS (Col D/3), Received AT (Col F/5), Pending AU (Col H/7)
-    cat = read_table(g, r"CATEGORY-WISE PRODUCTION PERFORMANCE BREAKDOWN", [
-        ("CATEGORY", 0), ("INPRODUCTION (AS)", 3), ("RECIEVED (AT)", 5), ("PENDING (AU)", 7)])
+    
+    # Table 1: Category Breakdown[cite: 6]
+    categories = ["CO-ORD SET", "KURTA PANT", "TOP", "KURTA PANT DUPATTA", "DRESS", "KAFTAN", "KURTA"]
+    cat_rows = []
+    for c_name in categories:
+        c_df = df_filtered[df_filtered['Category'] == c_name]
+        cat_rows.append({
+            "CATEGORY": c_name,
+            "INPRODUCTION (AS)": c_df['In_Production'].sum(),
+            "RECIEVED (AT)": c_df['Received'].sum(),
+            "PENDING (AU)": c_df['Pending'].sum()
+        })
+    df_cat = pd.DataFrame(cat_rows)
+    tot_cat_row = pd.DataFrame([{
+        "CATEGORY": "TOTAL",
+        "INPRODUCTION (AS)": df_cat['INPRODUCTION (AS)'].sum(),
+        "RECIEVED (AT)": df_cat['RECIEVED (AT)'].sum(),
+        "PENDING (AU)": df_cat['PENDING (AU)'].sum()
+    }])
+    df_cat_full = pd.concat([df_cat, tot_cat_row], ignore_index=True)
+    
     c1, c2 = st.columns([1, 1.35])
     with c1:
-        show_table(cat)
+        show_table(df_cat_full)
     with c2:
-        b = body(cat)
+        b = body(df_cat_full)
         if b is not None and not b.empty:
             chart_df = b.melt(id_vars="CATEGORY", var_name="Metric", value_name="PCS")
             fig = px.bar(chart_df, x="CATEGORY", y="PCS", color="Metric", barmode="group",
@@ -555,20 +798,20 @@ def production_view(sheet_id, cfg):
             show_chart(fig, 360)
 
     badge("🧵 Fabricator Pending PCS Share")
-    # Hidden Helper Z:AA (Cols 25 & 26) for Fabricator Pending Pcs
-    fab = read_pairs(g, 25, [26])                      
-    if not fab.empty:
-        fab.columns = ["FABRICATOR", "PENDING PCS"]
-        fab = fab[fab["PENDING PCS"] > 0].sort_values("PENDING PCS", ascending=False)
-    if not fab.empty:
+    # Fabricator Pending Pcs Calculation[cite: 6]
+    fab_grp = df_filtered.groupby('Fabricator')['Pending'].sum().reset_index()
+    fab_grp.columns = ["FABRICATOR", "PENDING PCS"]
+    fab_grp = fab_grp[fab_grp["PENDING PCS"] > 0].sort_values("PENDING PCS", ascending=False)
+    
+    if not fab_grp.empty:
         f1, f2 = st.columns([1.35, 1])
         with f1:
-            fig = px.pie(fab, names="FABRICATOR", values="PENDING PCS", hole=0.4,
+            fig = px.pie(fab_grp, names="FABRICATOR", values="PENDING PCS", hole=0.4,
                          title="FABRICATOR PENDING PCS SHARE")
             fig.update_traces(textposition="inside", textinfo="percent")
             show_chart(fig, 360)
         with f2:
-            tbl = fab.copy()
+            tbl = fab_grp.copy()
             tbl["SHARE %"] = tbl["PENDING PCS"] / tbl["PENDING PCS"].sum() * 100
             tot = pd.DataFrame([{"FABRICATOR": "TOTAL", "PENDING PCS": tbl["PENDING PCS"].sum(), "SHARE %": 100.0}])
             show_table(pd.concat([tbl, tot], ignore_index=True), pct_cols=("SHARE %",))
@@ -576,14 +819,30 @@ def production_view(sheet_id, cfg):
         st.info("Selected filters ke liye fabricator pending data nahi hai.")
 
     badge("📅 Monthly Fulfillment Trend")
-    # Source Cols: Month (Col A/0), Orders (Col D/3), Received AS (Col F/5), Pending AT (Col H/7)
-    mdf = read_table(g, r"MONTHLY FULFILLMENT TREND", [
-        ("MONTH", 0), ("ORDERS", 3), ("RCVD (AS)", 5), ("PENDING (AT)", 7)])
+    # Table 2: Monthly Fulfillment Trend[cite: 6]
+    m_rows = []
+    for m_name in MONTHS:
+        m_df = df_filtered[df_filtered['Month'].str.lower() == m_name.lower()]
+        m_rows.append({
+            "MONTH": m_name,
+            "ORDERS": len(m_df),
+            "RCVD (AS)": m_df['Received'].sum(),
+            "PENDING (AT)": m_df['Pending'].sum()
+        })
+    df_m = pd.DataFrame(m_rows)
+    tot_m_row = pd.DataFrame([{
+        "MONTH": "TOTAL",
+        "ORDERS": df_m['ORDERS'].sum(),
+        "RCVD (AS)": df_m['RCVD (AS)'].sum(),
+        "PENDING (AT)": df_m['PENDING (AT)'].sum()
+    }])
+    df_m_full = pd.concat([df_m, tot_m_row], ignore_index=True)
+    
     m1, m2 = st.columns([1, 1.35])
     with m1:
-        show_table(mdf, height=500)
+        show_table(df_m_full, height=500)
     with m2:
-        b = body(mdf)
+        b = body(df_m_full)
         if b is not None and not b.empty:
             line_df = b.melt(id_vars="MONTH", value_vars=["RCVD (AS)", "PENDING (AT)"],
                              var_name="Metric", value_name="PCS")
@@ -595,25 +854,89 @@ def production_view(sheet_id, cfg):
 
 
 def client_view(sheet_id, cfg):
-    tab, g = get_dashboard_grid(sheet_id, cfg["dashboard_tabs"]["client"])
-    st.subheader("🏢 Executive Client Performance Dashboard")
-    st.caption(f"Source tab: {tab}")
-    # Document Filter Coordinates: Month: B4 (1), Client: F4 (5), Order Type: K4 (10), Category: N4 (13)
-    show_filter_chips(g, [("Month", 3, 1), ("Client", 3, 5), ("Order Type", 3, 10), ("Category", 3, 13)])
+    tab_name, df_raw = load_raw_data_frame(sheet_id, "CONFIRMATION SHEET")
+    df = prepare_master_data(df_raw)
     
-    # KPI Row Titles: Row 5 (6 in sheet), Values: Row 6 (7 in sheet), Delta: Row 7 (8 in sheet)
-    render_kpi_cards(read_kpis(g, 5, 6, sub_row=7), per_row=4)
+    valid_clients = sorted([c for c in df['Client_Name'].unique() if c and c.upper() not in ["CLIENT", "CLIENT NAME", "NAME"]])
+    
+    with st.sidebar:
+        st.markdown("### 🔍 Client Live Filters")
+        sel_month = st.selectbox("Month", ["ALL"] + MONTHS, key="cli_m")
+        sel_client = st.selectbox("Client Name", ["ALL"] + valid_clients, key="cli_c")
+        sel_type = st.selectbox("Order Type", ["ALL", "NEW", "REPEAT"], key="cli_t")
+        sel_cat = st.selectbox("Category", ["ALL", "CO-ORD SET", "KURTA PANT", "TOP", "KURTA PANT DUPATTA", "DRESS", "KAFTAN", "KURTA"], key="cli_cat")
+        
+    filters_selected = {"Month": sel_month, "Client": sel_client, "Order Type": sel_type, "Category": sel_cat}
+    
+    # Filter Data dynamically[cite: 7]
+    df_filtered = df[(df['Client_Name'] != "")].copy()
+    if sel_month != "ALL":
+        df_filtered = df_filtered[df_filtered['Month'].str.lower() == sel_month.lower()]
+    if sel_client != "ALL":
+        df_filtered = df_filtered[df_filtered['Client_Name'] == sel_client]
+    if sel_type != "ALL":
+        df_filtered = df_filtered[df_filtered['Order_Type'].str.contains(sel_type, case=False, na=False)]
+    if sel_cat != "ALL":
+        df_filtered = df_filtered[df_filtered['Category'] == sel_cat]
+        
+    st.subheader("🏢 Executive Client Performance Dashboard")
+    st.caption(f"Calculated Live from: {tab_name}")
+    show_filter_chips_from_dict(filters_selected)
+    
+    # Client KPIs[cite: 7]
+    tot_designs = len(df_filtered)
+    tot_qty = df_filtered['Order_Qty'].sum()
+    in_prod = df_filtered['In_Production'].sum()
+    rec_qty = df_filtered['Received'].sum()
+    
+    pending_df = df_filtered[(df_filtered['Status'] < "DONE") & (df_filtered['Pending'] > 0)]
+    pending_qty = pending_df['Pending'].sum()
+    
+    repeat_pcs = df_filtered[df_filtered['Order_Type'].str.contains("REPEAT", na=False)]['Order_Qty'].sum()
+    new_pcs = df_filtered[df_filtered['Order_Type'].str.contains("NEW", na=False)]['Order_Qty'].sum()
+    cat_tot = tot_qty
+    
+    kpis = [
+        ("TOTAL DESIGNS", f"{tot_designs:,.0f}", ""),
+        ("TOTAL QTY (PCS)", f"{tot_qty:,.0f}", ""),
+        ("IN PRODUCTION", f"{in_prod:,.0f}", ""),
+        ("RECEIVED / DONE", f"{rec_qty:,.0f}", ""),
+        ("TOTAL PENDING QTY", f"{pending_qty:,.0f}", ""),
+        ("REPEAT ORDERS (PCS)", f"{repeat_pcs:,.0f}", ""),
+        ("NEW ORDERS (PCS)", f"{new_pcs:,.0f}", ""),
+        ("CATEGORY TOTAL (PCS)", f"{cat_tot:,.0f}", "")
+    ]
+    render_kpi_cards(kpis, per_row=4)
 
     st.markdown("---")
     badge("📅 Client Fulfillment Breakdown (Monthly)")
-    # Source Cols: Month (Col A/0), Order Qty (Col C/2), In Production (Col D/3), Received (Col E/4), Pending (Col F/5)
-    m = read_table(g, r"CLIENT FULFILLMENT BREAKDOWN", [
-        ("MONTH", 0), ("ORDER QTY", 2), ("IN PRODUCTION", 3), ("RECEIVED", 4), ("PENDING", 5)])
+    
+    # Section A: Monthly Fulfillment Table[cite: 7]
+    m_rows = []
+    for m_name in MONTHS:
+        m_df = df_filtered[df_filtered['Month'].str.lower() == m_name.lower()]
+        p_m_df = m_df[(m_df['Status'] < "DONE") & (m_df['Pending'] > 0)]
+        m_rows.append({
+            "MONTH": m_name,
+            "ORDER QTY": m_df['Order_Qty'].sum(),
+            "IN PRODUCTION": m_df['In_Production'].sum(),
+            "RECEIVED": m_df['Received'].sum(),
+            "PENDING": p_m_df['Pending'].sum()
+        })
+    df_m = pd.DataFrame(m_rows)
+    tot_m_row = pd.DataFrame([{
+        "MONTH": "TOTAL",
+        "ORDER QTY": df_m['ORDER QTY'].sum(),
+        "IN PRODUCTION": df_m['IN PRODUCTION'].sum(),
+        "RECEIVED": df_m['RECEIVED'].sum(),
+        "PENDING": df_m['PENDING'].sum()
+    }])
+    df_m_full = pd.concat([df_m, tot_m_row], ignore_index=True)
     
     c1, c2, c3 = st.columns([1.25, 1, 1])
     with c1:
-        show_table(m, height=500)
-    b = body(m)
+        show_table(df_m_full, height=500)
+    b = body(df_m_full)
     with c2:
         pie_df = b[b["ORDER QTY"] > 0] if b is not None and not b.empty else pd.DataFrame()
         if not pie_df.empty:
@@ -623,11 +946,10 @@ def client_view(sheet_id, cfg):
         else:
             st.info("Selected filters ke liye order data nahi hai.")
     with c3:
-        # Hidden Helper AA:AB for Fulfillment Ratio (Received vs Pending)
-        tot = m[m["MONTH"].str.upper().isin(TOTAL_LABELS)] if not m.empty else pd.DataFrame()
-        if not tot.empty and (tot["RECEIVED"].iloc[0] + tot["PENDING"].iloc[0]) > 0:
-            q = pd.DataFrame({"Status": ["RECEIVED QTY", "PENDING QTY"],
-                              "Qty": [tot["RECEIVED"].iloc[0], tot["PENDING"].iloc[0]]})
+        tot_rec = df_m['RECEIVED'].sum()
+        tot_pen = df_m['PENDING'].sum()
+        if (tot_rec + tot_pen) > 0:
+            q = pd.DataFrame({"Status": ["RECEIVED QTY", "PENDING QTY"], "Qty": [tot_rec, tot_pen]})
             fig = px.pie(q, names="Status", values="Qty", hole=.45,
                          title="ORDER FULFILLMENT RATIO (RECEIVED vs PENDING)",
                          color="Status", color_discrete_map={"RECEIVED QTY": "#059669", "PENDING QTY": "#dc2626"})
@@ -637,22 +959,38 @@ def client_view(sheet_id, cfg):
 
     st.markdown("---")
     badge("👗 Category Wise Order Breakdown (Pcs)")
-    # Source Cols: Month (Col A/0), CO-ORD SET (Col C/2), KURTA PANT (D/3), TOP (E/4), KURTA PANT DUPATTA (F/5), DRESS (G/6), KAFTAN (H/7), KURTA (I/8), TOTAL (J/9)
-    cat_cols = [("MONTH", 0), ("CO-ORD SET", 2), ("KURTA PANT", 3), ("TOP", 4), 
-                ("KURTA PANT DUPATTA", 5), ("DRESS", 6), ("KAFTAN", 7), ("KURTA", 8), ("TOTAL", 9)]
-    cat = read_table(g, r"CATEGORY WISE ORDER BREAKDOWN", cat_cols)
+    
+    # Section B: Category Wise Order Matrix[cite: 7]
+    categories = ["CO-ORD SET", "KURTA PANT", "TOP", "KURTA PANT DUPATTA", "DRESS", "KAFTAN", "KURTA"]
+    cat_rows = []
+    for m_name in MONTHS:
+        m_df = df_filtered[df_filtered['Month'].str.lower() == m_name.lower()]
+        row_dict = {"MONTH": m_name}
+        row_tot = 0
+        for cat in categories:
+            val = m_df[m_df['Category'] == cat]['Order_Qty'].sum()
+            row_dict[cat] = val
+            row_tot += val
+        row_dict["TOTAL"] = row_tot
+        cat_rows.append(row_dict)
+        
+    df_cat = pd.DataFrame(cat_rows)
+    tot_cat_dict = {"MONTH": "TOTAL"}
+    for cat in categories + ["TOTAL"]:
+        tot_cat_dict[cat] = df_cat[cat].sum() if not df_cat.empty else 0
+    df_cat_full = pd.concat([df_cat, pd.DataFrame([tot_cat_dict])], ignore_index=True)
     
     c4, c5 = st.columns([1.35, 1])
     with c4:
-        show_table(cat, height=500)
+        show_table(df_cat_full, height=500)
     with c5:
-        b = body(cat)
+        b = body(df_cat_full)
         if b is not None and not b.empty:
             long = melt_cols(b)
             long = long[long["Pcs"] != 0]
             if not long.empty:
                 fig = px.bar(long, x="MONTH", y="Pcs", color="Category", title="CATEGORY DISTRIBUTION BY MONTH",
-                             category_orders={"MONTH": list(b["MONTH"])})
+                             category_orders={"MONTH": MONTHS})
                 fig.update_layout(barmode="stack")
                 fig.update_xaxes(tickangle=-35, title="")
                 show_chart(fig, 460)
@@ -673,7 +1011,7 @@ def render_tracker(sheet_name, cfg):
 
     st.markdown(
         f"""<div class="dashboard-hero"><h2>📊 {html.escape(sheet_name)} · Executive Dashboard 2026-27</h2>
-        <p>Google Sheet ke Designer / Production / Client dashboard tabs se live data ·
+        <p>Google Sheet ke Raw Data Tabs se Dynamic Calculations ·
         Loaded: {datetime.now().strftime('%d %b %Y, %H:%M')}</p></div>""",
         unsafe_allow_html=True)
 
@@ -687,7 +1025,7 @@ def render_tracker(sheet_name, cfg):
 
 
 # -----------------------------------------------------------------------------
-# 6. SAMPLE SUMMARY  (EXACT SAME & UNTOUCHED)
+# 6. SAMPLE SUMMARY (EXACT SAME & UNTOUCHED)
 # -----------------------------------------------------------------------------
 def render_sample_summary_dashboard(sheet_name, cfg):
     sheet_id = cfg["id"]
@@ -762,7 +1100,7 @@ def render_sample_summary_dashboard(sheet_name, cfg):
 
 
 # -----------------------------------------------------------------------------
-# 7. FABRICATOR REPORT  (EXACT SAME & UNTOUCHED)
+# 7. FABRICATOR REPORT (EXACT SAME & UNTOUCHED)
 # -----------------------------------------------------------------------------
 def render_fabricator_dashboard(sheet_name, cfg):
     sheet_id = cfg["id"]
