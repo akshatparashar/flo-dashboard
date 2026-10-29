@@ -18,7 +18,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# Har sheet ke Apps Script dwara bane dashboard tabs yahan se padhe jaate hain.
 SHEET_REGISTRY = {
     "Master Sheet": {
         "id": "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU",
@@ -49,7 +48,7 @@ MONTHS = ["April", "May", "June", "July", "August", "September",
 FY_MONTH_LABELS = [
     f"{m}-{(FY_START_YEAR if i < 9 else FY_START_YEAR + 1) % 100:02d}" for i, m in enumerate(MONTHS)
 ]
-LIVE_TTL = 60          # seconds: itne seconds baad sheet se naya data aata hai
+LIVE_TTL = 60          
 TOTAL_LABELS = {"TOTAL", "GRAND TOTAL", "ALL FABRICATORS"}
 
 
@@ -104,17 +103,14 @@ def apply_theme():
 [data-testid="stHeader"] {{ background-color: var(--app-bg) !important; }}
 .block-container {{ padding-top: 2.6rem; padding-bottom: 2.8rem; max-width: 1650px; }}
 
-/* Text colours (Streamlit base theme se independent) */
 .stApp p, .stApp li, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
 .stApp label, [data-testid="stWidgetLabel"] p, [data-testid="stMarkdownContainer"] {{ color: var(--text-color); }}
 [data-testid="stCaptionContainer"], .stApp small {{ color: var(--muted-color) !important; }}
 
-/* Sidebar */
 [data-testid="stSidebar"] {{ background-color: var(--panel-bg) !important; border-right: 1px solid var(--border-color); }}
 [data-testid="stSidebar"] h3 {{ font-size: .83rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-color); margin-bottom: 0.6rem; }}
 [data-testid="stSidebar"] label, [data-testid="stSidebar"] p {{ color: var(--text-color) !important; }}
 
-/* Inputs / dropdowns */
 div[data-baseweb="select"] > div, div[data-baseweb="input"] > div {{ background: var(--panel-bg) !important; color: var(--text-color) !important; border: 1px solid var(--border-color) !important; border-radius: 8px; }}
 div[data-baseweb="select"] span, div[data-baseweb="select"] input {{ color: var(--text-color) !important; }}
 div[data-baseweb="popover"] ul, div[data-baseweb="menu"] {{ background: var(--panel-bg) !important; }}
@@ -122,23 +118,19 @@ div[data-baseweb="popover"] li, div[data-baseweb="menu"] li {{ color: var(--text
 div[data-baseweb="popover"] li:hover {{ background: var(--chip-bg) !important; }}
 button[kind="secondary"], [data-testid="stBaseButton-secondary"] {{ background: var(--chip-bg) !important; color: var(--text-color) !important; border: 1px solid var(--border-color) !important; }}
 
-/* KPI metric cards */
 [data-testid="stMetric"] {{ background: var(--panel-bg); border: 1px solid var(--border-color); border-top: 3px solid var(--accent); padding: 14px 18px; border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.05); min-height: 108px; }}
 [data-testid="stMetricLabel"] {{ color: var(--muted-color) !important; }}
 [data-testid="stMetricLabel"] p {{ color: var(--muted-color) !important; font-size: .74rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; white-space: normal; line-height: 1.25; }}
 [data-testid="stMetricValue"], [data-testid="stMetricValue"] > div {{ color: var(--text-color) !important; font-weight: 800; font-size: 1.35rem; white-space: normal; overflow-wrap: anywhere; line-height: 1.2; }}
 [data-testid="stMetricDelta"] {{ color: var(--accent) !important; font-weight: 700; }}
 
-/* Tabs */
 [data-testid="stTabs"] [role="tablist"] {{ position: sticky; top: 3.4rem; z-index: 99; background-color: var(--app-bg); padding: 4px 0; border-bottom: 2px solid var(--border-color); }}
 [data-testid="stTabs"] button {{ border-radius: 8px 8px 0 0; padding: 10px 20px; }}
 [data-testid="stTabs"] button p {{ font-weight: 700; font-size: .92rem; color: var(--muted-color); }}
 [data-testid="stTabs"] button[aria-selected="true"] p {{ color: var(--accent); }}
 
-/* Charts */
 [data-testid="stPlotlyChart"] {{ background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 8px; }}
 
-/* Custom HTML tables */
 .tbl-wrap {{ overflow: auto; border: 1px solid var(--border-color); border-radius: 10px; background: var(--panel-bg); margin-bottom: 14px; }}
 .dash-tbl {{ width: 100%; border-collapse: collapse; font-size: .82rem; color: var(--text-color); }}
 .dash-tbl th {{ position: sticky; top: 0; z-index: 1; background: var(--chip-bg); color: var(--text-color); text-align: right; padding: 9px 12px; font-weight: 750; font-size: .72rem; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; border-bottom: 1px solid var(--border-color); }}
@@ -149,7 +141,6 @@ button[kind="secondary"], [data-testid="stBaseButton-secondary"] {{ background: 
 .dash-tbl tr.tot td {{ font-weight: 800; background: var(--chip-bg); border-top: 2px solid var(--accent); }}
 .dash-tbl tr.ref td {{ font-style: italic; color: var(--muted-color); }}
 
-/* Hero, badges, chips */
 .dashboard-hero {{ background: linear-gradient(135deg, {hero_grad}); border: 1px solid var(--border-color); border-radius: 14px; padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 4px 15px rgba(0,0,0,0.04); }}
 .dashboard-hero h2 {{ margin: 0; font-size: 1.45rem; font-weight: 800; letter-spacing: -0.02em; color: var(--text-color); }}
 .dashboard-hero p {{ color: var(--muted-color); margin: 3px 0 0 0; font-size: .88rem; }}
@@ -189,7 +180,6 @@ def badge(text):
 
 
 def show_table(df, pct_cols=(), height=None):
-    """Theme-aware HTML table (dark/light dono me sahi colors)."""
     if df is None or df.empty:
         st.info("Is section ka data sheet me abhi nahi mila.")
         return
@@ -221,7 +211,6 @@ def show_table(df, pct_cols=(), height=None):
 
 
 def body(df, drop_prefix=("⚠", "ALL OVER")):
-    """Total / reference rows hata kar sirf asli data rows (charts ke liye)."""
     if df is None or df.empty:
         return df
     lab = df.iloc[:, 0].astype(str).str.strip().str.upper()
@@ -330,7 +319,6 @@ def load_live_values(sheet_id, tab_title):
 
 
 def get_dashboard_grid(sheet_id, wanted, gid=None):
-    """Sheet ka dashboard tab dhoondh kar uska computed grid lautata hai."""
     meta = list_tab_meta(sheet_id)
     titles = [t for t, _ in meta]
     tab = find_tab(titles, wanted)
@@ -350,7 +338,7 @@ def get_dashboard_grid(sheet_id, wanted, gid=None):
 
 
 # -----------------------------------------------------------------------------
-# 4. GRID PARSING HELPERS (dashboard tabs ka fixed layout)
+# 4. GRID PARSING HELPERS
 # -----------------------------------------------------------------------------
 def _cell(grid, r, c):
     if r < 0 or r >= len(grid):
@@ -408,7 +396,6 @@ def cell_text(grid, pattern):
 
 
 def read_kpis(grid, title_row, value_row, sub_row=None):
-    """KPI cards: title_row ke har non-empty cell ke neeche wali value row se value."""
     out = []
     trow = grid[title_row] if title_row < len(grid) else []
     for c, v in enumerate(trow):
@@ -421,11 +408,6 @@ def read_kpis(grid, title_row, value_row, sub_row=None):
 
 
 def read_table(grid, title_pat, cols, pct=(), label_col=None, stop_total=True):
-    """
-    title_pat se table ka title dhoondta hai; uske next row me header, phir data rows
-    (label khaali hone par ya TOTAL row ke baad ruk jata hai).
-    cols = [(column_name or None(=sheet header), col_index_0_based), ...]
-    """
     names = [n for n, _ in cols]
     pos = find_cell(grid, title_pat)
     if not pos:
@@ -453,7 +435,6 @@ def read_table(grid, title_pat, cols, pct=(), label_col=None, stop_total=True):
 
 
 def read_pairs(grid, label_col, value_cols, start_row=1, header_row=0):
-    """Hidden chart-helper areas (e.g. Z:AA) ko DataFrame me padhta hai."""
     names = [_txt(_cell(grid, header_row, c)) for c in [label_col] + list(value_cols)]
     rows, r = [], start_row
     while r < len(grid):
@@ -471,20 +452,25 @@ def melt_cols(df, exclude=("TOTAL",)):
 
 
 # -----------------------------------------------------------------------------
-# 5. MASTER SHEET  (DESIGNER / PRODUCTION / CLIENT dashboard tabs)
+# 5. MASTER SHEET UPDATED VIEWS (UPDATED BASED ON DOCUMENTATION LOGIC)
 # -----------------------------------------------------------------------------
 def designer_view(sheet_id, cfg):
     tab, g = get_dashboard_grid(sheet_id, cfg["dashboard_tabs"]["designer"])
-    st.subheader("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
+    st.subheader("👩‍🎨 Executive Designer Performance & Category Tracking Dashboard")
     st.caption(f"Source tab: {tab}")
-    show_filter_chips(g, [("Month", 3, 2), ("Designer", 3, 7), ("Order Type", 3, 12)])
+    # Document Cell Coordinates: Month: B4, Designer: F4, Order Type: J4, Category: N4
+    show_filter_chips(g, [("Month", 3, 1), ("Designer", 3, 5), ("Order Type", 3, 9), ("Category", 3, 13)])
+    
+    # Document KPI Coordinates: Titles Row 5 (Row 6 in sheet), Values Row 6 (Row 7 in sheet)
     render_kpi_cards(read_kpis(g, 5, 6), per_row=5)
 
     st.markdown("---")
-    badge("📊 Designer Volume & Share Breakdown")
-    df = read_table(g, r"DESIGNER VOLUME", [
+    badge("👩‍🎨 Designer Volume & Share Breakdown")
+    # Columns: Designer (Col A/0), New Orders (Col C/2), Repeat Orders (Col D/3), Total Volume (Col E/4), Share % (Col F/5), Design Count (Col G/6)
+    df = read_table(g, r"DESIGNER VOLUME & SHARE BREAKDOWN", [
         ("Designer Name", 0), ("New Orders (Pcs)", 2), ("Repeat Orders (Pcs)", 3),
-        ("Total Volume (Pcs)", 4), ("Share %", 5), ("Total Design Count", 6)], pct=("Share %",))
+        ("Total Volume (Pcs)", 4), ("Share %", 5), ("Design Count", 6)], pct=("Share %",))
+    
     c1, c2 = st.columns([1.2, 1])
     with c1:
         show_table(df, pct_cols=("Share %",))
@@ -500,13 +486,17 @@ def designer_view(sheet_id, cfg):
             show_chart(fig, 380)
 
     st.markdown("---")
-    badge("🧩 Category Wise Designer Breakdown (Pcs)")
-    cat = read_table(g, r"CATEGORY WISE DESIGNER", [("Designer", 0)] + [(None, c) for c in range(1, 9)])
+    badge("👗 Category Wise Designer Breakdown (Pcs)")
+    # Category Column Mapping from Doc: Designer (Col A), CO-ORD SET (C), KURTA PANT (E), TOP (G), KURTA PANT DUPATTA (I), DRESS (K), KAFTAN (M), KURTA (O), TOTAL (P)
+    cat_cols = [("Designer", 0), ("CO-ORD SET", 2), ("KURTA PANT", 4), ("TOP", 6), 
+                ("KURTA PANT DUPATTA", 8), ("DRESS", 10), ("KAFTAN", 12), ("KURTA", 14), ("TOTAL", 15)]
+    cat = read_table(g, r"CATEGORY WISE DESIGNER BREAKDOWN", cat_cols)
+    
     c3, c4 = st.columns([1.25, 1])
     with c3:
         show_table(cat)
     with c4:
-        # hidden trend helper: AA = month, AB.. = designers
+        # Hidden Data Grid for Trend Chart: AA = Month (26), AB.. = Designers
         hdr = g[0] if g else []
         dcols = []
         for c in range(27, len(hdr)):
@@ -539,15 +529,18 @@ def production_view(sheet_id, cfg):
     tab, g = get_dashboard_grid(sheet_id, cfg["dashboard_tabs"]["production"])
     st.subheader("🏭 Production Executive Process Dashboard")
     st.caption(f"Source tab: {tab}")
+    # Document Cell Coordinates: Month: C4 (2), Fabricator: G4 (6), Status: K4 (10), Category: O4 (14), Designer: S4 (18), Delay Risk: W4 (22)
     show_filter_chips(g, [("Month", 3, 2), ("Fabricator", 3, 6), ("Status", 3, 10),
                           ("Category", 3, 14), ("Designer", 3, 18), ("Delay Risk", 3, 22)])
     badge("📊 Process Key Performance Indicators")
+    # KPI Row Titles: Row 6 (7 in sheet), Values: Row 7 (8 in sheet)
     render_kpi_cards(read_kpis(g, 6, 7), per_row=4)
 
     st.markdown("---")
     badge("📊 Category-wise Production Performance Breakdown")
-    cat = read_table(g, r"CATEGORY-WISE PRODUCTION", [
-        ("CATEGORY", 0), ("IN-PRODUCTION (AS)", 3), ("RECEIVED (AT)", 5), ("PENDING (AU)", 7)])
+    # Source Cols: Category (Col A/0), In-Production AS (Col D/3), Received AT (Col F/5), Pending AU (Col H/7)
+    cat = read_table(g, r"CATEGORY-WISE PRODUCTION PERFORMANCE BREAKDOWN", [
+        ("CATEGORY", 0), ("INPRODUCTION (AS)", 3), ("RECIEVED (AT)", 5), ("PENDING (AU)", 7)])
     c1, c2 = st.columns([1, 1.35])
     with c1:
         show_table(cat)
@@ -557,19 +550,20 @@ def production_view(sheet_id, cfg):
             chart_df = b.melt(id_vars="CATEGORY", var_name="Metric", value_name="PCS")
             fig = px.bar(chart_df, x="CATEGORY", y="PCS", color="Metric", barmode="group",
                          title="CATEGORY-WISE VOLUME COMPARISON",
-                         color_discrete_sequence=["#2563eb", "#ef4444", "#f59e0b"])
+                         color_discrete_sequence=["#2563eb", "#059669", "#f59e0b"])
             fig.update_xaxes(tickangle=-35, title="")
             show_chart(fig, 360)
 
     badge("🧵 Fabricator Pending PCS Share")
-    fab = read_pairs(g, 25, [26])                      # hidden helper Z:AA
+    # Hidden Helper Z:AA (Cols 25 & 26) for Fabricator Pending Pcs
+    fab = read_pairs(g, 25, [26])                      
     if not fab.empty:
         fab.columns = ["FABRICATOR", "PENDING PCS"]
         fab = fab[fab["PENDING PCS"] > 0].sort_values("PENDING PCS", ascending=False)
     if not fab.empty:
         f1, f2 = st.columns([1.35, 1])
         with f1:
-            fig = px.pie(fab, names="FABRICATOR", values="PENDING PCS", hole=0.48,
+            fig = px.pie(fab, names="FABRICATOR", values="PENDING PCS", hole=0.4,
                          title="FABRICATOR PENDING PCS SHARE")
             fig.update_traces(textposition="inside", textinfo="percent")
             show_chart(fig, 360)
@@ -582,19 +576,20 @@ def production_view(sheet_id, cfg):
         st.info("Selected filters ke liye fabricator pending data nahi hai.")
 
     badge("📅 Monthly Fulfillment Trend")
+    # Source Cols: Month (Col A/0), Orders (Col D/3), Received AS (Col F/5), Pending AT (Col H/7)
     mdf = read_table(g, r"MONTHLY FULFILLMENT TREND", [
-        ("MONTH", 0), ("ORDERS", 3), ("IN-PRODUCTION (AS)", 5), ("RECEIVED (AT)", 7)])
+        ("MONTH", 0), ("ORDERS", 3), ("RCVD (AS)", 5), ("PENDING (AT)", 7)])
     m1, m2 = st.columns([1, 1.35])
     with m1:
         show_table(mdf, height=500)
     with m2:
         b = body(mdf)
         if b is not None and not b.empty:
-            line_df = b.melt(id_vars="MONTH", value_vars=["IN-PRODUCTION (AS)", "RECEIVED (AT)"],
+            line_df = b.melt(id_vars="MONTH", value_vars=["RCVD (AS)", "PENDING (AT)"],
                              var_name="Metric", value_name="PCS")
             fig = px.line(line_df, x="MONTH", y="PCS", color="Metric", markers=True,
                           title="MONTHLY FULFILLMENT TREND ANALYSIS",
-                          color_discrete_sequence=["#ef4444", "#2563eb"])
+                          color_discrete_sequence=["#059669", "#dc2626"])
             fig.update_xaxes(tickangle=-35, title="")
             show_chart(fig, 460)
 
@@ -603,13 +598,18 @@ def client_view(sheet_id, cfg):
     tab, g = get_dashboard_grid(sheet_id, cfg["dashboard_tabs"]["client"])
     st.subheader("🏢 Executive Client Performance Dashboard")
     st.caption(f"Source tab: {tab}")
+    # Document Filter Coordinates: Month: B4 (1), Client: F4 (5), Order Type: K4 (10), Category: N4 (13)
     show_filter_chips(g, [("Month", 3, 1), ("Client", 3, 5), ("Order Type", 3, 10), ("Category", 3, 13)])
+    
+    # KPI Row Titles: Row 5 (6 in sheet), Values: Row 6 (7 in sheet), Delta: Row 7 (8 in sheet)
     render_kpi_cards(read_kpis(g, 5, 6, sub_row=7), per_row=4)
 
     st.markdown("---")
     badge("📅 Client Fulfillment Breakdown (Monthly)")
+    # Source Cols: Month (Col A/0), Order Qty (Col C/2), In Production (Col D/3), Received (Col E/4), Pending (Col F/5)
     m = read_table(g, r"CLIENT FULFILLMENT BREAKDOWN", [
         ("MONTH", 0), ("ORDER QTY", 2), ("IN PRODUCTION", 3), ("RECEIVED", 4), ("PENDING", 5)])
+    
     c1, c2, c3 = st.columns([1.25, 1, 1])
     with c1:
         show_table(m, height=500)
@@ -623,6 +623,7 @@ def client_view(sheet_id, cfg):
         else:
             st.info("Selected filters ke liye order data nahi hai.")
     with c3:
+        # Hidden Helper AA:AB for Fulfillment Ratio (Received vs Pending)
         tot = m[m["MONTH"].str.upper().isin(TOTAL_LABELS)] if not m.empty else pd.DataFrame()
         if not tot.empty and (tot["RECEIVED"].iloc[0] + tot["PENDING"].iloc[0]) > 0:
             q = pd.DataFrame({"Status": ["RECEIVED QTY", "PENDING QTY"],
@@ -635,8 +636,12 @@ def client_view(sheet_id, cfg):
             st.info("Received / pending data nahi hai.")
 
     st.markdown("---")
-    badge("🧩 Category Wise Order Breakdown (Pcs)")
-    cat = read_table(g, r"CATEGORY WISE ORDER BREAKDOWN", [("MONTH", 0)] + [(None, c) for c in range(2, 10)])
+    badge("👗 Category Wise Order Breakdown (Pcs)")
+    # Source Cols: Month (Col A/0), CO-ORD SET (Col C/2), KURTA PANT (D/3), TOP (E/4), KURTA PANT DUPATTA (F/5), DRESS (G/6), KAFTAN (H/7), KURTA (I/8), TOTAL (J/9)
+    cat_cols = [("MONTH", 0), ("CO-ORD SET", 2), ("KURTA PANT", 3), ("TOP", 4), 
+                ("KURTA PANT DUPATTA", 5), ("DRESS", 6), ("KAFTAN", 7), ("KURTA", 8), ("TOTAL", 9)]
+    cat = read_table(g, r"CATEGORY WISE ORDER BREAKDOWN", cat_cols)
+    
     c4, c5 = st.columns([1.35, 1])
     with c4:
         show_table(cat, height=500)
@@ -672,7 +677,7 @@ def render_tracker(sheet_name, cfg):
         Loaded: {datetime.now().strftime('%d %b %Y, %H:%M')}</p></div>""",
         unsafe_allow_html=True)
 
-    t1, t2, t3 = st.tabs(["👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard"])
+    t1, t2, t3 = st.tabs(["👩‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard"])
     with t1:
         designer_view(sheet_id, cfg)
     with t2:
@@ -682,7 +687,7 @@ def render_tracker(sheet_name, cfg):
 
 
 # -----------------------------------------------------------------------------
-# 6. SAMPLE SUMMARY  (SAMPLE DASHBOARD tab)
+# 6. SAMPLE SUMMARY  (EXACT SAME & UNTOUCHED)
 # -----------------------------------------------------------------------------
 def render_sample_summary_dashboard(sheet_name, cfg):
     sheet_id = cfg["id"]
@@ -744,7 +749,7 @@ def render_sample_summary_dashboard(sheet_name, cfg):
             fig.update_yaxes(title="")
             show_chart(fig, 350)
     with g3:
-        pie = read_pairs(g, 25, [26])                  # hidden helper Z:AA (STATUS / SAMPLES)
+        pie = read_pairs(g, 25, [26])                  
         if not pie.empty and pie.iloc[:, 1].sum() > 0:
             pie.columns = ["Status", "Count"]
             fig = px.pie(pie, names="Status", values="Count", hole=0.45, title="OVERALL SAMPLE APPROVAL SHARE",
@@ -757,7 +762,7 @@ def render_sample_summary_dashboard(sheet_name, cfg):
 
 
 # -----------------------------------------------------------------------------
-# 7. FABRICATOR REPORT  (FABRICATOR DASHBOARD tab)
+# 7. FABRICATOR REPORT  (EXACT SAME & UNTOUCHED)
 # -----------------------------------------------------------------------------
 def render_fabricator_dashboard(sheet_name, cfg):
     sheet_id = cfg["id"]
