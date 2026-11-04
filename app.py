@@ -1418,11 +1418,10 @@ def _main_content():
         render_sample_summary_dashboard(selected, cfg)
 
 
-if hasattr(st, "fragment"):
-    main = st.fragment(run_every="60s")(_main_content)
-else:
-    main = _main_content
 
+# Run the dashboard normally (without fragment wrapper)
+main = _main_content
 
 if __name__ == "__main__":
     main()
+
