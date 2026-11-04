@@ -358,7 +358,12 @@ def get_client():
             "https://www.googleapis.com/auth/drive.readonly",
         ],
     )
-    return gspread.authorize(creds)
+    client = gspread.authorize(creds)
+    try:
+        client.http_client.timeout = 25
+    except Exception:
+        pass
+    return client
 
 def _open_book(sheet_id):
     try:
@@ -370,11 +375,11 @@ def _open_book(sheet_id):
 def _a1_tab(title):
     return "'" + str(title).replace("'", "''") + "'"
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def list_tabs(sheet_id):
     return [ws.title for ws in _open_book(sheet_id).worksheets()]
 
-@st.cache_data(ttl=300, show_spinner="Google Sheet se live data load ho raha hai...")
+@st.cache_data(ttl=60, show_spinner="Google Sheet se live data load ho raha hai...")
 def load_tab_raw(sheet_id, tab_title):
     book = _open_book(sheet_id)
     resp = book.values_get(_a1_tab(tab_title), params={
@@ -383,7 +388,7 @@ def load_tab_raw(sheet_id, tab_title):
     })
     return resp.get("values", [])
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def load_tab_formatted(sheet_id, tab_title):
     book = _open_book(sheet_id)
     resp = book.values_get(_a1_tab(tab_title))
@@ -396,44 +401,43 @@ def find_tab(tabs, wanted):
             return t
     return None
 
-@st.cache_data(ttl=300, show_spinner="Sheet data load ho raha hai...")
+@st.cache_data(ttl=60, show_spinner=False)
 def load_worksheet_smart(sheet_id, cfg, signature_text=None):
     book = _open_book(sheet_id)
-    worksheets = book.worksheets()
     target_gid = cfg.get("gid")
     ws_target = None
 
     if target_gid is not None:
-        for ws in worksheets:
-            if str(ws.id) == str(target_gid):
-                ws_target = ws
-                break
+        try:
+            ws_target = book.get_worksheet_by_id(int(target_gid))
+        except Exception:
+            ws_target = None
 
     if ws_target is None:
-        cand_titles = cfg.get("summary_tabs", []) + cfg.get("data_tabs", [])
-        for pref in cand_titles:
+        worksheets = book.worksheets()
+        candidates = cfg.get("summary_tabs", []) + cfg.get("data_tabs", [])
+        for pref in candidates:
             pref_norm = re.sub(r"[^a-z0-9]", "", str(pref).lower())
             for ws in worksheets:
-                ws_norm = re.sub(r"[^a-z0-9]", "", str(ws.title).lower())
-                if pref_norm in ws_norm or ws_norm in pref_norm:
+                ws_norm = re.sub(r"[^a-z0-9]", "", ws.title.lower())
+                if pref_norm == ws_norm:
                     ws_target = ws
                     break
             if ws_target:
                 break
 
-    if ws_target is None and signature_text:
-        sig_low = signature_text.lower()
-        for ws in worksheets:
-            v = ws.get_all_values()
-            if any(sig_low in str(c).lower() for r in v[:15] for c in r):
-                ws_target = ws
-                break
+    if ws_target is None:
+        worksheets = book.worksheets()
+        ws_target = worksheets[0] if worksheets else None
 
     if ws_target is None:
-        ws_target = worksheets[0] if worksheets else None
-    if ws_target is None:
         return "", []
-    return ws_target.title, ws_target.get_all_values()
+
+    values = book.values_get(_a1_tab(ws_target.title), params={
+        "valueRenderOption": "UNFORMATTED_VALUE",
+        "dateTimeRenderOption": "SERIAL_NUMBER",
+    }).get("values", [])
+    return ws_target.title, values
 
 
 # -----------------------------------------------------------------------------
@@ -864,7 +868,12 @@ def render_tracker(sheet_name, cfg):
             st.cache_data.clear()
             st.rerun()
 
-    values = load_tab_raw(sheet_id, src_tab)
+    try:
+        values = load_tab_raw(sheet_id, src_tab)
+    except Exception as e:
+        st.error(f"Google Sheet data load nahi ho paya: {type(e).__name__}: {e}")
+        st.info("Streamlit Cloud → Manage app → Logs mein full error check karein.")
+        st.stop()
     if not values:
         st.error(f"Tab '{src_tab}' empty hai.")
         st.stop()
@@ -878,7 +887,7 @@ def render_tracker(sheet_name, cfg):
 
     st.markdown(
         f"""<div class="dashboard-hero"><h2>📊 {html.escape(sheet_name)} · Executive Dashboard 2026-27</h2>
-        <p>Source Tab: <b>{html.escape(src_tab)}</b> · {len(d_all):,} rows (data starting from row {first_row}) · auto-refresh active</p></div>""",
+        <p>Source Tab: <b>{html.escape(src_tab)}</b> · {len(d_all):,} rows (data starting from row {first_row}) · refreshes automatically every 60 seconds</p></div>""",
         unsafe_allow_html=True,
     )
 
@@ -1050,7 +1059,12 @@ def parse_fabricator_dashboard_data(values):
 
 
 def render_fabricator_dashboard(sheet_name, cfg):
-    tab_title, raw_values = load_worksheet_smart(cfg["id"], cfg, signature_text="FABRICATOR STOCK POSITION")
+    try:
+        tab_title, raw_values = load_worksheet_smart(cfg["id"], cfg, signature_text="FABRICATOR STOCK POSITION")
+    except Exception as e:
+        st.error(f"Fabricator Google Sheet load nahi ho payi: {type(e).__name__}: {e}")
+        st.info("Streamlit Cloud → Manage app → Logs mein full error check karein.")
+        st.stop()
     df_scorecard, df_matrix = parse_fabricator_dashboard_data(raw_values)
 
     if df_scorecard.empty:
@@ -1262,7 +1276,12 @@ def parse_sample_dashboard_data(values):
 
 
 def render_sample_summary_dashboard(sheet_name, cfg):
-    tab_title, raw_values = load_worksheet_smart(cfg["id"], cfg, signature_text="EXECUTIVE SAMPLE PERFORMANCE")
+    try:
+        tab_title, raw_values = load_worksheet_smart(cfg["id"], cfg, signature_text="EXECUTIVE SAMPLE PERFORMANCE")
+    except Exception as e:
+        st.error(f"Sample Summary Google Sheet load nahi ho payi: {type(e).__name__}: {e}")
+        st.info("Streamlit Cloud → Manage app → Logs mein full error check karein.")
+        st.stop()
     df_m, df_des, df_ven = parse_sample_dashboard_data(raw_values)
 
     with st.sidebar:
@@ -1383,7 +1402,7 @@ def render_sample_summary_dashboard(sheet_name, cfg):
 # -----------------------------------------------------------------------------
 # 9. MAIN ROUTER
 # -----------------------------------------------------------------------------
-def main():
+def _main_content():
     apply_theme()
     with st.sidebar:
         st.markdown("### 🗂️ Workspace Selection")
@@ -1397,6 +1416,12 @@ def main():
         render_fabricator_dashboard(selected, cfg)
     elif kind == "sample_summary":
         render_sample_summary_dashboard(selected, cfg)
+
+
+if hasattr(st, "fragment"):
+    main = st.fragment(run_every="60s")(_main_content)
+else:
+    main = _main_content
 
 
 if __name__ == "__main__":
