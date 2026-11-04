@@ -26,12 +26,6 @@ SHEET_REGISTRY = {
         "type": "tracker",
         # Data tab the sheet dashboards are built from (first match wins).
         "source_tabs": ["CONFIRMATION SHEET", "ORDER SHEET"],
-        # The sheet's own dashboard tabs (used only by the Data Check tab).
-        "dashboard_tabs": {
-            "designer": "DESIGNER DASHBOARD",
-            "production": "PRODUCTION PROCESS DASHBOARD",
-            "client": "CLIENT DASHBOARD",
-        },
     },
     "Sample Summary": {
         "id": "1EfQ08lXGL8YjtoaZ2ygJtNVaED7doDijo2jFvCuS7Kg",
@@ -39,14 +33,12 @@ SHEET_REGISTRY = {
         "gid": 78218658,   # fallback only (used if none of the tab names below exist)
         # Source (data) tab, first match wins. Same order as the Apps Script.
         "source_tabs": ["2026-27", "SAMPLE SHEET 2026-27", "Sheet1"],
-        "dashboard_tab": "SAMPLE DASHBOARD",   # sheet's own dashboard (Data Check compares with it)
     },
     "Fabricator Report": {
         "id": "1hP9Bkvu2F-qj4tXYhOCb4alfJOZZtAsMQNOjVQyWoo4",
         "type": "overview_fabricators",
         "gid": 164418035,  # fallback only
         "source_tabs": ["MONTHWISE SUMMARY", "MONTHWISE SUMMARY 2026-27"],
-        "dashboard_tab": "FABRICATOR DASHBOARD",
     },
 }
 
@@ -100,65 +92,291 @@ def _stretch_kwargs():
 
 STRETCH = _stretch_kwargs()
 
-PALETTE = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#db2777", "#65a30d",
-           "#ea580c", "#0d9488", "#9333ea", "#ca8a04"]
+# --- colours ---------------------------------------------------------------
+# Light mode uses deeper colours, dark mode uses brighter ones (readable on a dark background).
+COLOR_SETS = {
+    "light": {"blue": "#2563eb", "green": "#059669", "amber": "#d97706", "red": "#dc2626", "purple": "#7c3aed",
+              "cyan": "#0891b2", "pink": "#db2777", "lime": "#65a30d", "orange": "#ea580c", "teal": "#0d9488",
+              "violet": "#9333ea", "yellow": "#ca8a04", "slate": "#94a3b8"},
+    "dark": {"blue": "#60a5fa", "green": "#34d399", "amber": "#fbbf24", "red": "#f87171", "purple": "#a78bfa",
+             "cyan": "#22d3ee", "pink": "#f472b6", "lime": "#a3e635", "orange": "#fb923c", "teal": "#2dd4bf",
+             "violet": "#c084fc", "yellow": "#facc15", "slate": "#94a3b8"},
+}
+PALETTE_ORDER = ["blue", "green", "amber", "red", "purple", "cyan", "pink", "lime", "orange", "teal", "violet", "yellow"]
+
+# Runtime theme state (set by apply_theme on every full run)
+COLORS = dict(COLOR_SETS["light"])
+PALETTE = [COLORS[k] for k in PALETTE_ORDER]
 PLOT_TEMPLATE = "plotly_white"
+PLOT_TEXT = "#0f172a"
+PLOT_MUTED = "#475569"
+PLOT_GRID = "#e2e8f0"
+HEAT_SCALE = "Blues"
+IS_DARK = False
+
+
+def pal():
+    """Categorical colour list for the active mode."""
+    return list(PALETTE)
+
+
+THEMES = {
+    "light": {
+        "APP_BG": "#f4f6fb", "PANEL_BG": "#ffffff", "CARD_BG": "#f8fafc", "CHIP_BG": "#e8eef8",
+        "BORDER": "#dfe5ef", "TEXT": "#0f172a", "MUTED": "#5b6b82", "ACCENT": "#2563eb",
+        "TITLE_BG": "#111827", "TITLE_TEXT": "#ffffff",
+        "TH_BG": "#1f2a44", "TH_TEXT": "#ffffff", "ROW_ALT": "#f8fafc", "ROW_HOVER": "#eef4ff",
+        "TOTAL_BG": "#e3ecff", "TOTAL_TEXT": "#0b2a6b",
+        "GOOD_BG": "#dcfce7", "GOOD_TX": "#166534", "MID_BG": "#fef3c7", "MID_TX": "#92400e",
+        "BAD_BG": "#fee2e2", "BAD_TX": "#991b1b",
+        "SHADOW": "0 2px 10px rgba(15, 23, 42, 0.06)", "SCHEME": "light",
+    },
+    "dark": {
+        "APP_BG": "#0e1525", "PANEL_BG": "#161f33", "CARD_BG": "#1b2640", "CHIP_BG": "#243150",
+        "BORDER": "#2c3a58", "TEXT": "#e6edf7", "MUTED": "#9aabc6", "ACCENT": "#60a5fa",
+        "TITLE_BG": "#1b2640", "TITLE_TEXT": "#f1f5fb",
+        "TH_BG": "#24324f", "TH_TEXT": "#e6edf7", "ROW_ALT": "#19233a", "ROW_HOVER": "#22304d",
+        "TOTAL_BG": "#1e3a66", "TOTAL_TEXT": "#e6f0ff",
+        "GOOD_BG": "rgba(52, 211, 153, 0.18)", "GOOD_TX": "#6ee7b7", "MID_BG": "rgba(251, 191, 36, 0.16)",
+        "MID_TX": "#fcd34d", "BAD_BG": "rgba(248, 113, 113, 0.16)", "BAD_TX": "#fca5a5",
+        "SHADOW": "0 2px 12px rgba(0, 0, 0, 0.35)", "SCHEME": "dark",
+    },
+}
+
+# KPI tile tints (cycled), similar to the coloured KPI boxes in the Google Sheet dashboards
+KPI_TONES = ["blue", "green", "amber", "red", "orange", "purple", "teal", "pink"]
+
+CSS_TEMPLATE = """
+<style>
+:root {
+    --app-bg: __APP_BG__; --panel-bg: __PANEL_BG__; --card-bg: __CARD_BG__; --text-color: __TEXT__;
+    --muted-color: __MUTED__; --border-color: __BORDER__; --chip-bg: __CHIP_BG__; --accent: __ACCENT__;
+    --title-bg: __TITLE_BG__; --title-text: __TITLE_TEXT__; --th-bg: __TH_BG__; --th-text: __TH_TEXT__;
+    --row-alt: __ROW_ALT__; --row-hover: __ROW_HOVER__; --total-bg: __TOTAL_BG__; --total-text: __TOTAL_TEXT__;
+    --good-bg: __GOOD_BG__; --good-tx: __GOOD_TX__; --mid-bg: __MID_BG__; --mid-tx: __MID_TX__;
+    --bad-bg: __BAD_BG__; --bad-tx: __BAD_TX__; --shadow: __SHADOW__;
+}
+.stApp { background-color: var(--app-bg); color: var(--text-color); color-scheme: __SCHEME__;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.block-container { padding-top: 3.6rem; padding-bottom: 3rem; max-width: 1650px; }
+[data-testid="stHeader"] { background: var(--app-bg); }
+[data-testid="stHeader"] button, [data-testid="stHeader"] svg, [data-testid="stToolbar"] * { color: var(--text-color) !important; }
+[data-testid="stDecoration"] { display: none; }
+
+/* ---------- text ---------- */
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+.stApp .stMarkdown, .stApp .stMarkdown p, .stApp .stMarkdown li,
+.stApp [data-testid="stWidgetLabel"] p, .stApp label, .stApp [data-testid="stCheckbox"] p,
+.stApp [data-testid="stToggle"] p, .stApp [data-testid="stSpinner"] * { color: var(--text-color); }
+.stApp [data-testid="stCaptionContainer"], .stApp [data-testid="stCaptionContainer"] p { color: var(--muted-color); }
+.stApp hr { border-color: var(--border-color); margin: 1.1rem 0; }
+.stApp [data-testid="stWidgetLabel"] p { font-weight: 650; font-size: .8rem; white-space: normal; }
+
+/* ---------- sidebar ---------- */
+[data-testid="stSidebar"] { background-color: var(--panel-bg); border-right: 1px solid var(--border-color); }
+[data-testid="stSidebar"] h3 { font-size: .8rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.08em;
+                               color: var(--muted-color); margin: 0.4rem 0 0.5rem 0; }
+[data-testid="stSidebar"] label, [data-testid="stSidebar"] label p { font-size: .8rem !important; font-weight: 650 !important;
+                               color: var(--text-color) !important; }
+[data-testid="stSidebarCollapseButton"] svg, [data-testid="stSidebarCollapsedControl"] svg { color: var(--text-color) !important; }
+
+/* ---------- inputs / dropdowns ---------- */
+[data-baseweb="select"] > div, [data-baseweb="input"] > div {
+    background-color: var(--panel-bg) !important; border: 1px solid var(--border-color) !important;
+    border-radius: 8px !important; color: var(--text-color) !important; min-height: 38px; }
+[data-baseweb="select"] > div:hover { border-color: var(--accent) !important; }
+[data-baseweb="select"] span, [data-baseweb="select"] input, [data-baseweb="select"] div,
+[data-baseweb="input"] input { color: var(--text-color) !important; }
+[data-baseweb="select"] input::placeholder, [data-baseweb="input"] input::placeholder { color: var(--muted-color) !important; opacity: 1; }
+[data-baseweb="select"] svg { fill: var(--muted-color) !important; color: var(--muted-color) !important; }
+[data-baseweb="popover"] > div, [data-baseweb="popover"] [data-baseweb="menu"], ul[role="listbox"] {
+    background-color: var(--panel-bg) !important; color: var(--text-color) !important;
+    border: 1px solid var(--border-color); border-radius: 10px; }
+li[role="option"], li[role="option"] * { background-color: transparent !important; color: var(--text-color) !important; }
+li[role="option"]:hover, li[role="option"][aria-selected="true"] { background-color: var(--chip-bg) !important; }
+
+/* Streamlit 1.5x+ (react-aria) dropdowns */
+.react-aria-ComboBox [role="group"], .react-aria-Select button {
+    background-color: var(--panel-bg) !important; border: 1px solid var(--border-color) !important;
+    border-radius: 8px !important; color: var(--text-color) !important; }
+.react-aria-ComboBox [role="group"][data-hovered], .react-aria-ComboBox [role="group"][data-focus-within] {
+    border-color: var(--accent) !important; }
+.react-aria-ComboBox input { color: var(--text-color) !important; -webkit-text-fill-color: var(--text-color); }
+.react-aria-ComboBox input::placeholder { color: var(--muted-color) !important; -webkit-text-fill-color: var(--muted-color); opacity: 1; }
+.react-aria-ComboBox button, .react-aria-ComboBox button svg { color: var(--muted-color) !important; }
+[data-testid$="Dropdown"], .react-aria-Popover, [data-testid$="Dropdown"] [role="listbox"] {
+    background-color: var(--panel-bg) !important; color: var(--text-color) !important;
+    border-color: var(--border-color) !important; }
+[role="listbox"] [role="option"] { color: var(--text-color) !important; background-color: transparent !important; }
+[role="listbox"] [role="option"] * { color: inherit !important; }
+[role="listbox"] [role="option"][data-focused], [role="listbox"] [role="option"][data-hovered] { background-color: var(--chip-bg) !important; }
+[role="listbox"] [role="option"][aria-selected="true"] { color: var(--accent) !important; font-weight: 700; }
+[data-tag] { background-color: var(--chip-bg) !important; color: var(--text-color) !important;
+             border: 1px solid var(--border-color) !important; border-radius: 6px !important; max-width: 100%; }
+[data-tag] *, [data-tag] svg { color: var(--text-color) !important; fill: currentColor; }
+[data-tag] span { font-size: .76rem !important; font-weight: 600 !important; }
+/* selected tags wrap onto new lines instead of being cut off */
+.react-aria-ComboBox [role="group"] { height: auto !important; min-height: 38px; }
+[data-testid="stMultiSelectTagsContainer"] { flex-wrap: wrap !important; max-height: 112px; overflow-x: hidden !important;
+                                             overflow-y: auto !important; }
+[data-testid="stMultiSelectTagsContainer"] > span[role="group"] { flex-wrap: wrap !important; max-width: 100%; }
+
+/* toggle switch (Streamlit 1.5x+) */
+label:has(input[role="switch"]) > span + div { background-color: var(--chip-bg) !important; border: 1px solid var(--border-color); }
+label[data-selected]:has(input[role="switch"]) > span + div { background-color: var(--accent) !important; border-color: var(--accent); }
+label:has(input[role="switch"]) > span + div > div { background-color: #ffffff !important; }
+[data-testid="stTooltipIcon"] svg, [data-testid="stTooltipHoverTarget"] svg { opacity: 1; color: var(--muted-color) !important; }
+.stMultiSelect [data-baseweb="tag"] { background-color: var(--chip-bg) !important; border: 1px solid var(--border-color) !important;
+    border-radius: 6px !important; padding: 1px 6px !important; margin: 2px !important; max-width: 100%; }
+.stMultiSelect [data-baseweb="tag"] span, .stMultiSelect [data-baseweb="tag"] svg { color: var(--text-color) !important;
+    font-size: 0.76rem !important; font-weight: 600 !important; fill: var(--text-color) !important; }
+[data-testid="stTooltipIcon"] svg, [data-testid="stTooltipHoverTarget"] svg { color: var(--muted-color) !important; }
+
+/* ---------- toggle / checkbox ---------- */
+[data-testid="stToggle"] label > div:first-child, [data-baseweb="checkbox"] > div:first-child { border-color: var(--border-color) !important; }
+
+/* ---------- buttons / expander / tabs ---------- */
+.stButton > button, .stDownloadButton > button {
+    background-color: var(--panel-bg); color: var(--text-color); border: 1px solid var(--border-color);
+    border-radius: 8px; font-weight: 650; min-height: 38px; }
+.stButton > button p, .stDownloadButton > button p { color: inherit; font-size: .82rem; white-space: nowrap; }
+.stButton > button, .stDownloadButton > button { padding-left: 10px; padding-right: 10px; }
+.stButton > button:hover, .stDownloadButton > button:hover { border-color: var(--accent); color: var(--accent); background: var(--card-bg); }
+.stButton > button:focus:not(:active), .stDownloadButton > button:focus:not(:active) { color: var(--text-color); border-color: var(--accent); }
+[data-testid="stExpander"] { background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: 12px; }
+[data-testid="stExpander"] details, [data-testid="stExpander"] summary { border: none; background: transparent; }
+[data-testid="stExpander"] summary:hover p, [data-testid="stExpander"] summary:hover svg { color: var(--accent) !important; }
+[data-testid="stExpander"] summary p, [data-testid="stExpander"] summary span, [data-testid="stExpander"] summary svg {
+    color: var(--text-color) !important; font-weight: 650; }
+[data-testid="stTabs"] [role="tablist"] { gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border-color); }
+[data-testid="stTabs"] [role="tab"] { border-radius: 8px 8px 0 0; padding: 10px 16px; background: transparent; height: auto; }
+[data-testid="stTabs"] [role="tab"] p { color: var(--muted-color) !important; font-weight: 700; font-size: .92rem; white-space: nowrap; }
+[data-testid="stTabs"] [role="tab"]:hover { background: var(--chip-bg); }
+[data-testid="stTabs"] [role="tab"]:hover p { color: var(--text-color) !important; }
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] { background: var(--panel-bg); }
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] p { color: var(--accent) !important; }
+[data-baseweb="tab-highlight"], .react-aria-SelectionIndicator { background-color: var(--accent) !important; }
+[data-baseweb="tab-border"] { background-color: var(--border-color) !important; }
+
+/* ---------- cards (charts) ---------- */
+[class*="st-key-card_"], [data-testid="stVerticalBlockBorderWrapper"]:has(.chart-title) {
+    background: var(--panel-bg) !important; border: 1px solid var(--border-color) !important;
+    border-radius: 12px !important; box-shadow: var(--shadow); padding: 12px 14px 6px 14px !important; }
+.chart-title { font-size: .82rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase;
+               color: var(--text-color); line-height: 1.35; margin: 0 0 2px 0; overflow-wrap: anywhere; }
+.chart-sub { font-size: .74rem; color: var(--muted-color); margin: 0 0 4px 0; line-height: 1.3; }
+[data-testid="stPlotlyChart"] { background: transparent; }
+
+/* ---------- KPI tiles ---------- */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 12px; margin: 6px 0 12px 0; }
+.kpi { background: var(--panel-bg); border: 1px solid var(--border-color); border-top: 4px solid var(--tone);
+       border-radius: 12px; padding: 12px 14px; box-shadow: var(--shadow); min-width: 0;
+       background-image: linear-gradient(180deg, var(--tone-soft) 0%, transparent 85%); }
+.kpi-label { color: var(--muted-color); font-size: .7rem; font-weight: 750; text-transform: uppercase; letter-spacing: .04em;
+             line-height: 1.3; overflow-wrap: anywhere; }
+.kpi-value { color: var(--text-color); font-weight: 800; font-size: 1.32rem; line-height: 1.25; margin-top: 6px;
+             overflow-wrap: anywhere; }
+
+/* ---------- tables ---------- */
+.tbl-wrap { border: 1px solid var(--border-color); border-radius: 12px; overflow: auto; background: var(--panel-bg);
+            box-shadow: var(--shadow); margin-bottom: 6px; }
+.tbl-wrap table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: .8rem; color: var(--text-color); margin: 0; }
+.tbl-wrap th { position: sticky; top: 0; z-index: 1; background: var(--th-bg); color: var(--th-text); font-weight: 700;
+               text-transform: uppercase; font-size: .7rem; letter-spacing: .03em; padding: 9px 10px; text-align: right;
+               border: none; white-space: normal; line-height: 1.25; vertical-align: bottom; min-width: 64px; }
+.tbl-wrap th:first-child, .tbl-wrap td:first-child { text-align: left; min-width: 110px; }
+.tbl-wrap td { padding: 7px 10px; text-align: right; border: none; border-bottom: 1px solid var(--border-color);
+               white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-color); }
+.tbl-wrap td:first-child { white-space: normal; font-weight: 600; overflow-wrap: anywhere; }
+.tbl-wrap tbody tr:nth-child(even) td { background: var(--row-alt); }
+.tbl-wrap tbody tr:hover td { background: var(--row-hover); }
+.tbl-wrap tr.tot td { background: var(--total-bg) !important; color: var(--total-text); font-weight: 800;
+                      position: sticky; bottom: 0; border-top: 1px solid var(--accent); }
+.tbl-wrap tr.ref td { font-style: italic; font-weight: 700; color: var(--muted-color); }
+.tbl-wrap td.r-good { background: var(--good-bg) !important; color: var(--good-tx); font-weight: 700; }
+.tbl-wrap td.r-mid { background: var(--mid-bg) !important; color: var(--mid-tx); font-weight: 700; }
+.tbl-wrap td.r-bad { background: var(--bad-bg) !important; color: var(--bad-tx); font-weight: 700; }
+.tbl-wrap td.zero { color: var(--muted-color); }
+
+/* ---------- notes ---------- */
+.note { border: 1px solid var(--border-color); border-left: 4px solid var(--accent); background: var(--panel-bg);
+        color: var(--text-color); border-radius: 10px; padding: 9px 12px; font-size: .84rem; margin: 6px 0 10px 0;
+        line-height: 1.45; overflow-wrap: anywhere; }
+.note-success { border-left-color: var(--good-tx); }
+.note-warning { border-left-color: var(--mid-tx); }
+.note-error { border-left-color: var(--bad-tx); }
+
+/* ---------- titles / hero / badges ---------- */
+.dashboard-hero { background: linear-gradient(135deg, __HERO_GRAD__); border: 1px solid var(--border-color);
+    border-radius: 14px; padding: 16px 22px; margin-bottom: 14px; box-shadow: var(--shadow); }
+.dashboard-hero .hero-t { margin: 0; padding: 0; font-size: 1.4rem; font-weight: 800; letter-spacing: -0.01em; color: var(--text-color);
+                     line-height: 1.3; }
+.dashboard-hero p { color: var(--muted-color); margin: 4px 0 0 0; font-size: .86rem; line-height: 1.5; }
+.dash-title { background: var(--title-bg); color: var(--title-text); border: 1px solid var(--border-color); border-left: 5px solid var(--accent);
+              border-radius: 10px; padding: 11px 16px; margin: 6px 0 12px 0; display: flex; flex-wrap: wrap; align-items: center;
+              justify-content: space-between; gap: 6px 14px; }
+.dash-title .t { font-size: 1.02rem; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; line-height: 1.35; }
+.chip { display: inline-block; background: var(--chip-bg); color: var(--text-color); padding: 3px 10px; border-radius: 20px;
+        font-size: .74rem; font-weight: 650; white-space: nowrap; }
+.dash-title .chip { background: rgba(255, 255, 255, 0.12); color: var(--title-text); }
+.section-badge { display: inline-flex; align-items: center; background: var(--chip-bg); color: var(--text-color);
+    padding: 5px 12px; border-radius: 6px; font-size: 0.78rem; font-weight: 750; margin: 8px 0 10px 0;
+    text-transform: uppercase; letter-spacing: .03em; line-height: 1.35; max-width: 100%; overflow-wrap: anywhere; }
+code { background: var(--chip-bg) !important; color: var(--text-color) !important; }
+[data-testid="stAlert"] { border-radius: 10px; }
+__DARK_EXTRA__
+</style>
+"""
+
+DARK_EXTRA_CSS = """
+[data-testid="stAlert"] { background-color: var(--card-bg) !important; border: 1px solid var(--border-color); }
+[data-testid="stAlert"] *, [data-testid="stAlert"] p { color: var(--text-color) !important; }
+"""
+
+
+def _streamlit_theme_is_dark():
+    """Streamlit's own (browser/system) theme - used only as the default for the Dark mode toggle."""
+    try:
+        return str(st.context.theme.type).lower() == "dark"
+    except Exception:
+        return False
+
+
+def _hex_to_rgba(hex_color, alpha):
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {alpha})"
 
 
 def apply_theme():
-    """Sidebar dark-mode toggle + global CSS."""
-    global PLOT_TEMPLATE
+    """Sidebar dark-mode toggle + global CSS + chart colours."""
+    global COLORS, PALETTE, PLOT_TEMPLATE, PLOT_TEXT, PLOT_MUTED, PLOT_GRID, HEAT_SCALE, IS_DARK
     if "dashboard_dark_mode" not in st.session_state:
-        st.session_state.dashboard_dark_mode = False
+        st.session_state.dashboard_dark_mode = _streamlit_theme_is_dark()
 
     with st.sidebar:
         st.markdown("### 🎨 Preferences")
         st.toggle("Dark mode", key="dashboard_dark_mode", help="Dashboard appearance mode toggle")
 
-    dark = st.session_state.dashboard_dark_mode
-    if dark:
-        app_bg, panel_bg, text, muted, border = "#0a0f1d", "#12192b", "#eaf0f8", "#94a3b8", "#1e293b"
-        card_bg, chip_bg, accent = "#162035", "#1e2c45", "#38bdf8"
-        PLOT_TEMPLATE = "plotly_dark"
+    IS_DARK = bool(st.session_state.dashboard_dark_mode)
+    mode = "dark" if IS_DARK else "light"
+    c = THEMES[mode]
+    COLORS = dict(COLOR_SETS[mode])
+    PALETTE = [COLORS[k] for k in PALETTE_ORDER]
+    if IS_DARK:
+        PLOT_TEMPLATE, PLOT_TEXT, PLOT_MUTED, PLOT_GRID = "plotly_dark", "#e6edf7", "#9aabc6", "#26344f"
+        HEAT_SCALE = [[0.0, "#1b2640"], [0.5, "#2b5aa8"], [1.0, "#7cb8ff"]]
+        hero_grad = "#16213a 0%, #1c2d50 100%"
     else:
-        app_bg, panel_bg, text, muted, border = "#f8fafc", "#ffffff", "#0f172a", "#64748b", "#e2e8f0"
-        card_bg, chip_bg, accent = "#f1f5f9", "#e2e8f0", "#2563eb"
-        PLOT_TEMPLATE = "plotly_white"
+        PLOT_TEMPLATE, PLOT_TEXT, PLOT_MUTED, PLOT_GRID = "plotly_white", "#0f172a", "#475569", "#e5e9f0"
+        HEAT_SCALE = "Blues"
+        hero_grad = "#ffffff 0%, #eaf1ff 100%"
 
-    px.defaults.template = PLOT_TEMPLATE
-    px.defaults.color_discrete_sequence = PALETTE
-    hero_grad = "#131e33 0%, #172a48 100%" if dark else "#ffffff 0%, #edf4ff 100%"
-
-    st.markdown(f"""
-<style>
-:root {{
-    --app-bg: {app_bg}; --panel-bg: {panel_bg}; --card-bg: {card_bg}; --text-color: {text};
-    --muted-color: {muted}; --border-color: {border}; --chip-bg: {chip_bg}; --accent: {accent};
-}}
-.stApp {{ background-color: var(--app-bg); color: var(--text-color); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
-.block-container {{ padding-top: 1.15rem; padding-bottom: 2.8rem; max-width: 1650px; }}
-[data-testid="stSidebar"] {{ background-color: var(--panel-bg); border-right: 1px solid var(--border-color); }}
-[data-testid="stSidebar"] h3 {{ font-size: .83rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-color); margin-bottom: 0.6rem; }}
-[data-testid="stSidebar"] label {{ font-size: .78rem !important; font-weight: 650 !important; color: var(--text-color) !important; margin-bottom: 3px; }}
-.stMultiSelect [data-baseweb="select"] > div {{ border-radius: 8px; border: 1px solid var(--border-color); background: var(--panel-bg); min-height: 36px; }}
-.stMultiSelect [data-baseweb="tag"] {{ background-color: var(--chip-bg) !important; border: 1px solid var(--border-color) !important; border-radius: 5px !important; padding: 1px 6px !important; margin: 2px !important; }}
-.stMultiSelect [data-baseweb="tag"] span {{ color: var(--text-color) !important; font-size: 0.76rem !important; font-weight: 550 !important; }}
-[data-testid="stMetric"] {{ background: var(--panel-bg); border: 1px solid var(--border-color); border-top: 3px solid var(--accent); padding: 14px 18px; border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.04); }}
-[data-testid="stMetricLabel"] {{ color: var(--muted-color); font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }}
-[data-testid="stMetricValue"] {{ color: var(--text-color); font-weight: 800; font-size: 1.45rem; }}
-[data-testid="stTabs"] button {{ border-radius: 8px 8px 0 0; font-weight: 700; font-size: .92rem; padding: 10px 20px; }}
-[data-testid="stPlotlyChart"] {{ background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 8px; }}
-[data-testid="stDataFrame"] {{ border: 1px solid var(--border-color); border-radius: 10px; overflow: hidden; }}
-.dashboard-hero {{
-    background: linear-gradient(135deg, {hero_grad});
-    border: 1px solid var(--border-color); border-radius: 14px; padding: 18px 22px; margin-bottom: 18px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-}}
-.dashboard-hero h2 {{ margin: 0; font-size: 1.45rem; font-weight: 800; letter-spacing: -0.02em; }}
-.dashboard-hero p {{ color: var(--muted-color); margin: 3px 0 0 0; font-size: .88rem; }}
-.section-badge {{ display: inline-flex; align-items: center; background: var(--chip-bg); padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 750; margin: 10px 0 8px 0; text-transform: uppercase; letter-spacing: .02em; }}
-</style>
-""", unsafe_allow_html=True)
+    css = CSS_TEMPLATE
+    for k, v in c.items():
+        css = css.replace(f"__{k}__", v)
+    css = css.replace("__HERO_GRAD__", hero_grad).replace("__DARK_EXTRA__", DARK_EXTRA_CSS if IS_DARK else "")
+    st.markdown(css, unsafe_allow_html=True)
 
 
 # -----------------------------------------------------------------------------
@@ -269,33 +487,96 @@ def fmt_kpi(value, kind):
     return f"{value:,.0f}"
 
 
+def _esc(v):
+    return html.escape(str(v)).replace("$", "&#36;")
+
+
+def _html(markup):
+    st.markdown(markup, unsafe_allow_html=True)
+
+
 def metrics(items):
-    cols = st.columns(len(items))
-    for c, (label, value) in zip(cols, items):
-        c.metric(label, value)
+    """KPI tiles. items = [(label, value_text), ...]. Text wraps, so long values never overlap or get cut."""
+    tiles = []
+    for i, (label, value) in enumerate(items):
+        tone = COLORS[KPI_TONES[i % len(KPI_TONES)]]
+        style = f"--tone:{tone};--tone-soft:{_hex_to_rgba(tone, 0.16 if IS_DARK else 0.09)};"
+        tiles.append(f'<div class="kpi" style="{style}"><div class="kpi-label">{_esc(label)}</div>'
+                     f'<div class="kpi-value">{_esc(value)}</div></div>')
+    _html('<div class="kpi-grid">' + "".join(tiles) + "</div>")
 
 
-def render_kpis(kpis, per_row=4):
+def render_kpis(kpis, per_row=None):
     """kpis: list of (label, sheet_label, value, kind)."""
-    for i in range(0, len(kpis), per_row):
-        chunk = kpis[i:i + per_row]
-        metrics([(k[0], fmt_kpi(k[2], k[3])) for k in chunk])
-
-
-def style_fig(fig, height=360):
-    fig.update_layout(
-        template=PLOT_TEMPLATE,
-        height=height,
-        margin=dict(l=12, r=12, t=50, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title_text=""),
-        font=dict(size=11),
-        title_font=dict(size=14, family="-apple-system, sans-serif"),
-    )
-    return fig
+    metrics([(k[0], fmt_kpi(k[2], k[3])) for k in kpis])
 
 
 def badge(text):
-    st.markdown(f'<div class="section-badge">{html.escape(text)}</div>', unsafe_allow_html=True)
+    _html(f'<div class="section-badge">{_esc(text)}</div>')
+
+
+def dash_title(text, chip=None):
+    chip_html = f'<span class="chip">{_esc(chip)}</span>' if chip else ""
+    _html(f'<div class="dash-title"><span class="t">{_esc(text)}</span>{chip_html}</div>')
+
+
+def notice(text, kind="info"):
+    icons = {"info": "ℹ️", "success": "✅", "warning": "⚠️", "error": "❌"}
+    _html(f'<div class="note note-{kind}">{icons.get(kind, "")} {_esc(text)}</div>')
+
+
+def style_fig(fig, height=360, legend="top"):
+    """Chart look for the active mode. Titles are drawn outside the plot (see chart()), so nothing overlaps."""
+    if legend == "bottom":
+        leg = dict(orientation="h", yanchor="top", y=-0.04, xanchor="center", x=0.5, title_text="")
+    elif legend == "none":
+        leg = dict(title_text="")
+    else:
+        leg = dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, title_text="")
+    leg.update(font=dict(size=11, color=PLOT_TEXT), bgcolor="rgba(0,0,0,0)")
+    fig.update_layout(
+        template=PLOT_TEMPLATE,
+        title=None,
+        height=height,
+        margin=dict(l=8, r=8, t=30 if legend == "top" else 10, b=8),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        legend=leg,
+        showlegend=(legend != "none"),
+        font=dict(size=11, color=PLOT_TEXT),
+        hoverlabel=dict(font_size=12),
+        uniformtext=dict(minsize=9, mode="hide"),
+    )
+    fig.update_xaxes(gridcolor=PLOT_GRID, linecolor=PLOT_GRID, zerolinecolor=PLOT_GRID, automargin=True,
+                     tickfont=dict(color=PLOT_MUTED), title_font=dict(color=PLOT_MUTED))
+    fig.update_yaxes(gridcolor=PLOT_GRID, linecolor=PLOT_GRID, zerolinecolor=PLOT_GRID, automargin=True,
+                     tickfont=dict(color=PLOT_MUTED), title_font=dict(color=PLOT_MUTED))
+    return fig
+
+
+def _card(key):
+    try:
+        return st.container(border=True, key=key)
+    except TypeError:          # older Streamlit without `key`
+        return st.container(border=True)
+
+
+def _slug(text):
+    return re.sub(r"[^a-z0-9]+", "_", str(text).lower()).strip("_")[:60] or "chart"
+
+
+def chart(fig, title, height=360, ns="c", legend="top", subtitle=None):
+    """Chart inside a bordered card: HTML title on top (wraps on small screens), plot below."""
+    with _card(f"card_{ns}_{_slug(title)}"):
+        _html(f'<div class="chart-title">{_esc(title)}</div>'
+              + (f'<div class="chart-sub">{_esc(subtitle)}</div>' if subtitle else ""))
+        st.plotly_chart(style_fig(fig, height, legend), theme=None, config={"displaylogo": False}, **STRETCH)
+
+
+def empty_card(title, text, ns="c"):
+    with _card(f"card_{ns}_{_slug(title)}"):
+        _html(f'<div class="chart-title">{_esc(title)}</div>')
+        notice(text)
 
 
 def add_total(df, label_col, label="TOTAL"):
@@ -304,41 +585,59 @@ def add_total(df, label_col, label="TOTAL"):
     return pd.concat([df, pd.DataFrame([tot])], ignore_index=True)
 
 
-def _highlight_total(row):
-    is_total = str(row.iloc[0]).strip().upper() in ("TOTAL", "GRAND TOTAL", "ALL FABRICATORS")
-    style = "font-weight: 700; background-color: rgba(37, 99, 235, 0.14)" if is_total else ""
-    return [style] * len(row)
+TOTAL_LABELS = {"TOTAL", "GRAND TOTAL", "ALL FABRICATORS"}
+RATE_COLS = {"Approval %", "RCVD %"}     # coloured green / amber / red like the sheet
+
+
+def _rate_class(v):
+    if v >= 50:
+        return "r-good"
+    if v >= 25:
+        return "r-mid"
+    return "r-bad"
 
 
 def show_table(df, pct_cols=(), dec_cols=(), height=None):
-    fmt_map = {}
-    for c in df.columns:
-        if c in pct_cols:
-            fmt_map[c] = "{:.1f}%"
-        elif c in dec_cols:
-            fmt_map[c] = "{:,.2f}"
-        elif pd.api.types.is_numeric_dtype(df[c]):
-            fmt_map[c] = "{:,.0f}"
-    styler = df.style.format(fmt_map).apply(_highlight_total, axis=1)
-    kwargs = {**STRETCH, "hide_index": True}
-    if height:
-        kwargs["height"] = height
-    st.dataframe(styler, **kwargs)
+    """Theme-aware HTML table (sticky header, TOTAL row highlighted, scrolls instead of overlapping)."""
+    if df is None or df.empty:
+        notice("Selected filters ke liye data nahi hai.")
+        return
+    cols = list(df.columns)
+    numeric = {c: pd.api.types.is_numeric_dtype(df[c]) for c in cols}
+    head = "".join(f"<th>{_esc(c)}</th>" for c in cols)
+    body = []
+    value_cols = [c for c in cols[1:] if numeric[c] and c not in pct_cols]
+    for _, row in df.iterrows():
+        first = str(row.iloc[0]).strip().upper()
+        has_data = any(float(row[c] or 0) != 0 for c in value_cols if pd.notna(row[c])) if value_cols else True
+        cls = "tot" if first in TOTAL_LABELS else ("ref" if first.startswith("ALL OVER") else "")
+        cells = []
+        for c in cols:
+            v = row[c]
+            klass = ""
+            if numeric[c] and pd.notna(v):
+                fv = float(v)
+                if c in pct_cols:
+                    txt = f"{fv:.1f}%"
+                    if c in RATE_COLS and cls != "ref" and has_data:
+                        klass = _rate_class(fv)
+                elif c in dec_cols:
+                    txt = f"{fv:,.2f}"
+                else:
+                    txt = f"{fv:,.0f}"
+                if fv == 0 and not klass:
+                    klass = "zero"
+            else:
+                txt = "" if (v is None or (isinstance(v, float) and np.isnan(v))) else str(v)
+            cells.append(f'<td class="{klass}">{_esc(txt)}</td>' if klass else f"<td>{_esc(txt)}</td>")
+        body.append(f'<tr class="{cls}">' + "".join(cells) + "</tr>" if cls else "<tr>" + "".join(cells) + "</tr>")
+    style = f' style="max-height:{int(height)}px"' if height else ""
+    _html(f'<div class="tbl-wrap"{style}><table><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
 
 
-def handle_smart_all_filter(key):
-    selected = st.session_state.get(key, [])
-    prev_key = f"{key}_prev_state"
-    prev = st.session_state.get(prev_key, ["All"])
+class SheetAccessError(Exception):
+    pass
 
-    if not selected:
-        st.session_state[key] = ["All"]
-    elif "All" in selected and len(selected) > 1:
-        if "All" in prev:
-            st.session_state[key] = [x for x in selected if x != "All"]
-        else:
-            st.session_state[key] = ["All"]
-    st.session_state[prev_key] = st.session_state[key]
 
 
 # -----------------------------------------------------------------------------
@@ -350,9 +649,9 @@ def show_access_error(e=None):
         email = st.secrets["gcp_service_account"]["client_email"]
     except Exception:
         pass
-    st.error("Could not open this Google Sheet. Share it with service account: "
-             + (f"**{email}**" if email else "email from secrets")
-             + (f"\n\nDetails: `{e}`" if e else ""))
+    notice("Google Sheet open nahi ho payi. Sheet ko is service account ke saath share karein: "
+           + (email if email else "(secrets wala client_email)")
+           + (f"  ·  Details: {e}" if e else ""), "error")
 
 
 @st.cache_resource(show_spinner=False)
@@ -379,8 +678,8 @@ def _open_book(sheet_id):
     try:
         return get_client().open_by_key(sheet_id)
     except Exception as e:
-        show_access_error(e)
-        st.stop()
+        # Raised (not st.stop) so one failing sheet does not blank the other tabs.
+        raise SheetAccessError(str(e)) from e
 
 
 def _a1_tab(title):
@@ -403,61 +702,12 @@ def load_tab_raw(sheet_id, tab_title):
     return resp.get("values", [])
 
 
-@st.cache_data(ttl=LIVE_TTL, show_spinner=False)
-def load_tab_formatted(sheet_id, tab_title):
-    """Values exactly as displayed in the sheet (used to read the sheet's own dashboard KPIs)."""
-    book = _open_book(sheet_id)
-    resp = book.values_get(_a1_tab(tab_title))
-    return resp.get("values", [])
-
-
 def find_tab(tabs, wanted):
     w = norm_key(wanted)
     for t in tabs:
         if norm_key(t) == w:
             return t
     return None
-
-
-@st.cache_data(ttl=LIVE_TTL, show_spinner="Sheet data load ho raha hai...")
-def load_worksheet_smart(sheet_id, cfg, signature_text=None):
-    """Safely retrieves worksheet by GID, Title or Content Signature."""
-    book = _open_book(sheet_id)
-    worksheets = book.worksheets()
-    target_gid = cfg.get("gid")
-    ws_target = None
-
-    if target_gid is not None:
-        for ws in worksheets:
-            if str(ws.id) == str(target_gid):
-                ws_target = ws
-                break
-
-    if ws_target is None:
-        cand_titles = cfg.get("summary_tabs", []) + cfg.get("data_tabs", [])
-        for pref in cand_titles:
-            pref_norm = re.sub(r"[^a-z0-9]", "", str(pref).lower())
-            for ws in worksheets:
-                ws_norm = re.sub(r"[^a-z0-9]", "", str(ws.title).lower())
-                if pref_norm in ws_norm or ws_norm in pref_norm:
-                    ws_target = ws
-                    break
-            if ws_target:
-                break
-
-    if ws_target is None and signature_text:
-        sig_low = signature_text.lower()
-        for ws in worksheets:
-            v = ws.get_all_values()
-            if any(sig_low in str(c).lower() for r in v[:15] for c in r):
-                ws_target = ws
-                break
-
-    if ws_target is None:
-        ws_target = worksheets[0] if worksheets else None
-    if ws_target is None:
-        return "", []
-    return ws_target.title, ws_target.get_all_values()
 
 
 # -----------------------------------------------------------------------------
@@ -626,7 +876,7 @@ def production_kpis(x):
 # 5. MASTER SHEET – DASHBOARDS
 # -----------------------------------------------------------------------------
 def designer_dashboard(d_all, key):
-    st.subheader("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
+    dash_title("👨‍🎨 Executive Designer Performance & Category Tracking Dashboard")
     badge("🔎 Interactive Designer Dashboard Filters")
     f = filter_row([
         ("month", "Select Month", ["All"] + month_list(d_all)),
@@ -666,21 +916,20 @@ def designer_dashboard(d_all, key):
         top_txt = f"{top['Designer Name']} ({fmt(top['Total Volume (Pcs)'])} Pcs)"
     else:
         top_txt = "—"
-    metrics([(k[0], fmt_kpi(k[2], k[3])) for k in kpis] + [("TOP PERFORMER", top_txt)])
+    metrics([(k[0], fmt_kpi(k[2], k[3])) for k in kpis] + [("🏆 TOP PERFORMER", top_txt)])
 
     st.markdown("---")
     badge("📊 Designer Volume & Share Breakdown")
-    c1, c2 = st.columns([1.2, 1])
+    c1, c2 = st.columns([1.2, 1], gap="medium")
     with c1:
         show_table(add_total(g, "Designer Name"), pct_cols=("Share %",))
     with c2:
         melted = g.melt(id_vars="Designer Name", value_vars=["New Orders (Pcs)", "Repeat Orders (Pcs)"],
                         var_name="Order Type", value_name="Qty")
         fig = px.bar(melted, x="Designer Name", y="Qty", color="Order Type", barmode="group",
-                     title="DESIGNER PERFORMANCE: NEW vs REPEAT ORDERS (PCS)",
-                     color_discrete_sequence=["#059669", "#7C3AED"])
-        fig.update_xaxes(title="", tickangle=-35)
-        st.plotly_chart(style_fig(fig, 380), **STRETCH)
+                     color_discrete_sequence=[COLORS["green"], COLORS["purple"]])
+        fig.update_xaxes(title="")
+        chart(fig, "Designer Performance: New vs Repeat Orders (Pcs)", 380, ns=f"{key}_des")
 
     st.markdown("---")
     badge("🧩 Category Wise Designer Breakdown (Pcs)")
@@ -689,29 +938,29 @@ def designer_dashboard(d_all, key):
     cats = CATEGORIES_LIST + other_cats
     pv = pv.reindex(index=designers, columns=cats, fill_value=0)
     pv["TOTAL"] = pv[cats].sum(axis=1)
-    cat_df = pv.reset_index().rename(columns={"designer": "Designer", "index": "Designer"})
+    cat_df = pv.reset_index()
     cat_df.columns = ["Designer"] + list(cat_df.columns[1:])
 
-    c3, c4 = st.columns([1.25, 1])
+    c3, c4 = st.columns([1.25, 1], gap="medium")
     with c3:
         show_table(add_total(cat_df, "Designer"))
     with c4:
         months = month_list(d_all)
         trend = x[x["qty"] != 0].groupby(["month", "designer"], as_index=False)["qty"].sum()
+        title = "Monthly Designer Performance Trend (Pcs)"
         if not trend.empty:
-            fig = px.bar(trend, x="month", y="qty", color="designer",
-                         title="MONTHLY DESIGNER PERFORMANCE TREND (PCS)",
+            fig = px.bar(trend, x="month", y="qty", color="designer", color_discrete_sequence=pal(),
                          category_orders={"month": months},
                          labels={"month": "Month", "qty": "Pcs", "designer": "Designer"})
             fig.update_layout(barmode="stack")
-            fig.update_xaxes(tickangle=-35)
-            st.plotly_chart(style_fig(fig, 380), **STRETCH)
+            fig.update_xaxes(title="")
+            chart(fig, title, 400, ns=f"{key}_des")
         else:
-            st.info("Selected filters ke liye monthly data nahi hai.")
+            empty_card(title, "Selected filters ke liye monthly data nahi hai.", ns=f"{key}_des")
 
 
 def client_dashboard(d_all, key):
-    st.subheader("🏢 Executive Client Performance Dashboard")
+    dash_title("🏢 Executive Client Performance Dashboard")
     badge("🔎 Interactive Client Dashboard Filters")
     f = filter_row([
         ("month", "Month", ["All"] + month_list(d_all)),
@@ -721,39 +970,39 @@ def client_dashboard(d_all, key):
     ], f"{key}_cli")
     x = filter_data(d_all, f)
 
-    render_kpis(client_kpis(x), per_row=4)
+    render_kpis(client_kpis(x))
 
     st.markdown("---")
     months = month_list(d_all)
     badge("📅 Client Fulfillment Breakdown (Monthly)")
     m = x.groupby("month")[["qty", "production", "received", "pending"]].sum().reindex(months, fill_value=0)
-    m = m.reset_index().rename(columns={"index": "MONTH", "month": "MONTH", "qty": "ORDER QTY",
-                                        "production": "IN PRODUCTION", "received": "RECEIVED",
-                                        "pending": "PENDING"})
+    m = m.reset_index()
     m.columns = ["MONTH", "ORDER QTY", "IN PRODUCTION", "RECEIVED", "PENDING"]
 
-    c1, c2, c3 = st.columns([1.25, 1, 1])
+    c1, c2, c3 = st.columns([1.25, 1, 1], gap="medium")
     with c1:
-        show_table(add_total(m, "MONTH"), height=500)
+        show_table(add_total(m, "MONTH"), height=520)
     with c2:
         pie_df = m[m["ORDER QTY"] > 0]
+        title = "Client Monthly Order Trend (Pcs)"
         if not pie_df.empty:
-            fig = px.pie(pie_df, names="MONTH", values="ORDER QTY", title="CLIENT MONTHLY ORDER TREND (PCS)",
+            fig = px.pie(pie_df, names="MONTH", values="ORDER QTY", color_discrete_sequence=pal(),
                          category_orders={"MONTH": months})
-            fig.update_traces(textposition="inside", textinfo="percent+label")
-            st.plotly_chart(style_fig(fig, 420), **STRETCH)
+            fig.update_traces(textposition="inside", textinfo="percent", insidetextorientation="horizontal")
+            chart(fig, title, 430, ns=f"{key}_cli", legend="bottom")
         else:
-            st.info("Selected filters ke liye order data nahi hai.")
+            empty_card(title, "Selected filters ke liye order data nahi hai.", ns=f"{key}_cli")
     with c3:
         rec, pen = x["received"].sum(), x["pending"].sum()
+        title = "Order Fulfillment Ratio (Received vs Pending)"
         if rec + pen > 0:
             q = pd.DataFrame({"Status": ["RECEIVED QTY", "PENDING QTY"], "Qty": [rec, pen]})
-            fig = px.pie(q, names="Status", values="Qty", hole=.45,
-                         title="ORDER FULFILLMENT RATIO (RECEIVED vs PENDING)",
-                         color="Status", color_discrete_map={"RECEIVED QTY": "#dc2626", "PENDING QTY": "#f59e0b"})
-            st.plotly_chart(style_fig(fig, 420), **STRETCH)
+            fig = px.pie(q, names="Status", values="Qty", hole=.5, color="Status",
+                         color_discrete_map={"RECEIVED QTY": COLORS["red"], "PENDING QTY": COLORS["amber"]})
+            fig.update_traces(textposition="inside", textinfo="percent")
+            chart(fig, title, 430, ns=f"{key}_cli", legend="bottom")
         else:
-            st.info("Received / pending data nahi hai.")
+            empty_card(title, "Received / pending data nahi hai.", ns=f"{key}_cli")
 
     st.markdown("---")
     badge("🧩 Category Wise Order Breakdown (Pcs)")
@@ -765,24 +1014,25 @@ def client_dashboard(d_all, key):
     cat_df = pv.reset_index()
     cat_df.columns = ["MONTH"] + list(cat_df.columns[1:])
 
-    c4, c5 = st.columns([1.35, 1])
+    c4, c5 = st.columns([1.35, 1], gap="medium")
     with c4:
-        show_table(add_total(cat_df, "MONTH"), height=500)
+        show_table(add_total(cat_df, "MONTH"), height=520)
     with c5:
         long = cat_df.melt(id_vars="MONTH", value_vars=cats, var_name="Category", value_name="Pcs")
         long = long[long["Pcs"] != 0]
+        title = "Category Distribution by Month"
         if not long.empty:
-            fig = px.bar(long, x="MONTH", y="Pcs", color="Category", title="CATEGORY DISTRIBUTION BY MONTH",
+            fig = px.bar(long, x="MONTH", y="Pcs", color="Category", color_discrete_sequence=pal(),
                          category_orders={"MONTH": months, "Category": cats})
             fig.update_layout(barmode="stack")
-            fig.update_xaxes(tickangle=-35, title="")
-            st.plotly_chart(style_fig(fig, 460), **STRETCH)
+            fig.update_xaxes(title="")
+            chart(fig, title, 470, ns=f"{key}_cli")
         else:
-            st.info("Selected filters ke liye category data nahi hai.")
+            empty_card(title, "Selected filters ke liye category data nahi hai.", ns=f"{key}_cli")
 
 
 def production_dashboard(d_all, key):
-    st.subheader("🏭 Production Executive Process Dashboard")
+    dash_title("🏭 Production Executive Process Dashboard")
     badge("🔎 Interactive Dashboard Filters")
     f = filter_row([
         ("month", "Month", ["All"] + month_list(d_all)),
@@ -795,7 +1045,7 @@ def production_dashboard(d_all, key):
     x = filter_data(d_all, f)
 
     badge("📊 Process Key Performance Indicators")
-    render_kpis(production_kpis(x), per_row=4)
+    render_kpis(production_kpis(x))
 
     st.markdown("---")
     badge("📊 Category-wise Production Performance Breakdown")
@@ -804,34 +1054,35 @@ def production_dashboard(d_all, key):
     cat = cat.reindex(CATEGORIES_LIST + other_cats, fill_value=0).reset_index()
     cat.columns = ["CATEGORY", "IN-PRODUCTION (AS)", "RECEIVED (AT)", "PENDING (AU)"]
 
-    c1, c2 = st.columns([1, 1.35])
+    c1, c2 = st.columns([1, 1.35], gap="medium")
     with c1:
         show_table(add_total(cat, "CATEGORY"))
     with c2:
         chart_df = cat.melt(id_vars="CATEGORY", value_vars=["IN-PRODUCTION (AS)", "RECEIVED (AT)", "PENDING (AU)"],
                             var_name="Metric", value_name="PCS")
         fig = px.bar(chart_df, x="CATEGORY", y="PCS", color="Metric", barmode="group",
-                     title="CATEGORY-WISE VOLUME COMPARISON",
-                     color_discrete_sequence=["#2563eb", "#ef4444", "#f59e0b"])
-        fig.update_xaxes(tickangle=-35, title="")
-        st.plotly_chart(style_fig(fig, 360), **STRETCH)
+                     color_discrete_sequence=[COLORS["blue"], COLORS["red"], COLORS["amber"]])
+        fig.update_xaxes(title="")
+        chart(fig, "Category-wise Volume Comparison", 370, ns=f"{key}_prod")
 
+    st.markdown("---")
     badge("🧵 Fabricator Pending PCS Share")
     fab = x.groupby("fabricator", as_index=False)["pending"].sum()
     fab = fab[fab["pending"] > 0].sort_values("pending", ascending=False)
     if not fab.empty:
-        f1, f2 = st.columns([1.35, 1])
+        f1, f2 = st.columns([1.35, 1], gap="medium")
         with f1:
-            fig = px.pie(fab, names="fabricator", values="pending", hole=0.48, title="FABRICATOR PENDING PCS SHARE")
+            fig = px.pie(fab, names="fabricator", values="pending", hole=0.5, color_discrete_sequence=pal())
             fig.update_traces(textposition="inside", textinfo="percent")
-            st.plotly_chart(style_fig(fig, 360), **STRETCH)
+            chart(fig, "Fabricator Pending PCS Share", 400, ns=f"{key}_prod", legend="bottom")
         with f2:
             tbl = fab.rename(columns={"fabricator": "FABRICATOR", "pending": "PENDING PCS"})
             tbl["SHARE %"] = tbl["PENDING PCS"] / tbl["PENDING PCS"].sum() * 100
-            show_table(add_total(tbl, "FABRICATOR"), pct_cols=("SHARE %",))
+            show_table(add_total(tbl, "FABRICATOR"), pct_cols=("SHARE %",), height=440)
     else:
-        st.info("Selected filters ke liye fabricator pending data nahi hai.")
+        notice("Selected filters ke liye fabricator pending data nahi hai.")
 
+    st.markdown("---")
     badge("📅 Monthly Fulfillment Trend")
     months = month_list(d_all)
     grp = x.groupby("month")
@@ -843,184 +1094,49 @@ def production_dashboard(d_all, key):
     }).reindex(months, fill_value=0).reset_index()
     mdf.columns = ["MONTH", "ORDERS", "IN-PRODUCTION (AS)", "RECEIVED (AT)", "PENDING (AU)"]
 
-    m1, m2 = st.columns([1, 1.35])
+    m1, m2 = st.columns([1, 1.35], gap="medium")
     with m1:
-        show_table(add_total(mdf, "MONTH"), height=500)
+        show_table(add_total(mdf, "MONTH"), height=520)
     with m2:
         line_df = mdf.melt(id_vars="MONTH", value_vars=["IN-PRODUCTION (AS)", "RECEIVED (AT)", "PENDING (AU)"],
                            var_name="Metric", value_name="PCS")
         fig = px.line(line_df, x="MONTH", y="PCS", color="Metric", markers=True,
-                      title="MONTHLY FULFILLMENT TREND ANALYSIS",
                       category_orders={"MONTH": months},
-                      color_discrete_sequence=["#ef4444", "#f59e0b", "#2563eb"])
-        fig.update_xaxes(tickangle=-35, title="")
-        st.plotly_chart(style_fig(fig, 460), **STRETCH)
+                      color_discrete_sequence=[COLORS["red"], COLORS["amber"], COLORS["blue"]])
+        fig.update_xaxes(title="")
+        chart(fig, "Monthly Fulfillment Trend Analysis", 470, ns=f"{key}_prod")
 
 
-# -----------------------------------------------------------------------------
-# 6. MASTER SHEET – DATA CHECK (app vs sheet)
-# -----------------------------------------------------------------------------
-def find_sheet_kpis(values, labels):
-    """Finds each KPI label on a dashboard tab and reads the value in the row below it."""
-    wanted = {norm_key(lbl) for lbl in labels}
-    out = {}
-    for r, row in enumerate(values):
-        for c, cell in enumerate(row):
-            k = norm_key(cell)
-            if k in wanted and k not in out and r + 1 < len(values):
-                nxt = values[r + 1]
-                for cc in range(c, min(c + 3, len(nxt))):
-                    if str(nxt[cc]).strip():
-                        out[k] = float(num(pd.Series([nxt[cc]])).iloc[0])
-                        break
-    return out
-
-
-def compare_block(sheet_id, tabs, tab_name, kpis, max_rows=None):
-    tab = find_tab(tabs, tab_name)
-    if not tab:
-        st.caption(f"Tab '{tab_name}' sheet me nahi mila.")
-        return
-    try:
-        vals = load_tab_formatted(sheet_id, tab)
-    except Exception as e:
-        st.caption(f"'{tab_name}' read nahi ho paya: {e}")
-        return
-    found = find_sheet_kpis(vals[:max_rows] if max_rows else vals, [k[1] for k in kpis])
-    rows = []
-    for label, sheet_label, value, kind in kpis:
-        sv = found.get(norm_key(sheet_label))
-        tol = 0.06 if kind in ("pct", "days") else 0.5
-        if sv is None:
-            status, diff = "⚠️ label not found", np.nan
-        else:
-            diff = float(value) - sv
-            status = "✅ match" if abs(diff) <= tol else "❌ mismatch"
-        rows.append({"KPI": label, "Sheet dashboard": sv if sv is not None else np.nan,
-                     "Streamlit app": float(value), "Diff": diff, "Status": status})
-    df = pd.DataFrame(rows)
-    st.dataframe(df.style.format({"Sheet dashboard": "{:,.1f}", "Streamlit app": "{:,.1f}", "Diff": "{:,.1f}"}),
-                 **STRETCH, hide_index=True)
-
-
-def data_check(sheet_id, cfg, tabs, src_tab, first_row, totals_row, d_all):
-    st.subheader("✅ Data Check – Streamlit vs Google Sheet")
-    st.caption(f"Source tab: **{src_tab}** · data from sheet row {first_row} · {len(d_all):,} rows loaded "
-               f"· {int((d_all['qty'] > 0).sum()):,} designs with qty > 0")
-
-    badge("1 · Sheet dashboard tabs vs app (all filters = ALL)")
-    st.caption("Sheet dashboard ke dropdown filters ALL par hone chahiye, warna numbers alag dikhenge.")
-    dash = cfg.get("dashboard_tabs", {})
-    st.markdown("**Client Dashboard**")
-    compare_block(sheet_id, tabs, dash.get("client", "CLIENT DASHBOARD"), client_kpis(d_all))
-    st.markdown("**Production Process Dashboard**")
-    compare_block(sheet_id, tabs, dash.get("production", "PRODUCTION PROCESS DASHBOARD"), production_kpis(d_all))
-    st.markdown("**Designer Dashboard**")
-    compare_block(sheet_id, tabs, dash.get("designer", "DESIGNER DASHBOARD"), designer_kpis(d_all))
-
-    badge("2 · Source tab row-2 totals vs app")
-    items = [("Total Qty (J)", "J", d_all["qty"].sum()),
-             ("In Production (AS)", "AS", d_all["production"].sum()),
-             ("Received (AT)", "AT", d_all["received"].sum()),
-             ("Pending (AU)", "AU", d_all["pending"].sum())]
-    rows = []
-    for label, letter, mine in items:
-        idx = col_to_idx(letter)
-        cell = totals_row[idx] if idx < len(totals_row) else ""
-        sheet_val = float(num(pd.Series([cell])).iloc[0])
-        rows.append({"Column": label, "Sheet row-2 total": sheet_val, "Dashboard": float(mine),
-                     "Diff": float(mine) - sheet_val})
-    st.dataframe(pd.DataFrame(rows).style.format({"Sheet row-2 total": "{:,.0f}", "Dashboard": "{:,.0f}",
-                                                  "Diff": "{:,.0f}"}),
-                 **STRETCH, hide_index=True)
-
-    badge("3 · Data quality notes")
-    notes = []
-    active = d_all[d_all["qty"] != 0]
-    no_date = active[active["month"] == "(NO DATE)"]
-    if len(no_date):
-        notes.append(f"{len(no_date)} rows with qty but no valid order date in column B "
-                     f"({fmt(no_date['qty'].sum())} pcs) – rows: {', '.join(map(str, no_date.index[:25]))}")
-    out_fy = active[(active["month"] != "(NO DATE)") & ~active["month"].isin(FY_MONTH_LABELS)]
-    if len(out_fy):
-        notes.append(f"{len(out_fy)} rows dated outside FY {FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d} "
-                     f"({fmt(out_fy['qty'].sum())} pcs) – months: {', '.join(sorted(out_fy['month'].unique(), key=month_sort_key))}")
-    unk = active[~active["category"].isin(CATEGORIES_LIST)]
-    if len(unk):
-        notes.append(f"{len(unk)} rows with a category outside the 7 standard ones "
-                     f"({fmt(unk['qty'].sum())} pcs): {', '.join(sorted(unk['category'].unique()))}")
-    oth = active[active["order_type"] == "OTHER"]
-    if len(oth):
-        notes.append(f"{len(oth)} rows where column D is neither NEW nor REPEAT ({fmt(oth['qty'].sum())} pcs)")
-    nod = active[active["designer"] == "(NOT ASSIGNED)"]
-    if len(nod):
-        notes.append(f"{len(nod)} rows with blank designer ({fmt(nod['qty'].sum())} pcs)")
-    if notes:
-        for n in notes:
-            st.warning(n)
-    else:
-        st.success("Koi data quality issue nahi mila.")
-
-    with st.expander("🔍 Parsed rows (first 300)"):
-        st.dataframe(d_all.head(300).reset_index(), **STRETCH, hide_index=True)
-
-
-def render_tracker(sheet_name, cfg):
+def load_master(cfg):
+    """Loads + parses the Master Sheet source tab. Returns d_all, or None after showing a message."""
     sheet_id = cfg["id"]
     tabs = list_tabs(sheet_id)
     if not tabs:
-        st.error("Sheet me koi tab nahi mila.")
-        st.stop()
+        notice("Sheet me koi tab nahi mila.", "error")
+        return None
 
-    default = None
+    src_tab = None
     for cand in cfg.get("source_tabs", []):
-        default = find_tab(tabs, cand)
-        if default:
+        src_tab = find_tab(tabs, cand)
+        if src_tab:
             break
-    if default is None:
-        default = next((t for t in tabs if "DASHBOARD" not in t.upper()), tabs[0])
-
-    with st.sidebar:
-        st.markdown("### 📄 Master Data Source")
-        src_tab = st.selectbox("Data tab", tabs, index=tabs.index(default), key=f"{sheet_id}_src_tab",
-                               help="Jis tab se dashboards bante hain (order data). Data Check tab se verify karein.")
-        if st.button("🔄 Refresh Data", key=f"{sheet_id}_ref"):
-            st.cache_data.clear()
-            st.rerun()
+    if src_tab is None:
+        src_tab = next((t for t in tabs if "DASHBOARD" not in t.upper()), tabs[0])
 
     values = load_tab_raw(sheet_id, src_tab)
     if not values:
-        st.error(f"Tab '{src_tab}' empty hai.")
-        st.stop()
+        notice("Order data tab empty hai.", "error")
+        return None
 
-    raw, first_row = build_raw(values)
+    raw, _first_row = build_raw(values)
     if raw.empty:
-        st.error(f"Tab '{src_tab}' me data rows nahi mile (column A me serial number aur column B me date expected hai).")
-        st.stop()
-    totals_row = values[1] if len(values) > 1 else []
-    d_all = prepare(raw)
-
-    st.markdown(
-        f"""<div class="dashboard-hero"><h2>📊 {html.escape(sheet_name)} · Executive Dashboard 2026-27</h2>
-        <p>Source Tab: <b>{html.escape(src_tab)}</b> · {len(d_all):,} rows (data from sheet row {first_row}) · data re-syncs from the sheet every {LIVE_TTL} sec</p></div>""",
-        unsafe_allow_html=True,
-    )
-
-    key = sheet_id[:8]
-    t1, t2, t3, t4 = st.tabs(["👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard",
-                              "🏢 Client Dashboard", "✅ Data Check"])
-    with t1:
-        designer_dashboard(d_all, key)
-    with t2:
-        production_dashboard(d_all, key)
-    with t3:
-        client_dashboard(d_all, key)
-    with t4:
-        data_check(sheet_id, cfg, tabs, src_tab, first_row, totals_row, d_all)
+        notice("Order data rows nahi mile (column A me serial number aur column B me date expected hai).", "error")
+        return None
+    return prepare(raw)
 
 
 # -----------------------------------------------------------------------------
-# 7. SHARED HELPERS FOR "SAMPLE" & "FABRICATOR" DASHBOARDS
+# 6. SHARED HELPERS FOR "SAMPLE" & "FABRICATOR" DASHBOARDS
 # -----------------------------------------------------------------------------
 try:
     from zoneinfo import ZoneInfo
@@ -1093,21 +1209,13 @@ def pick_default_tab(meta, names, gid=None, name_regex=None):
     return titles[0]
 
 
-def sidebar_source_picker(cfg, key, name_regex=None):
+def resolve_source_tab(cfg, name_regex=None):
+    """Picks the data tab automatically (names in cfg['source_tabs'] -> regex -> gid -> first non-dashboard tab)."""
     meta = list_tabs_meta(cfg["id"])
     if not meta:
         st.error("Sheet me koi tab nahi mila.")
         return None
-    titles = [t for t, _ in meta]
-    default = pick_default_tab(meta, cfg.get("source_tabs", []), cfg.get("gid"), name_regex)
-    with st.sidebar:
-        st.markdown("### 📄 Data Source")
-        tab = st.selectbox("Data tab", titles, index=titles.index(default), key=key,
-                           help="Jis tab se dashboard banta hai. Galat tab dikhe to yahan se badlein.")
-        if st.button("🔄 Refresh data now", key=f"{key}_refresh"):
-            st.cache_data.clear()
-            st.rerun()
-    return tab
+    return pick_default_tab(meta, cfg.get("source_tabs", []), cfg.get("gid"), name_regex)
 
 
 def run_live(render_fn, *args):
@@ -1123,12 +1231,9 @@ def run_live(render_fn, *args):
 
 
 def hero(icon, title, subtitle_html, synced):
-    st.markdown(
-        f"""<div class="dashboard-hero"><h2>{icon} {html.escape(title)}</h2>
-        <p>{subtitle_html} · <span style="background:var(--chip-bg);padding:2px 9px;border-radius:20px;font-size:.78rem;font-weight:650;">
-        🕒 Synced {html.escape(synced)}</span></p></div>""",
-        unsafe_allow_html=True,
-    )
+    """Dashboard title bar with the live-sync time on the right."""
+    fy = f"FY {FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}"
+    dash_title(f"{icon} {title} ({fy})", chip=f"🕒 Updated {synced}")
 
 
 def multi(container, label, options, key, placeholder="All"):
@@ -1172,13 +1277,14 @@ def safe_div_pct(a, b):
 
 
 # -----------------------------------------------------------------------------
-# 8. SAMPLE SUMMARY DASHBOARD  (mirrors the "SAMPLE DASHBOARD" Apps Script)
+# 7. SAMPLE SUMMARY DASHBOARD  (mirrors the "SAMPLE DASHBOARD" Apps Script)
 #    Source tab columns:  B = Vendor | F = Qty | H = Process Date | L = Status | N = Designer
 #    Row 1 = header, data from row 2.
 # -----------------------------------------------------------------------------
 SAMPLE_STATUSES = ["Approved", "Rejected", "On Hold", "In Process", "Other"]
-SAMPLE_COLORS = {"Approved": "#059669", "Rejected": "#dc2626", "On Hold": "#f59e0b",
-                 "In Process": "#2563eb", "Other": "#94a3b8"}
+def sample_colors():
+    return {"Approved": COLORS["green"], "Rejected": COLORS["red"], "On Hold": COLORS["amber"],
+            "In Process": COLORS["blue"], "Other": COLORS["slate"]}
 SAMPLE_COLS = {"vendor": "B", "qty": "F", "date": "H", "status": "L", "designer": "N"}
 FY_MONTH_NOS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]
 MONTHNO_TO_LABEL = dict(zip(FY_MONTH_NOS, FY_MONTH_LABELS))
@@ -1293,36 +1399,38 @@ def sample_entity_table(x, group_col, names, label):
     return p.reset_index()
 
 
-def entity_chart(tbl, label, title):
+def entity_chart(tbl, label, title, ns="smp"):
     t = tbl[tbl["Total"] > 0].head(20)
     if t.empty:
-        st.info("Selected filters ke liye data nahi hai.")
+        empty_card(title, "Selected filters ke liye data nahi hai.", ns=ns)
         return
     long = t.melt(id_vars=label, value_vars=SAMPLE_STATUSES, var_name="Status", value_name="Pcs")
-    fig = px.bar(long, y=label, x="Pcs", color="Status", orientation="h", title=title,
-                 color_discrete_map=SAMPLE_COLORS,
+    fig = px.bar(long, y=label, x="Pcs", color="Status", orientation="h",
+                 color_discrete_map=sample_colors(),
                  category_orders={label: list(t[label])[::-1], "Status": SAMPLE_STATUSES})
     fig.update_yaxes(title="")
-    st.plotly_chart(style_fig(fig, max(320, 28 * len(t) + 120)), **STRETCH)
+    fig.update_xaxes(title="Pcs")
+    chart(fig, title, max(340, 28 * len(t) + 140), ns=ns)
 
 
 def render_sample_summary_dashboard(sheet_name, cfg):
-    tab = sidebar_source_picker(cfg, f"{cfg['id']}_smp_tab")
+    tab = resolve_source_tab(cfg)
     if tab:
         run_live(_sample_body, sheet_name, cfg, tab)
 
 
 def _sample_body(sheet_name, cfg, tab):
     sheet_id = cfg["id"]
-    pack = fetch_grid(sheet_id, tab)
+    try:
+        pack = fetch_grid(sheet_id, tab)
+    except SheetAccessError as e:
+        show_access_error(e)
+        return
     d, header = build_samples(pack["values"])
-    hero("🔬", f"{sheet_name} · Sample Performance & Designer Dashboard",
-         f"Source tab: <b>{html.escape(tab)}</b> · {len(d):,} rows · FY {FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}",
-         pack["synced"])
+    hero("⚡", "Executive Sample Performance & Designer Dashboard", None, pack["synced"])
     if d.empty:
-        st.warning("Is tab me data nahi mila. Expected: row 1 = header, row 2 se data "
-                   "(Vendor = B, Qty = F, Process Date = H, Status = L, Designer = N). "
-                   "Sidebar se sahi 'Data tab' select karein.")
+        notice("Sample data nahi mila. Expected: row 1 = header, row 2 se data "
+               "(Vendor = B, Qty = F, Process Date = H, Status = L, Designer = N).", "warning")
         return
 
     # header sanity check
@@ -1333,24 +1441,24 @@ def _sample_body(sheet_name, cfg, tab):
         if i < len(header) and re.search(pat, str(header[i]), re.I):
             hits += 1
     if hits < 2:
-        st.warning("⚠️ Is tab ka header expected columns (B Vendor, F Qty, H Date, L Status, N Designer) se match nahi karta - "
-                   "kya aapne sahi 'Data tab' select kiya hai? Details ke liye Data Check tab dekhein.")
+        notice("Sample sheet ka header expected columns (B Vendor, F Qty, H Date, L Status, N Designer) se "
+               "match nahi karta - numbers galat ho sakte hain.", "warning")
 
     designer_names = [n for n in d["designer"].unique() if not n.startswith("(")]
     vendor_names = [n for n in d["vendor"].unique() if not n.startswith("(")]
 
     # ---------------- filters ----------------
     keys = {"month": "smp_month", "designer": "smp_designer", "status": "smp_status", "vendor": "smp_vendor"}
-    with st.expander("🔎 Filters  (kuch select na karein = ALL)", expanded=True):
-        c = st.columns([1.1, 1.2, 1.1, 1.2, 0.55])
-        f = {
-            "month": multi(c[0], "Month", FY_MONTH_LABELS, keys["month"], "All months"),
-            "designer": multi(c[1], "Designer", designer_names, keys["designer"], "All designers"),
-            "status": multi(c[2], "Status", SAMPLE_STATUSES, keys["status"], "All status"),
-            "vendor": multi(c[3], "Vendor", vendor_names, keys["vendor"], "All vendors"),
-        }
-        c[4].markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
-        c[4].button("↺ Reset", key="smp_reset", on_click=_reset_filters, args=({k: [] for k in keys.values()},))
+    badge("🔎 Interactive Filters  (kuch select na karein = ALL)")
+    c = st.columns([1.1, 1.2, 1.1, 1.2, 0.75], vertical_alignment="bottom")
+    f = {
+        "month": multi(c[0], "Month", FY_MONTH_LABELS, keys["month"], "All months"),
+        "designer": multi(c[1], "Designer", designer_names, keys["designer"], "All designers"),
+        "status": multi(c[2], "Status", SAMPLE_STATUSES, keys["status"], "All status"),
+        "vendor": multi(c[3], "Vendor", vendor_names, keys["vendor"], "All vendors"),
+    }
+    c[4].button("↺ Reset", key="smp_reset", on_click=_reset_filters, args=({k: [] for k in keys.values()},),
+                **STRETCH)
 
     x = sample_filter(d, f)
     x_nd = sample_filter(d, f, skip=("designer",))     # designer comparison ignores the designer filter
@@ -1370,141 +1478,87 @@ def _sample_body(sheet_name, cfg, tab):
     else:
         top_txt = "N/A"
 
-    metrics([("Total Samples", f"{fmt(tot)} Pcs"), ("Approved", f"{fmt(app)} Pcs"), ("Rejected", f"{fmt(rej)} Pcs"),
-             ("On Hold", f"{fmt(hld)} Pcs"), ("In Process", f"{fmt(prc)} Pcs"), ("Approval Ratio", f"{ratio:.1f}%")])
-    metrics([("🏆 Top Performer (Approved)", top_txt), ("Rejection Rate", f"{safe_div_pct(rej, tot):.1f}%"),
+    badge("📊 Sample Process Key Performance Indicators")
+    metrics([("Total Samples Qty", f"{fmt(tot)} Samples"), ("Approved Samples", f"{fmt(app)} Pcs"),
+             ("Rejected Samples", f"{fmt(rej)} Pcs"), ("On Hold Samples", f"{fmt(hld)} Pcs"),
+             ("On Process", f"{fmt(prc)} Pcs"), ("Approval Ratio %", f"{ratio:.1f}%"),
+             ("🏆 Top Performer (Approved)", top_txt), ("Rejection Rate", f"{safe_div_pct(rej, tot):.1f}%"),
              ("Open Pipeline (Hold + Process)", f"{fmt(hld + prc)} Pcs"), ("Other / Blank Status", f"{fmt(oth)} Pcs")])
     st.markdown("---")
 
-    t_over, t_month, t_des, t_ven, t_chk = st.tabs(
-        ["📊 Overview", "📅 Monthly Breakdown", "👩‍🎨 Designer Scorecard", "🏭 Vendor Scorecard", "✅ Data Check"])
-
     mt = sample_monthly(x)
+    colors = sample_colors()
 
-    with t_over:
-        if tot == 0:
-            st.info("Selected filters ke liye koi sample data nahi hai.")
-        else:
-            c1, c2 = st.columns([1.55, 1])
-            with c1:
-                long = mt.melt(id_vars="Month", value_vars=SAMPLE_STATUSES, var_name="Status", value_name="Pcs")
-                fig = px.bar(long, x="Month", y="Pcs", color="Status", barmode="stack",
-                             title="MONTHLY SAMPLE STATUS DISTRIBUTION (PCS)", color_discrete_map=SAMPLE_COLORS,
-                             category_orders={"Month": list(mt["Month"]), "Status": SAMPLE_STATUSES})
-                fig.update_xaxes(tickangle=-35, title="")
-                st.plotly_chart(style_fig(fig, 380), **STRETCH)
-            with c2:
-                share = pd.DataFrame({"Status": SAMPLE_STATUSES, "Pcs": [app, rej, hld, prc, oth]})
-                share = share[share["Pcs"] > 0]
-                fig = px.pie(share, names="Status", values="Pcs", hole=0.5, title="OVERALL SAMPLE STATUS SHARE",
-                             color="Status", color_discrete_map=SAMPLE_COLORS)
-                fig.update_traces(textinfo="percent+label", textposition="inside")
-                st.plotly_chart(style_fig(fig, 380), **STRETCH)
-            trend = mt.melt(id_vars="Month", value_vars=["Total", "Approved", "Rejected"], var_name="Series", value_name="Pcs")
-            fig = px.line(trend, x="Month", y="Pcs", color="Series", markers=True,
-                          title="MONTHLY PROCESS VOLUME TREND",
-                          color_discrete_map={"Total": "#7c3aed", "Approved": "#059669", "Rejected": "#dc2626"},
-                          category_orders={"Month": list(mt["Month"])})
-            fig.update_xaxes(tickangle=-35, title="")
-            st.plotly_chart(style_fig(fig, 340), **STRETCH)
-
-    with t_month:
-        badge("📅 Monthly Sample Breakdown (Process Date = column H)")
+    # ---------------- Monthly breakdown + status distribution ----------------
+    badge("📅 Monthly Sample Breakdown (Process Date)")
+    c1, c2 = st.columns([1.15, 1], gap="medium")
+    with c1:
         shown = with_total(mt, "Month", pct=("Approval %", "Approved", "Total"))
         table_with_download(shown, "sample_monthly", pct_cols=("Approval %",), height=560)
         nd = mt.loc[mt["Month"] == "(NO DATE)", "Total"].sum()
         if nd > 0:
-            st.warning(f"⚠ {fmt(nd)} samples ki Process Date (Col H) khaali ya unreadable hai - table me '(NO DATE)' row dekhein.")
+            notice(f"{fmt(nd)} samples ki Process Date khaali ya unreadable hai - table me '(NO DATE)' row dekhein.", "warning")
         else:
-            st.success("✅ Sab samples ki Process Date sahi padhi gayi.")
+            notice("Sab samples ki Process Date sahi padhi gayi.", "success")
+    with c2:
+        title = "Monthly Sample Status Distribution (Pcs)"
+        if tot == 0:
+            empty_card(title, "Selected filters ke liye koi sample data nahi hai.", ns="smp")
+        else:
+            long = mt.melt(id_vars="Month", value_vars=SAMPLE_STATUSES, var_name="Status", value_name="Pcs")
+            fig = px.bar(long, x="Month", y="Pcs", color="Status", barmode="stack", color_discrete_map=colors,
+                         category_orders={"Month": list(mt["Month"]), "Status": SAMPLE_STATUSES})
+            fig.update_xaxes(title="")
+            chart(fig, title, 470, ns="smp")
 
-    with t_des:
-        badge("👩‍🎨 Designer Performance Scorecard")
-        st.caption("Designer filter yahan apply nahi hota taaki sab designers ki tulna ho sake; Month / Status / Vendor filter apply hote hain.")
-        c1, c2 = st.columns([1.25, 1])
+    # ---------------- Trend + overall share ----------------
+    if tot > 0:
+        c1, c2 = st.columns([1.35, 1], gap="medium")
         with c1:
-            table_with_download(with_total(des_tbl, "Designer", pct=("Approval %", "Approved", "Total")),
-                                "sample_designer", pct_cols=("Approval %",), height=520)
+            trend = mt.melt(id_vars="Month", value_vars=["Total", "Approved", "Rejected"], var_name="Series",
+                            value_name="Pcs")
+            fig = px.line(trend, x="Month", y="Pcs", color="Series", markers=True,
+                          color_discrete_map={"Total": COLORS["purple"], "Approved": colors["Approved"],
+                                              "Rejected": colors["Rejected"]},
+                          category_orders={"Month": list(mt["Month"])})
+            fig.update_xaxes(title="")
+            chart(fig, "Monthly Process Volume Trend", 380, ns="smp")
         with c2:
-            entity_chart(des_tbl, "Designer", "DESIGNER-WISE STATUS (PCS)")
+            share = pd.DataFrame({"Status": SAMPLE_STATUSES, "Pcs": [app, rej, hld, prc, oth]})
+            share = share[share["Pcs"] > 0]
+            fig = px.pie(share, names="Status", values="Pcs", hole=0.5, color="Status", color_discrete_map=colors,
+                         category_orders={"Status": SAMPLE_STATUSES})
+            fig.update_traces(textinfo="percent", textposition="inside")
+            chart(fig, "Overall Sample Approval Share", 380, ns="smp", legend="bottom")
 
-    with t_ven:
-        badge("🏭 Vendor Performance Scorecard")
-        st.caption("Vendor filter yahan apply nahi hota taaki sab vendors ki tulna ho sake; Month / Status / Designer filter apply hote hain.")
-        ven_tbl = sample_entity_table(x_nv, "vendor", vendor_names, "Vendor")
-        c1, c2 = st.columns([1.25, 1])
-        with c1:
-            table_with_download(with_total(ven_tbl, "Vendor", pct=("Approval %", "Approved", "Total")),
-                                "sample_vendor", pct_cols=("Approval %",), height=520)
-        with c2:
-            entity_chart(ven_tbl, "Vendor", "VENDOR-WISE STATUS (PCS)")
+    # ---------------- Designer scorecard ----------------
+    st.markdown("---")
+    badge("👩‍🎨 Designer Performance Scorecard")
+    st.caption("Designer filter yahan apply nahi hota taaki sab designers ki tulna ho sake; "
+               "Month / Status / Vendor filter apply hote hain.")
+    c1, c2 = st.columns([1.25, 1], gap="medium")
+    with c1:
+        table_with_download(with_total(des_tbl, "Designer", pct=("Approval %", "Approved", "Total")),
+                            "sample_designer", pct_cols=("Approval %",), height=560)
+    with c2:
+        entity_chart(des_tbl, "Designer", "Designer-wise Status (Pcs)")
 
-    with t_chk:
-        _sample_data_check(sheet_id, cfg, tab, d, header)
-
-
-def _sample_data_check(sheet_id, cfg, tab, d, header):
-    st.subheader("✅ Data Check")
-    st.caption(f"Tab **{tab}** · {len(d):,} data rows (row 2 se) · total qty **{fmt(d['qty'].sum())}** Pcs")
-
-    badge("1 · Kaun sa column kis kaam me aa raha hai")
-    rows = []
-    for key, label in (("vendor", "Vendor"), ("qty", "Sample Qty"), ("date", "Process Date → Month"),
-                       ("status", "Status → Approved/Rejected/Hold/In Process"), ("designer", "Designer")):
-        letter = SAMPLE_COLS[key]
-        i = col_to_idx(letter)
-        rows.append({"Column": letter, "Used for": label, "Header in sheet": str(header[i]) if i < len(header) else "(missing)"})
-    st.dataframe(pd.DataFrame(rows), **STRETCH, hide_index=True)
-
-    badge("2 · Sheet ke apne SAMPLE DASHBOARD se match (sab filters = ALL)")
-    by = d.groupby("status")["qty"].sum()
-    tot = float(d["qty"].sum())
-    kp = [("Total Samples Qty", "TOTAL SAMPLES QTY", tot, "pcs"),
-          ("Approved", "APPROVED SAMPLES", float(by.get("Approved", 0)), "pcs"),
-          ("Rejected", "REJECTED SAMPLES", float(by.get("Rejected", 0)), "pcs"),
-          ("On Hold", "ON HOLD SAMPLES", float(by.get("On Hold", 0)), "pcs"),
-          ("On Process", "ON PROCESS", float(by.get("In Process", 0)), "pcs"),
-          ("Approval Ratio %", "APPROVAL RATIO %", safe_div_pct(float(by.get("Approved", 0)), tot), "pct")]
-    compare_block(sheet_id, [t for t, _ in list_tabs_meta(sheet_id)], cfg.get("dashboard_tab", "SAMPLE DASHBOARD"), kp, max_rows=12)
-
-    badge("3 · Data quality notes")
-    notes = []
-    active = d[d["qty"] != 0]
-    nd = active[active["month_no"] == 0]
-    if len(nd):
-        notes.append(f"{len(nd)} rows me qty hai par Process Date (col H) khaali/unreadable hai ({fmt(nd['qty'].sum())} pcs) - "
-                     f"sheet rows: {', '.join(map(str, nd.index[:25]))}")
-    bad_q = d[(d["qty_raw"] != "") & (d["qty"] == 0) & ~d["qty_raw"].str.match(r"^[\s\-–0.,()]*$")]
-    if len(bad_q):
-        notes.append(f"{len(bad_q)} rows me Qty (col F) number nahi hai, isliye 0 gina gaya - rows: {', '.join(map(str, bad_q.index[:25]))}")
-    oth = active[active["status"] == "Other"]
-    if len(oth):
-        notes.append(f"{len(oth)} rows ka Status (col L) blank ya unknown hai ({fmt(oth['qty'].sum())} pcs) - 'Other' me gine gaye")
-    nbd = active[active["designer"].isin(["(BLANK)", "(OTHER)"])]
-    if len(nbd):
-        notes.append(f"{len(nbd)} rows me Designer (col N) blank hai ({fmt(nbd['qty'].sum())} pcs)")
-    nbv = active[active["vendor"].isin(["(BLANK)", "(OTHER)"])]
-    if len(nbv):
-        notes.append(f"{len(nbv)} rows me Vendor (col B) blank hai ({fmt(nbv['qty'].sum())} pcs)")
-    if notes:
-        for n in notes:
-            st.warning(n)
-    else:
-        st.success("Koi data quality issue nahi mila.")
-
-    with st.expander("ℹ️ Numbers kaise calculate hote hain"):
-        st.markdown(
-            "- **Qty** = column F (text jaise `1,200` ya `(50)` bhi number me badal jata hai; number na bane to 0)\n"
-            "- **Month** = Process Date (col H) ka mahina - serial date, `dd/mm/yyyy`, `mm/yyyy`, `yyyy/mm/dd` ya `Apr-26` jaise text, sab padhe jate hain\n"
-            "- **Status** (col L): text me `REJECT` → Rejected, `APPROV` → Approved, `HOLD` → On Hold, `PROCESS` → In Process; blank/baaki → Other\n"
-            "- **Approval %** = Approved ÷ Total (Total me Other bhi shamil)\n"
-            "- Designer / Vendor naam capital-small ya extra space se alag nahi gine jate")
-    with st.expander("🔍 Parsed rows (first 300)"):
-        st.dataframe(d.head(300).reset_index(), **STRETCH, hide_index=True)
+    # ---------------- Vendor scorecard ----------------
+    st.markdown("---")
+    badge("🏭 Vendor Performance Scorecard")
+    st.caption("Vendor filter yahan apply nahi hota taaki sab vendors ki tulna ho sake; "
+               "Month / Status / Designer filter apply hote hain.")
+    ven_tbl = sample_entity_table(x_nv, "vendor", vendor_names, "Vendor")
+    c1, c2 = st.columns([1.25, 1], gap="medium")
+    with c1:
+        table_with_download(with_total(ven_tbl, "Vendor", pct=("Approval %", "Approved", "Total")),
+                            "sample_vendor", pct_cols=("Approval %",), height=560)
+    with c2:
+        entity_chart(ven_tbl, "Vendor", "Vendor-wise Status (Pcs)")
 
 
 # -----------------------------------------------------------------------------
-# 9. FABRICATOR DASHBOARD  (mirrors the "FABRICATOR DASHBOARD" Apps Script)
+# 8. FABRICATOR DASHBOARD  (mirrors the "FABRICATOR DASHBOARD" Apps Script)
 #    Source tab: MONTHWISE SUMMARY -> blocks titled "Position Of Stock <NAME>"
 #    Each block: header row "Month", then 12 rows April..March, 5 value columns to the right of Month:
 #    Fabric Issue (mtr) | Pcs Under Production | RCVD | Remaining | Monthly Incoming
@@ -1567,22 +1621,24 @@ def build_fab_data(disp, raw):
 
 
 def render_fabricator_dashboard(sheet_name, cfg):
-    tab = sidebar_source_picker(cfg, f"{cfg['id']}_fab_tab", name_regex=r"monthwise|monthly\s*summary")
+    tab = resolve_source_tab(cfg, name_regex=r"monthwise|monthly\s*summary")
     if tab:
         run_live(_fab_body, sheet_name, cfg, tab)
 
 
 def _fab_body(sheet_name, cfg, tab):
     sheet_id = cfg["id"]
-    disp = fetch_grid(sheet_id, tab, True)["values"]
-    pack = fetch_grid(sheet_id, tab)
+    try:
+        disp = fetch_grid(sheet_id, tab, True)["values"]
+        pack = fetch_grid(sheet_id, tab)
+    except SheetAccessError as e:
+        show_access_error(e)
+        return
     blocks, df = build_fab_data(disp, pack["values"])
-    hero("🏭", f"{sheet_name} · Fabricator Stock Position Dashboard",
-         f"Source tab: <b>{html.escape(tab)}</b> · {sum(not b['is_all'] for b in blocks)} fabricator block(s) · FY {FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}",
-         pack["synced"])
+    hero("🏭", "Fabricator Stock Position Dashboard", None, pack["synced"])
     if df.empty:
-        st.error("Is tab me 'Position Of Stock ...' wale tables nahi mile (title ke neeche 'Month' header aur 'April' se shuru "
-                 "12 rows chahiye). Sidebar se sahi 'Data tab' select karein.")
+        notice("Fabricator 'Position Of Stock ...' tables nahi mile (title ke neeche 'Month' header aur 'April' se "
+               "shuru 12 rows chahiye).", "error")
         return
 
     all_over = df[df["is_all"]]
@@ -1592,16 +1648,15 @@ def _fab_body(sheet_name, cfg, tab):
 
     # ---------------- filters ----------------
     keys = {"fab": "fab_names", "month": "fab_month"}
-    default_metric = "RCVD (Pcs)"
+    default_metric = "Fabric Issue (mtr)"
     st.session_state.setdefault("fab_metric", default_metric)
-    with st.expander("🔎 Filters  (kuch select na karein = ALL)", expanded=True):
-        c = st.columns([1.4, 1.3, 1.1, 0.55])
-        sel_fab = multi(c[0], "Fabricator", fab_names, keys["fab"], "All fabricators")
-        sel_month = multi(c[1], "Month", FY_MONTH_LABELS, keys["month"], "All months")
-        metric = c[2].selectbox("Matrix / Heatmap metric", FAB_METRICS, key="fab_metric")
-        c[3].markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
-        c[3].button("↺ Reset", key="fab_reset", on_click=_reset_filters,
-                    args=({keys["fab"]: [], keys["month"]: [], "fab_metric": default_metric},))
+    badge("🔎 Interactive Filters  (kuch select na karein = ALL)")
+    c = st.columns([1.4, 1.3, 1.2, 0.75], vertical_alignment="bottom")
+    sel_fab = multi(c[0], "Fabricator", fab_names, keys["fab"], "All fabricators")
+    sel_month = multi(c[1], "Month", FY_MONTH_LABELS, keys["month"], "All months")
+    metric = c[2].selectbox("Metric (Matrix / Heatmap)", FAB_METRICS, key="fab_metric")
+    c[3].button("↺ Reset", key="fab_reset", on_click=_reset_filters,
+                args=({keys["fab"]: [], keys["month"]: [], "fab_metric": default_metric},), **STRETCH)
 
     def flt(frame, fabs=True, months=True):
         y = frame
@@ -1626,13 +1681,16 @@ def _fab_body(sheet_name, cfg, tab):
             return f"{g[col].idxmax()} ({fmt(g[col].max())} Pcs)"
         return "N/A"
 
-    metrics([("Fabric Issued", f"{tot['Fabric Issue (mtr)']:,.0f} mtr"),
+    badge("📊 Key Performance Indicators")
+    metrics([("Fabric Issued (mtr)", f"{tot['Fabric Issue (mtr)']:,.0f} mtr"),
              ("Pcs Under Production", f"{fmt(tot['Pcs Under Production'])} Pcs"),
              ("RCVD (Received)", f"{fmt(tot['RCVD (Pcs)'])} Pcs"),
              ("Remaining", f"{fmt(tot['Remaining (Pcs)'])} Pcs"),
              ("Monthly Incoming", f"{fmt(tot['Monthly Incoming (Pcs)'])} Pcs"),
-             ("Received %", f"{recv_pct:.1f}%")])
-    metrics([("🏆 Top Receiver", top_of("RCVD (Pcs)")), ("⚠ Most Pending", top_of("Remaining (Pcs)"))])
+             ("Received %", f"{recv_pct:.1f}%"),
+             ("🏆 Top Receiver", top_of("RCVD (Pcs)")), ("⚠ Most Pending", top_of("Remaining (Pcs)"))])
+    if tot[FAB_METRICS].abs().sum() == 0:
+        notice("Selected filters ke liye koi data nahi hai.")
     st.markdown("---")
 
     # ---------------- tables ----------------
@@ -1648,168 +1706,163 @@ def _fab_body(sheet_name, cfg, tab):
     sc.index.name = "Fabricator"
     score = sc.reset_index()
 
-    t_over, t_fab, t_month, t_mat, t_chk = st.tabs(
-        ["📊 Overview", "🏭 Fabricator Scorecard", "📅 Monthly Position", "🧮 Month × Fabricator", "✅ Data Check"])
+    # ---------------- Monthly position of stock ----------------
+    badge("📅 Monthly Position Of Stock")
+    st.caption("Fabricator filter apply hota hai; Month filter yahan apply nahi hota (poora saal dikhta hai).")
+    c1, c2 = st.columns([1.15, 1], gap="medium")
+    with c1:
+        table_with_download(with_total(monthly, "Month", pct=("RCVD %", "RCVD (Pcs)", "Pcs Under Production")),
+                            "fabricator_monthly", pct_cols=("RCVD %",), dec_cols=("Fabric Issue (mtr)",), height=560)
+    with c2:
+        fig = go.Figure()
+        for col_name, color in (("Pcs Under Production", COLORS["blue"]), ("RCVD (Pcs)", COLORS["green"]),
+                                ("Remaining (Pcs)", COLORS["red"])):
+            fig.add_trace(go.Bar(name=col_name, x=FY_MONTH_LABELS, y=mm[col_name], marker_color=color))
+        fig.update_layout(barmode="group")
+        chart(fig, "Monthly: Production vs RCVD vs Remaining (Pcs)", 470, ns="fab")
 
-    with t_over:
-        if tot[FAB_METRICS].abs().sum() == 0:
-            st.info("Selected filters ke liye koi data nahi hai.")
-        c1, c2 = st.columns([1.35, 1])
-        with c1:
-            fig = go.Figure()
-            for col_name, color in (("Pcs Under Production", "#2563eb"), ("RCVD (Pcs)", "#059669"), ("Remaining (Pcs)", "#dc2626")):
-                fig.add_trace(go.Bar(name=col_name, x=FY_MONTH_LABELS, y=mm[col_name], marker_color=color))
-            fig.update_layout(barmode="group", title="MONTHLY: PRODUCTION vs RCVD vs REMAINING (PCS)")
-            fig.update_xaxes(tickangle=-35)
-            st.plotly_chart(style_fig(fig, 380), **STRETCH)
-        with c2:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=FY_MONTH_LABELS, y=mm["Fabric Issue (mtr)"], name="Fabric Issue (mtr)",
-                                     mode="lines+markers", line=dict(color="#7c3aed")))
-            fig.add_trace(go.Scatter(x=FY_MONTH_LABELS, y=mm["Monthly Incoming (Pcs)"], name="Monthly Incoming (Pcs)",
-                                     mode="lines+markers", line=dict(color="#d97706"), yaxis="y2"))
-            fig.update_layout(title="FABRIC ISSUE & MONTHLY INCOMING TREND",
-                              yaxis=dict(title="Mtr"),
-                              yaxis2=dict(title="Pcs", overlaying="y", side="right", showgrid=False))
-            fig.update_xaxes(tickangle=-35)
-            st.plotly_chart(style_fig(fig, 380), **STRETCH)
-        c3, c4 = st.columns([1.35, 1])
-        with c3:
-            fig = go.Figure()
-            order = score.sort_values("RCVD (Pcs)")
-            fig.add_trace(go.Bar(name="RCVD", y=order["Fabricator"], x=order["RCVD (Pcs)"], orientation="h", marker_color="#059669"))
-            fig.add_trace(go.Bar(name="Remaining", y=order["Fabricator"], x=order["Remaining (Pcs)"], orientation="h", marker_color="#dc2626"))
-            fig.update_layout(barmode="stack", title="FABRICATOR WISE: RCVD vs REMAINING (PCS)")
-            st.plotly_chart(style_fig(fig, max(320, 30 * len(order) + 120)), **STRETCH)
-        with c4:
-            order = score.sort_values("RCVD %")
-            fig = px.bar(order, x="RCVD %", y="Fabricator", orientation="h", text_auto=".1f",
-                         color="RCVD %", color_continuous_scale="RdYlGn", range_color=[0, 100],
-                         title="FABRICATOR WISE: RECEIVED %")
-            fig.update_layout(coloraxis_showscale=False)
-            fig.update_yaxes(title="")
-            st.plotly_chart(style_fig(fig, max(320, 30 * len(order) + 120)), **STRETCH)
-        st.caption("Month filter sirf KPIs aur fabricator charts par lagta hai; Fabricator filter KPIs aur monthly charts par.")
+    c1, c2 = st.columns([1, 1], gap="medium")
+    with c1:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=FY_MONTH_LABELS, y=mm["Fabric Issue (mtr)"], name="Fabric Issue (mtr)",
+                                 mode="lines+markers", line=dict(color=PLOT_TEXT if IS_DARK else "#111827", width=2)))
+        fig.add_trace(go.Scatter(x=FY_MONTH_LABELS, y=mm["Monthly Incoming (Pcs)"], name="Monthly Incoming (Pcs)",
+                                 mode="lines+markers", line=dict(color=COLORS["orange"], width=2), yaxis="y2"))
+        fig.update_layout(yaxis=dict(title="Mtr"),
+                          yaxis2=dict(title="Pcs", overlaying="y", side="right", showgrid=False,
+                                      tickfont=dict(color=PLOT_MUTED), title_font=dict(color=PLOT_MUTED)))
+        chart(fig, "Monthly Fabric Issue & Incoming Trend", 400, ns="fab")
+    with c2:
+        fig = go.Figure()
+        order = score.sort_values("RCVD (Pcs)")
+        fig.add_trace(go.Bar(name="RCVD", y=order["Fabricator"], x=order["RCVD (Pcs)"], orientation="h",
+                             marker_color=COLORS["green"]))
+        fig.add_trace(go.Bar(name="Remaining", y=order["Fabricator"], x=order["Remaining (Pcs)"], orientation="h",
+                             marker_color=COLORS["red"]))
+        fig.update_layout(barmode="stack", legend_traceorder="normal")
+        chart(fig, "Fabricator Wise: RCVD vs Remaining (Pcs)", max(400, 30 * len(order) + 120), ns="fab",
+              subtitle="Month filter apply hota hai; Fabricator filter nahi (sab ki tulna).")
 
-    with t_fab:
-        badge("🏭 Fabricator Scorecard")
-        st.caption("Fabricator filter yahan apply nahi hota (sab ki tulna); Month filter apply hota hai.")
-        shown = with_total(score, "Fabricator", pct=("RCVD %", "RCVD (Pcs)", "Pcs Under Production"))
-        if not ao_f.empty:
-            ao_sum = ao_f[FAB_METRICS].sum()
-            ao_row = {"Fabricator": "ALL OVER (SHEET)", **{k: float(ao_sum[k]) for k in FAB_METRICS},
-                      "RCVD %": safe_div_pct(ao_sum["RCVD (Pcs)"], ao_sum["Pcs Under Production"])}
-            shown = pd.concat([shown, pd.DataFrame([ao_row])], ignore_index=True)
-        table_with_download(shown, "fabricator_scorecard", pct_cols=("RCVD %",), dec_cols=("Fabric Issue (mtr)",), height=460)
+    # ---------------- Fabricator scorecard ----------------
+    st.markdown("---")
+    badge("🏭 Fabricator Scorecard")
+    st.caption("Fabricator filter yahan apply nahi hota (sab ki tulna); Month filter apply hota hai.")
+    shown = with_total(score, "Fabricator", pct=("RCVD %", "RCVD (Pcs)", "Pcs Under Production"))
+    if not ao_f.empty:
+        ao_sum = ao_f[FAB_METRICS].sum()
+        ao_row = {"Fabricator": "ALL OVER (SHEET)", **{k: float(ao_sum[k]) for k in FAB_METRICS},
+                  "RCVD %": safe_div_pct(ao_sum["RCVD (Pcs)"], ao_sum["Pcs Under Production"])}
+        shown = pd.concat([shown, pd.DataFrame([ao_row])], ignore_index=True)
+    c1, c2 = st.columns([1.3, 1], gap="medium")
+    with c1:
+        table_with_download(shown, "fabricator_scorecard", pct_cols=("RCVD %",), dec_cols=("Fabric Issue (mtr)",),
+                            height=520)
         if not ao_f.empty:
             diff = float((score[FAB_METRICS].sum() - ao_f[FAB_METRICS].sum()).abs().sum())
             if diff < 1:
-                st.success("✅ Fabricators ka total sheet ke ALL OVER table se match karta hai.")
+                notice("Fabricators ka total sheet ke ALL OVER table se match karta hai.", "success")
             else:
-                st.warning(f"⚠ Fabricators ka total ALL OVER table se alag hai (difference = {diff:,.0f}) - "
-                           "koi fabricator table summary me missing ho sakta hai.")
+                notice(f"Fabricators ka total ALL OVER table se alag hai (difference = {diff:,.0f}) - "
+                       "koi fabricator table summary me missing ho sakta hai.", "warning")
         else:
-            st.info("ℹ Sheet me ALL OVER table nahi mila, isliye cross-check nahi ho paya.")
+            notice("Sheet me ALL OVER table nahi mila, isliye cross-check nahi ho paya.")
+    with c2:
+        order = score.sort_values("RCVD %")
+        fig = px.bar(order, x="RCVD %", y="Fabricator", orientation="h", text_auto=".1f",
+                     color="RCVD %", range_color=[0, 100],
+                     color_continuous_scale=[[0, COLORS["red"]], [0.5, COLORS["amber"]], [1, COLORS["green"]]])
+        fig.update_layout(coloraxis_showscale=False)
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_xaxes(range=[0, 115], title="Received %")
+        fig.update_yaxes(title="")
+        chart(fig, "Fabricator Wise: Received %", max(400, 30 * len(order) + 120), ns="fab", legend="none")
 
-    with t_month:
-        badge("📅 Monthly Position Of Stock")
-        st.caption("Fabricator filter apply hota hai; Month filter yahan apply nahi hota (poora saal dikhta hai).")
-        table_with_download(with_total(monthly, "Month", pct=("RCVD %", "RCVD (Pcs)", "Pcs Under Production")),
-                            "fabricator_monthly", pct_cols=("RCVD %",), dec_cols=("Fabric Issue (mtr)",), height=520)
-
-    with t_mat:
-        badge(f"🧮 Month × Fabricator Matrix - {metric}")
-        xm = flt(base, months=False)
-        if xm.empty:
-            st.info("Selected filters ke liye data nahi hai.")
-        else:
-            mat = (xm.groupby(["Fabricator", "Month"])[metric].sum().unstack(fill_value=0)
-                   .reindex(index=[n for n in fab_names if n in set(xm["Fabricator"])], columns=FY_MONTH_LABELS, fill_value=0))
-            mat.columns = FY_MONTH_SHORT
-            fig = px.imshow(mat, text_auto=",.0f", aspect="auto", color_continuous_scale="Blues",
-                            title=f"HEATMAP - {metric}", labels=dict(x="Month", y="Fabricator", color=metric))
-            st.plotly_chart(style_fig(fig, max(300, 34 * len(mat) + 140)), **STRETCH)
-            tbl = mat.copy()
-            tbl["TOTAL"] = tbl.sum(axis=1)
-            tbl.index.name = "Fabricator"
-            tbl = tbl.reset_index()
-            tbl = with_total(tbl, "Fabricator", label="ALL FABRICATORS")
-            dec = ("TOTAL", *FY_MONTH_SHORT) if metric.startswith("Fabric") else ()
-            table_with_download(tbl, "fabricator_matrix", dec_cols=dec)
-
-    with t_chk:
-        _fab_data_check(sheet_id, cfg, tab, blocks, df, base, all_over)
-
-
-def _fab_data_check(sheet_id, cfg, tab, blocks, df, base, all_over):
-    st.subheader("✅ Data Check")
-    st.caption(f"Tab **{tab}** · {len(blocks)} 'Position Of Stock' block(s) mile")
-
-    badge("1 · Detect hue tables")
-    rows = [{"Fabricator": b["name"], "Title cell": f"{idx_to_col(b['col'])}{b['title_row'] + 1}",
-             "April row": b["first_row"] + 1,
-             "Value columns": f"{idx_to_col(b['col'] + 1)}:{idx_to_col(b['col'] + 5)}",
-             "Type": "ALL OVER (reference)" if b["is_all"] else "Fabricator"} for b in blocks]
-    st.dataframe(pd.DataFrame(rows), **STRETCH, hide_index=True)
-
-    badge("2 · Sheet ke apne FABRICATOR DASHBOARD se match (sab filters = ALL)")
-    t = base[FAB_METRICS].sum()
-    kp = [("Fabric Issued (mtr)", "FABRIC ISSUED (MTR)", float(t["Fabric Issue (mtr)"]), "int"),
-          ("Pcs Under Production", "PCS UNDER PRODUCTION", float(t["Pcs Under Production"]), "int"),
-          ("RCVD", "RCVD (RECEIVED)", float(t["RCVD (Pcs)"]), "int"),
-          ("Remaining", "REMAINING", float(t["Remaining (Pcs)"]), "int"),
-          ("Monthly Incoming", "MONTHLY INCOMING", float(t["Monthly Incoming (Pcs)"]), "int"),
-          ("Received %", "RECEIVED %", safe_div_pct(float(t["RCVD (Pcs)"]), float(t["Pcs Under Production"])), "pct")]
-    compare_block(sheet_id, [x for x, _ in list_tabs_meta(sheet_id)], cfg.get("dashboard_tab", "FABRICATOR DASHBOARD"), kp, max_rows=12)
-
-    badge("3 · Fabricators total vs ALL OVER table")
-    if all_over.empty or base.equals(all_over):
-        st.info("Sheet me alag se ALL OVER table nahi mila.")
+    # ---------------- Matrix ----------------
+    st.markdown("---")
+    badge(f"🧮 Month × Fabricator Matrix — Metric: {metric}")
+    xm = flt(base, months=False)
+    if xm.empty:
+        notice("Selected filters ke liye data nahi hai.")
     else:
-        a = all_over[FAB_METRICS].sum()
-        cmp_df = pd.DataFrame({"Metric": FAB_METRICS, "Fabricators total": [float(t[m]) for m in FAB_METRICS],
-                               "ALL OVER table": [float(a[m]) for m in FAB_METRICS]})
-        cmp_df["Diff"] = cmp_df["Fabricators total"] - cmp_df["ALL OVER table"]
-        cmp_df["Status"] = np.where(cmp_df["Diff"].abs() < 1, "✅ match", "❌ mismatch")
-        st.dataframe(cmp_df.style.format({"Fabricators total": "{:,.1f}", "ALL OVER table": "{:,.1f}", "Diff": "{:,.1f}"}),
-                     **STRETCH, hide_index=True)
+        mat = (xm.groupby(["Fabricator", "Month"])[metric].sum().unstack(fill_value=0)
+               .reindex(index=[n for n in fab_names if n in set(xm["Fabricator"])], columns=FY_MONTH_LABELS, fill_value=0))
+        mat.columns = FY_MONTH_SHORT
+        tbl = mat.copy()
+        tbl["TOTAL"] = tbl.sum(axis=1)
+        tbl.index.name = "Fabricator"
+        tbl = tbl.reset_index()
+        tbl = with_total(tbl, "Fabricator", label="ALL FABRICATORS")
+        dec = ("TOTAL", *FY_MONTH_SHORT) if metric.startswith("Fabric") else ()
+        table_with_download(tbl, "fabricator_matrix", dec_cols=dec)
 
-    with st.expander("ℹ️ Numbers kaise calculate hote hain"):
-        st.markdown(
-            "- Sheet me **'Position Of Stock <naam>'** title dhoondha jata hai; uske neeche **Month** header aur **April** se 12 rows li jati hain (April → March)\n"
-            "- Month column ke seedhe daayein 5 columns: **Fabric Issue (mtr), Pcs Under Production, RCVD, Remaining, Monthly Incoming**\n"
-            "- Cell text jaise `1,200` ya blank/error ho to number me badal jata hai (error/blank = 0)\n"
-            "- **Received %** = RCVD ÷ Pcs Under Production\n"
-            "- **ALL OVER** table sirf cross-check ke liye hai, KPIs me double count nahi hota")
-    with st.expander("🔍 Parsed data"):
-        st.dataframe(df.drop(columns=["is_all"]), **STRETCH, hide_index=True)
+        fig = px.imshow(mat, text_auto=",.0f", aspect="auto", color_continuous_scale=HEAT_SCALE,
+                        labels=dict(x="Month", y="Fabricator", color=""))
+        fig.update_layout(coloraxis_colorbar=dict(title="", tickfont=dict(color=PLOT_MUTED)))
+        fig.update_xaxes(side="top", showgrid=False)
+        fig.update_yaxes(showgrid=False)
+        chart(fig, f"Heatmap — {metric}", max(320, 36 * len(mat) + 120), ns="fab", legend="none")
 
 
 # -----------------------------------------------------------------------------
-# 10. MAIN ROUTER
+# 9. MAIN ROUTER
 # -----------------------------------------------------------------------------
 LIVE_OPTIONS = {"Off": 0, "Every 1 min": 60, "Every 2 min": 120, "Every 5 min": 300}
+
+
+def _safe(render_fn, *args):
+    """Runs one dashboard; a sheet that cannot be opened shows an error only inside its own tab."""
+    try:
+        render_fn(*args)
+    except SheetAccessError as e:
+        show_access_error(e)
 
 
 def main():
     apply_theme()
     with st.sidebar:
-        st.markdown("### 🗂️ Workspace Selection")
-        selected = st.selectbox("Active Google Sheet", list(SHEET_REGISTRY.keys()), key="ws_choice")
         st.markdown("### ⏱️ Live Updates")
         choice = st.selectbox("Auto-refresh (Sample & Fabricator)", list(LIVE_OPTIONS.keys()), index=2, key="live_choice",
                               help="Google Sheet me change hone par dashboard itne time me khud update ho jayega. "
-                                   "Master Sheet ke liye sidebar ka Refresh button use karein ya page reload karein.")
+                                   "Master Sheet ke liye Refresh button use karein ya page reload karein.")
         st.session_state["live_secs"] = LIVE_OPTIONS[choice]
+        if st.button("🔄 Refresh data now", key="global_refresh", **STRETCH):
+            st.cache_data.clear()
+            st.rerun()
 
-    cfg = SHEET_REGISTRY[selected]
-    kind = cfg.get("type", "tracker")
-    if kind == "tracker":
-        render_tracker(selected, cfg)
-    elif kind == "overview_fabricators":
-        render_fabricator_dashboard(selected, cfg)
-    elif kind == "sample_summary":
-        render_sample_summary_dashboard(selected, cfg)
+    fy = f"{FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}"
+    _html(f'<div class="dashboard-hero"><div class="hero-t">📊 Executive Operations &amp; Production Hub {fy}</div>'
+          f'<p>Designer · Production · Client · Sample · Fabricator — live from Google Sheets</p></div>')
+
+    master_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "tracker")
+    sample_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "sample_summary")
+    fab_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "overview_fabricators")
+    master_cfg = SHEET_REGISTRY[master_name]
+
+    t_des, t_prod, t_cli, t_smp, t_fab = st.tabs([
+        "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
+        "🔬 Sample Dashboard", "🧵 Fabricator Dashboard"])
+
+    # Master Sheet: loaded once, shared by its 3 dashboards
+    master_err, d_all = None, None
+    try:
+        with t_des:
+            d_all = load_master(master_cfg)
+    except SheetAccessError as e:
+        master_err = e
+    key = master_cfg["id"][:8]
+    for tab, fn in ((t_des, designer_dashboard), (t_prod, production_dashboard), (t_cli, client_dashboard)):
+        with tab:
+            if master_err is not None:
+                show_access_error(master_err)
+            elif d_all is not None:
+                fn(d_all, key)
+            elif tab is not t_des:
+                notice("Master Sheet ka data load nahi ho paya - Designer Dashboard tab me details dekhein.", "error")
+
+    with t_smp:
+        _safe(render_sample_summary_dashboard, sample_name, SHEET_REGISTRY[sample_name])
+    with t_fab:
+        _safe(render_fabricator_dashboard, fab_name, SHEET_REGISTRY[fab_name])
 
 
 if __name__ == "__main__":
