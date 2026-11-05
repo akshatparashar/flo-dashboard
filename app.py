@@ -40,6 +40,12 @@ SHEET_REGISTRY = {
         "gid": 164418035,  # fallback only
         "source_tabs": ["MONTHWISE SUMMARY", "MONTHWISE SUMMARY 2026-27"],
     },
+    "Fabric PO": {
+        "id": "1CvNPrdV4rQBR3_r8oIoPsW1ak123BGj88-qYbUU1y4I",
+        "type": "fabric_po",
+        "gid": 418084418,  # fallback only (INDEX tab)
+        "source_tabs": ["INDEX"],
+    },
 }
 
 # Google Sheet data is re-read at most once per this many seconds (live updates)
@@ -1804,7 +1810,407 @@ def _fab_body(sheet_name, cfg, tab):
 
 
 # -----------------------------------------------------------------------------
-# 9. MAIN ROUTER
+# 9. FABRIC PO DASHBOARD  (source: "INDEX" tab of the FABRIC PO sheet)
+#    Row 1 = header, data below. Columns (A..T):
+#    S.NO | VENDOR NAME | PO NO. | ORDER DATE | DELIVERY DATE | RCVD DATE | DELAY DAYS | ORDER TYPE |
+#    CLIENT NAME | DESIGNER NAME | COLLECTION NAME | STATUS | ACTUAL ORDER QTY. | TOTAL MTR OF FABRIC ORDERED |
+#    TOTAL MTR OF FABRIC RCVD | PENDING | EXCESS | REMARK | TOTAL PC | ITEM
+#    Delivery rule: vendor gets 15 days from ORDER DATE (DELIVERY DATE column). If the fabric is received after
+#    the delivery date -> DELAYED. If not yet received and today is past the delivery date -> OVERDUE.
+# -----------------------------------------------------------------------------
+FABPO_LEAD_DAYS = 15     # used only when the DELIVERY DATE cell is blank
+# field -> (normalised header name, fallback column position A=0 ...)
+FABPO_COLS = {
+    "sno": ("SNO", 0), "vendor": ("VENDORNAME", 1), "po": ("PONO", 2), "order_date": ("ORDERDATE", 3),
+    "delivery_date": ("DELIVERYDATE", 4), "rcvd_date": ("RCVDDATE", 5), "delay_sheet": ("DELAYDAYS", 6),
+    "order_type": ("ORDERTYPE", 7), "client": ("CLIENTNAME", 8), "designer": ("DESIGNERNAME", 9),
+    "collection": ("COLLECTIONNAME", 10), "status": ("STATUS", 11), "qty": ("ACTUALORDERQTY", 12),
+    "ordered": ("TOTALMTROFFABRICORDERED", 13), "rcvd": ("TOTALMTROFFABRICRCVD", 14),
+    "pending": ("PENDING", 15), "total_pc": ("TOTALPC", 18), "item": ("ITEM", 19),
+}
+FABPO_TIMINGS = ["On Time", "Delayed", "Overdue (Pending)", "Open (Within Deadline)", "No Date", "Cancelled"]
+_DATE_IN_TEXT = re.compile(r"(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})")
+
+
+def fabpo_colors():
+    return {"On Time": COLORS["green"], "Delayed": COLORS["red"], "Overdue (Pending)": COLORS["orange"],
+            "Open (Within Deadline)": COLORS["blue"], "No Date": COLORS["slate"], "Cancelled": COLORS["slate"]}
+
+
+def _today_ist():
+    try:
+        return pd.Timestamp(datetime.now(ZoneInfo(APP_TZ)).date())
+    except Exception:
+        return pd.Timestamp(datetime.now(timezone.utc).date())
+
+
+def parse_rcvd_cell(v):
+    """RCVD DATE cell -> list of dates. Handles one date, serial numbers and part-lots like '24/04/2026+15/05/2026'."""
+    if v is None:
+        return []
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if 20000 <= float(v) <= 80000:
+            return [pd.Timestamp("1899-12-30") + pd.Timedelta(days=float(v))]
+        return []
+    text = re.sub(r"\s+", "", str(v))
+    if not text:
+        return []
+    out = []
+    for d, m, y in _DATE_IN_TEXT.findall(text):
+        yr = int(y) + (2000 if int(y) < 100 else 0)
+        try:
+            out.append(pd.Timestamp(year=yr, month=int(m), day=int(d)))
+        except ValueError:
+            continue
+    if not out:
+        one = parse_dates(pd.Series([v])).iloc[0]
+        if pd.notna(one):
+            out = [one]
+    return [d.normalize() for d in out]
+
+
+def _fabpo_header_row(grid):
+    for r in range(min(8, len(grid))):
+        keys = {norm_key(c) for c in grid[r]}
+        if "VENDORNAME" in keys or ("PONO" in keys and "ORDERDATE" in keys):
+            return r
+    return 0
+
+
+def _fabpo_col_map(header):
+    keys = [norm_key(h) for h in header]
+    out = {}
+    for field, (name, pos) in FABPO_COLS.items():
+        idx = keys.index(name) if name in keys else next((i for i, k in enumerate(keys) if k.startswith(name)), None)
+        out[field] = idx if idx is not None else pos
+    return out
+
+
+def build_fabric_po(values):
+    """Raw INDEX grid (unformatted) -> clean one-row-per-PO DataFrame. Returns (df, header_row_cells)."""
+    if not values:
+        return pd.DataFrame(), []
+    hr = _fabpo_header_row(values)
+    header = values[hr]
+    cmap = _fabpo_col_map(header)
+    rows = values[hr + 1:]
+    if not rows:
+        return pd.DataFrame(), header
+    width = max(max(len(r) for r in rows), max(cmap.values()) + 1)
+    grid = pd.DataFrame([list(r) + [""] * (width - len(r)) for r in rows])
+
+    def col(field):
+        return grid[cmap[field]].reset_index(drop=True)
+
+    vendor_raw = col("vendor")
+    vendor_txt = clean_text(vendor_raw)
+    po_txt = clean_text(col("po"))
+    sno_ok = num(col("sno")) > 0
+    bad_vendor = (vendor_txt == "") | vendor_txt.map(_is_number_text) | \
+        vendor_txt.str.match(r"^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}$") | vendor_txt.str.upper().str.startswith("TOTAL")
+    keep = (~bad_vendor) & (sno_ok | (po_txt != ""))     # drops the helper date row, blanks and TOTAL rows
+
+    d = pd.DataFrame({"vendor": vendor_txt.str.upper(), "po": po_txt})
+    for f in ("order_type", "client", "designer", "collection", "status", "item"):
+        t = clean_text(col(f)).str.upper()
+        d[f] = t.where(t != "", "(BLANK)")
+    d["order_date"] = parse_dates(col("order_date"))
+    d["delivery_date"] = parse_dates(col("delivery_date"))
+    for f in ("qty", "ordered", "rcvd", "pending", "total_pc"):
+        d[f] = num(col(f))
+    d["sheet_delay"] = clean_delay_days(col("delay_sheet")).clip(lower=0)
+    rcvd_lists = col("rcvd_date").map(parse_rcvd_cell)
+    d["last_rcvd"] = pd.to_datetime(rcvd_lists.map(lambda L: max(L) if L else pd.NaT))
+    d["rcvd_text"] = rcvd_lists.map(lambda L: " + ".join(x.strftime("%d/%m/%Y") for x in sorted(L)))
+    d = d[keep.values].reset_index(drop=True)
+    if d.empty:
+        return d, header
+
+    # --- delivery due date: sheet DELIVERY DATE, else ORDER DATE + 15 days
+    due = d["delivery_date"].copy()
+    fill = due.isna() & d["order_date"].notna()
+    due[fill] = d.loc[fill, "order_date"] + pd.Timedelta(days=FABPO_LEAD_DAYS)
+    d["due"] = due
+
+    # --- fulfilment class from STATUS (falls back to pending / received meters when status is blank)
+    sn = d["status"].map(norm_key)
+    blank_recv = (d["status"] == "(BLANK)") & (d["pending"] <= 0) & (d["rcvd"] > 0)
+    d["fulfil"] = np.select(
+        [sn.str.contains("CANCEL"), sn.str.contains("PART"),
+         sn.str.contains("PEND|NOTR|WAIT|TRANSIT|PROCESS"),
+         sn.str.contains("RCVD|RECEIVED|RECD|COMPLETE|DELIVERED") | blank_recv],
+        ["Cancelled", "Partial", "Pending", "Received"], default="Pending")
+    recv = d["fulfil"] == "Received"
+    openpo = d["fulfil"].isin(["Pending", "Partial"])
+
+    # --- delay days
+    today = _today_ist()
+    has_dates = d["last_rcvd"].notna() & d["due"].notna()
+    delay = pd.Series(0.0, index=d.index)
+    m1 = recv & has_dates
+    delay[m1] = (d.loc[m1, "last_rcvd"] - d.loc[m1, "due"]).dt.days
+    m2 = openpo & d["due"].notna()
+    delay[m2] = (today - d.loc[m2, "due"]).dt.days
+    m3 = recv & ~has_dates
+    delay[m3] = d.loc[m3, "sheet_delay"]
+    d["delay_days"] = delay.clip(lower=0).fillna(0).astype(int)
+
+    d["timing"] = np.select(
+        [d["fulfil"] == "Cancelled", recv & (d["delay_days"] > 0), recv & ~has_dates & (d["sheet_delay"] <= 0),
+         recv, openpo & (d["delay_days"] > 0)],
+        ["Cancelled", "Delayed", "No Date", "On Time", "Overdue (Pending)"], default="Open (Within Deadline)")
+    d["is_late"] = (d["delay_days"] > 0).astype(int)
+    d["is_recv"] = recv.astype(int)
+    d["is_ontime"] = (d["timing"] == "On Time").astype(int)
+    d["month"] = month_label(d["order_date"])
+    d["days_to_due"] = np.where(openpo & d["due"].notna(), (d["due"] - today).dt.days, np.nan)
+    return d, header
+
+
+def _fpo_date(s):
+    return s.dt.strftime("%d/%m/%Y").fillna("")
+
+
+def fabpo_stats(x):
+    """One summary row for any slice of POs."""
+    ordered, rcvd = float(x["ordered"].sum()), float(x["rcvd"].sum())
+    late = int(x["is_late"].sum())
+    recv_n = int(x["is_recv"].sum())
+    return {
+        "POs": int(len(x)),
+        "Fabric Ordered (mtr)": ordered,
+        "Fabric Rcvd (mtr)": rcvd,
+        "Pending (mtr)": float(x["pending"].sum()),
+        "RCVD %": safe_div_pct(rcvd, ordered),
+        "Total Pcs": float(x["total_pc"].sum()),
+        "Delayed POs": late,
+        "Avg Delay (days)": (float(x["delay_days"].sum()) / late) if late else 0.0,
+        "On-Time %": safe_div_pct(int(x["is_ontime"].sum()), recv_n),
+    }
+
+
+def fabpo_group(x, col, label, order_by="Fabric Ordered (mtr)", total=True):
+    rows = [{label: k, **fabpo_stats(g)} for k, g in x.groupby(col, sort=False)]
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows).sort_values(order_by, ascending=False).reset_index(drop=True)
+    if total:
+        df = pd.concat([df, pd.DataFrame([{label: "TOTAL", **fabpo_stats(x)}])], ignore_index=True)
+    return df
+
+
+FPO_DEC = ("Fabric Ordered (mtr)", "Fabric Rcvd (mtr)", "Pending (mtr)", "Avg Delay (days)")
+FPO_PCT = ("RCVD %", "On-Time %")
+
+
+def render_fabric_po_dashboard(sheet_name, cfg):
+    tab = resolve_source_tab(cfg, name_regex=r"^\s*index\s*$")
+    if tab:
+        run_live(_fabpo_body, sheet_name, cfg, tab)
+
+
+def _fabpo_body(sheet_name, cfg, tab):
+    sheet_id = cfg["id"]
+    try:
+        pack = fetch_grid(sheet_id, tab)
+    except SheetAccessError as e:
+        show_access_error(e)
+        return
+    d, header = build_fabric_po(pack["values"])
+    hero("🧾", "Fabric PO Tracking Dashboard", None, pack["synced"])
+    if d.empty:
+        notice("Fabric PO data nahi mila. Expected: 'INDEX' tab, row 1 = header (VENDOR NAME, PO NO., ORDER DATE, "
+               "DELIVERY DATE, RCVD DATE ...), row 2 se PO data.", "warning")
+        return
+
+    months = sorted(d["month"].unique(), key=month_sort_key)
+
+    def opts(c):
+        return sorted(v for v in d[c].unique() if v)
+
+    # ---------------- filters ----------------
+    keys = {"month": "fpo_month", "vendor": "fpo_vendor", "type": "fpo_type", "client": "fpo_client",
+            "designer": "fpo_designer", "item": "fpo_item", "status": "fpo_status", "timing": "fpo_timing"}
+    badge("🔎 Interactive Filters  (kuch select na karein = ALL)")
+    c = st.columns([1.1, 1.2, 1.0, 1.2, 0.75], vertical_alignment="bottom")
+    f_month = multi(c[0], "Order Month", months, keys["month"], "All months")
+    f_vendor = multi(c[1], "Vendor", opts("vendor"), keys["vendor"], "All vendors")
+    f_type = multi(c[2], "Order Type", opts("order_type"), keys["type"], "NEW / REPEAT")
+    f_client = multi(c[3], "Client", opts("client"), keys["client"], "All clients")
+    c[4].button("↺ Reset", key="fpo_reset", on_click=_reset_filters, args=({k: [] for k in keys.values()},),
+                **STRETCH)
+    c = st.columns([1.2, 1.2, 1.2, 1.3], vertical_alignment="bottom")
+    f_designer = multi(c[0], "Designer", opts("designer"), keys["designer"], "All designers")
+    f_item = multi(c[1], "Item", opts("item"), keys["item"], "All items")
+    f_status = multi(c[2], "Status", opts("status"), keys["status"], "All status")
+    f_timing = multi(c[3], "Delivery Timing", [t for t in FABPO_TIMINGS if t in set(d["timing"])], keys["timing"],
+                     "All")
+
+    x = d
+    for sel, colname in ((f_month, "month"), (f_vendor, "vendor"), (f_type, "order_type"), (f_client, "client"),
+                         (f_designer, "designer"), (f_item, "item"), (f_status, "status"), (f_timing, "timing")):
+        if sel:
+            x = x[x[colname].isin(sel)]
+    st.caption(f"Delivery rule: Order Date se {FABPO_LEAD_DAYS} din (sheet ka DELIVERY DATE column). "
+               "RCVD DATE us se baad ho to DELAYED; abhi tak receive nahi hua aur date nikal gayi to OVERDUE. "
+               "Part lots (jaise 24/04/2026+15/05/2026) me aakhri date count hoti hai.")
+    if x.empty:
+        notice("Selected filters ke liye koi PO nahi mila.")
+        return
+
+    # ---------------- KPIs ----------------
+    s = fabpo_stats(x)
+    overdue = int((x["timing"] == "Overdue (Pending)").sum())
+    worst = x.loc[x["delay_days"].idxmax()]
+    worst_txt = f"{int(worst['delay_days'])} Days ({worst['po']})" if worst["delay_days"] > 0 else "None"
+    badge("📊 Key Performance Indicators")
+    metrics([("Total POs", f"{s['POs']:,} POs"),
+             ("Fabric Ordered", f"{s['Fabric Ordered (mtr)']:,.0f} mtr"),
+             ("Fabric Received", f"{s['Fabric Rcvd (mtr)']:,.0f} mtr"),
+             ("Pending Fabric", f"{s['Pending (mtr)']:,.0f} mtr"),
+             ("Received %", f"{s['RCVD %']:.1f}%"),
+             ("Total Pcs", f"{s['Total Pcs']:,.0f} Pcs"),
+             ("Delayed POs", f"{s['Delayed POs']:,} POs"),
+             ("Overdue (Not Received)", f"{overdue:,} POs"),
+             ("On-Time Delivery %", f"{s['On-Time %']:.1f}%"),
+             ("Avg Delay", f"{s['Avg Delay (days)']:.1f} Days"),
+             ("⚠ Longest Delay", worst_txt)])
+    st.markdown("---")
+
+    # ---------------- monthly ----------------
+    badge("📅 Monthly Position (Order Month wise)")
+    mon = x.groupby("month").agg(ordered=("ordered", "sum"), rcvd=("rcvd", "sum"), pending=("pending", "sum"),
+                                 pos=("po", "count")).reindex(sorted(x["month"].unique(), key=month_sort_key))
+    c1, c2 = st.columns([1.15, 1], gap="medium")
+    with c1:
+        fig = go.Figure()
+        for name, colname, color in (("Ordered (mtr)", "ordered", COLORS["blue"]),
+                                     ("Received (mtr)", "rcvd", COLORS["green"]),
+                                     ("Pending (mtr)", "pending", COLORS["red"])):
+            fig.add_trace(go.Bar(name=name, x=list(mon.index), y=mon[colname], marker_color=color))
+        fig.update_layout(barmode="group")
+        chart(fig, "Monthly Fabric: Ordered vs Received vs Pending (mtr)", 400, ns="fpo")
+    with c2:
+        tm = x.groupby(["month", "timing"]).size().unstack(fill_value=0).reindex(mon.index, fill_value=0)
+        fig = go.Figure()
+        for t in FABPO_TIMINGS:
+            if t in tm.columns:
+                fig.add_trace(go.Bar(name=t, x=list(tm.index), y=tm[t], marker_color=fabpo_colors()[t]))
+        fig.update_layout(barmode="stack")
+        chart(fig, "Monthly PO Delivery Status (No. of POs)", 400, ns="fpo")
+
+    c1, c2 = st.columns([1, 1], gap="medium")
+    with c1:
+        tc = x["timing"].value_counts()
+        fig = go.Figure(go.Pie(labels=list(tc.index), values=list(tc.values), hole=0.55, sort=False,
+                               marker=dict(colors=[fabpo_colors().get(t, COLORS["slate"]) for t in tc.index]),
+                               textinfo="label+value"))
+        chart(fig, "Delivery Timing Split (POs)", 380, ns="fpo", legend="bottom")
+    with c2:
+        ot = x["order_type"].value_counts()
+        fig = go.Figure(go.Pie(labels=list(ot.index), values=list(ot.values), hole=0.55,
+                               marker=dict(colors=pal()[:max(1, len(ot))]), textinfo="label+value"))
+        chart(fig, "Order Type Split (POs)", 380, ns="fpo", legend="bottom")
+    st.markdown("---")
+
+    # ---------------- vendor ----------------
+    badge("🏭 Vendor Scorecard")
+    vend = fabpo_group(x, "vendor", "Vendor")
+    vv = vend[vend["Vendor"] != "TOTAL"]
+    c1, c2 = st.columns([1.5, 1], gap="medium")
+    with c1:
+        table_with_download(vend, "fabpo_vendor", pct_cols=FPO_PCT, dec_cols=FPO_DEC, height=420)
+    with c2:
+        o = vv.sort_values("Fabric Ordered (mtr)")
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name="Received", y=o["Vendor"], x=o["Fabric Rcvd (mtr)"], orientation="h",
+                             marker_color=COLORS["green"]))
+        fig.add_trace(go.Bar(name="Pending", y=o["Vendor"], x=o["Pending (mtr)"], orientation="h",
+                             marker_color=COLORS["red"]))
+        fig.update_layout(barmode="stack")
+        chart(fig, "Vendor Wise: Received vs Pending Fabric (mtr)", max(340, 32 * len(o) + 120), ns="fpo")
+    late_v = vv[vv["Delayed POs"] > 0].sort_values("Avg Delay (days)")
+    if not late_v.empty:
+        fig = px.bar(late_v, x="Avg Delay (days)", y="Vendor", orientation="h", text_auto=".1f",
+                     color_discrete_sequence=[COLORS["red"]])
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_yaxes(title="")
+        chart(fig, "Vendor Wise: Average Delay (Days)", max(320, 32 * len(late_v) + 120), ns="fpo", legend="none",
+              subtitle="Sirf wo vendors jinke PO delayed / overdue hain.")
+    else:
+        empty_card("Vendor Wise: Average Delay (Days)", "Selected filters me koi delayed PO nahi hai. 🎉", ns="fpo")
+    st.markdown("---")
+
+    # ---------------- designer / client / item ----------------
+    badge("👨‍🎨 Designer · 🏢 Client · 👗 Item wise")
+    for label, colname, nm in (("Designer", "designer", "fabpo_designer"), ("Client", "client", "fabpo_client"),
+                               ("Item", "item", "fabpo_item")):
+        g = fabpo_group(x, colname, label)
+        gg = g[g[label] != "TOTAL"].sort_values("Fabric Ordered (mtr)")
+        c1, c2 = st.columns([1.5, 1], gap="medium")
+        with c1:
+            table_with_download(g, nm, pct_cols=FPO_PCT, dec_cols=FPO_DEC, height=380)
+        with c2:
+            fig = go.Figure()
+            fig.add_trace(go.Bar(name="Ordered (mtr)", y=gg[label], x=gg["Fabric Ordered (mtr)"], orientation="h",
+                                 marker_color=COLORS["blue"]))
+            fig.add_trace(go.Bar(name="Received (mtr)", y=gg[label], x=gg["Fabric Rcvd (mtr)"], orientation="h",
+                                 marker_color=COLORS["green"]))
+            fig.update_layout(barmode="group")
+            chart(fig, f"{label} Wise: Fabric Ordered vs Received (mtr)", max(340, 40 * len(gg) + 120), ns="fpo")
+    st.markdown("---")
+
+    # ---------------- delayed / pending / all POs ----------------
+    badge("⏰ Delayed & Overdue POs  (sabse zyada delay upar)")
+    late = x[x["is_late"] == 1].sort_values("delay_days", ascending=False)
+    if late.empty:
+        notice("Selected filters me koi delayed ya overdue PO nahi hai.", "success")
+    else:
+        lt = pd.DataFrame({
+            "PO No.": late["po"], "Vendor": late["vendor"], "Order Date": _fpo_date(late["order_date"]),
+            "Delivery Date": _fpo_date(late["due"]), "Rcvd Date": late["rcvd_text"],
+            "Delay Days": late["delay_days"], "Timing": late["timing"], "Client": late["client"],
+            "Designer": late["designer"], "Collection": late["collection"], "Status": late["status"],
+            "Pending (mtr)": late["pending"]})
+        table_with_download(lt, "fabpo_delayed", dec_cols=("Pending (mtr)",), height=420)
+        top = late.head(10).iloc[::-1]
+        fig = go.Figure(go.Bar(y=top["po"] + " · " + top["vendor"], x=top["delay_days"], orientation="h",
+                               marker_color=[fabpo_colors()[t] for t in top["timing"]], text=top["delay_days"],
+                               textposition="outside", cliponaxis=False))
+        chart(fig, "Top 10 Most Delayed POs (Days)", max(320, 34 * len(top) + 120), ns="fpo", legend="none")
+
+    st.markdown("---")
+    badge("⏳ Pending POs (abhi receive nahi hue)")
+    pend = x[x["fulfil"].isin(["Pending", "Partial"])].sort_values("due")
+    if pend.empty:
+        notice("Selected filters me koi pending PO nahi hai.", "success")
+    else:
+        pt = pd.DataFrame({
+            "PO No.": pend["po"], "Vendor": pend["vendor"], "Order Date": _fpo_date(pend["order_date"]),
+            "Delivery Date": _fpo_date(pend["due"]),
+            "Days To Due": pend["days_to_due"].fillna(0).astype(int),
+            "Timing": pend["timing"], "Fabric Ordered (mtr)": pend["ordered"], "Fabric Rcvd (mtr)": pend["rcvd"],
+            "Pending (mtr)": pend["pending"], "Client": pend["client"], "Designer": pend["designer"],
+            "Collection": pend["collection"]})
+        st.caption("Days To Due: negative = delivery date nikal chuki hai (overdue).")
+        table_with_download(pt, "fabpo_pending", dec_cols=("Fabric Ordered (mtr)", "Fabric Rcvd (mtr)",
+                                                          "Pending (mtr)"), height=420)
+
+    st.markdown("---")
+    badge("📋 All PO Details")
+    allpo = pd.DataFrame({
+        "Vendor": x["vendor"], "PO No.": x["po"], "Order Date": _fpo_date(x["order_date"]),
+        "Delivery Date": _fpo_date(x["due"]), "Rcvd Date": x["rcvd_text"], "Delay Days": x["delay_days"],
+        "Order Type": x["order_type"], "Client": x["client"], "Designer": x["designer"],
+        "Collection": x["collection"], "Status": x["status"], "Actual Order Qty": x["qty"],
+        "Fabric Ordered (mtr)": x["ordered"], "Fabric Rcvd (mtr)": x["rcvd"], "Pending (mtr)": x["pending"],
+        "Total Pcs": x["total_pc"], "Item": x["item"], "Timing": x["timing"]})
+    table_with_download(allpo, "fabpo_all", dec_cols=("Actual Order Qty", "Fabric Ordered (mtr)",
+                                                      "Fabric Rcvd (mtr)", "Pending (mtr)"), height=560)
+
+
+# -----------------------------------------------------------------------------
+# 10. MAIN ROUTER
 # -----------------------------------------------------------------------------
 LIVE_OPTIONS = {"Off": 0, "Every 1 min": 60, "Every 2 min": 120, "Every 5 min": 300}
 
@@ -1821,7 +2227,7 @@ def main():
     apply_theme()
     with st.sidebar:
         st.markdown("### ⏱️ Live Updates")
-        choice = st.selectbox("Auto-refresh (Sample & Fabricator)", list(LIVE_OPTIONS.keys()), index=2, key="live_choice",
+        choice = st.selectbox("Auto-refresh (Sample, Fabricator & Fabric PO)", list(LIVE_OPTIONS.keys()), index=2, key="live_choice",
                               help="Google Sheet me change hone par dashboard itne time me khud update ho jayega. "
                                    "Master Sheet ke liye Refresh button use karein ya page reload karein.")
         st.session_state["live_secs"] = LIVE_OPTIONS[choice]
@@ -1831,16 +2237,17 @@ def main():
 
     fy = f"{FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}"
     _html(f'<div class="dashboard-hero"><div class="hero-t">📊 Executive Operations &amp; Production Hub {fy}</div>'
-          f'<p>Designer · Production · Client · Sample · Fabricator — live from Google Sheets</p></div>')
+          f'<p>Designer · Production · Client · Sample · Fabricator · Fabric PO — live from Google Sheets</p></div>')
 
     master_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "tracker")
     sample_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "sample_summary")
     fab_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "overview_fabricators")
+    po_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "fabric_po")
     master_cfg = SHEET_REGISTRY[master_name]
 
-    t_des, t_prod, t_cli, t_smp, t_fab = st.tabs([
+    t_des, t_prod, t_cli, t_smp, t_fab, t_po = st.tabs([
         "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
-        "🔬 Sample Dashboard", "🧵 Fabricator Dashboard"])
+        "🔬 Sample Dashboard", "🧵 Fabricator Dashboard", "🧾 Fabric PO Dashboard"])
 
     # Master Sheet: loaded once, shared by its 3 dashboards
     master_err, d_all = None, None
@@ -1863,6 +2270,8 @@ def main():
         _safe(render_sample_summary_dashboard, sample_name, SHEET_REGISTRY[sample_name])
     with t_fab:
         _safe(render_fabricator_dashboard, fab_name, SHEET_REGISTRY[fab_name])
+    with t_po:
+        _safe(render_fabric_po_dashboard, po_name, SHEET_REGISTRY[po_name])
 
 
 if __name__ == "__main__":
