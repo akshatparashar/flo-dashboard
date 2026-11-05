@@ -2030,7 +2030,7 @@ def _fabpo_body(sheet_name, cfg, tab):
 
     # ---------------- filters ----------------
     keys = {"month": "fpo_month", "vendor": "fpo_vendor", "type": "fpo_type", "client": "fpo_client",
-            "designer": "fpo_designer", "item": "fpo_item", "status": "fpo_status", "timing": "fpo_timing"}
+            "designer": "fpo_designer", "item": "fpo_item", "status": "fpo_status"}
     badge("🔎 Interactive Filters  (kuch select na karein = ALL)")
     c = st.columns([1.1, 1.2, 1.0, 1.2, 0.75], vertical_alignment="bottom")
     f_month = multi(c[0], "Order Month", months, keys["month"], "All months")
@@ -2039,16 +2039,14 @@ def _fabpo_body(sheet_name, cfg, tab):
     f_client = multi(c[3], "Client", opts("client"), keys["client"], "All clients")
     c[4].button("↺ Reset", key="fpo_reset", on_click=_reset_filters, args=({k: [] for k in keys.values()},),
                 **STRETCH)
-    c = st.columns([1.2, 1.2, 1.2, 1.3], vertical_alignment="bottom")
+    c = st.columns([1.2, 1.2, 1.2], vertical_alignment="bottom")
     f_designer = multi(c[0], "Designer", opts("designer"), keys["designer"], "All designers")
     f_item = multi(c[1], "Item", opts("item"), keys["item"], "All items")
     f_status = multi(c[2], "Status", opts("status"), keys["status"], "All status")
-    f_timing = multi(c[3], "Delivery Timing", [t for t in FABPO_TIMINGS if t in set(d["timing"])], keys["timing"],
-                     "All")
 
     x = d
     for sel, colname in ((f_month, "month"), (f_vendor, "vendor"), (f_type, "order_type"), (f_client, "client"),
-                         (f_designer, "designer"), (f_item, "item"), (f_status, "status"), (f_timing, "timing")):
+                         (f_designer, "designer"), (f_item, "item"), (f_status, "status")):
         if sel:
             x = x[x[colname].isin(sel)]
     st.caption(f"Delivery rule: Order Date se {FABPO_LEAD_DAYS} din (sheet ka DELIVERY DATE column). "
@@ -2080,7 +2078,8 @@ def _fabpo_body(sheet_name, cfg, tab):
     # ---------------- monthly ----------------
     badge("📅 Monthly Position (Order Month wise)")
     mon = x.groupby("month").agg(ordered=("ordered", "sum"), rcvd=("rcvd", "sum"), pending=("pending", "sum"),
-                                 pos=("po", "count")).reindex(sorted(x["month"].unique(), key=month_sort_key))
+                                 pcs=("total_pc", "sum")).reindex(sorted(x["month"].unique(), key=month_sort_key))
+    mon["pct"] = np.where(mon["ordered"] > 0, mon["rcvd"] / mon["ordered"].replace(0, np.nan) * 100, 0.0)
     c1, c2 = st.columns([1.15, 1], gap="medium")
     with c1:
         fig = go.Figure()
@@ -2091,26 +2090,25 @@ def _fabpo_body(sheet_name, cfg, tab):
         fig.update_layout(barmode="group")
         chart(fig, "Monthly Fabric: Ordered vs Received vs Pending (mtr)", 400, ns="fpo")
     with c2:
-        tm = x.groupby(["month", "timing"]).size().unstack(fill_value=0).reindex(mon.index, fill_value=0)
-        fig = go.Figure()
-        for t in FABPO_TIMINGS:
-            if t in tm.columns:
-                fig.add_trace(go.Bar(name=t, x=list(tm.index), y=tm[t], marker_color=fabpo_colors()[t]))
-        fig.update_layout(barmode="stack")
-        chart(fig, "Monthly PO Delivery Status (No. of POs)", 400, ns="fpo")
-
-    c1, c2 = st.columns([1, 1], gap="medium")
-    with c1:
-        tc = x["timing"].value_counts()
-        fig = go.Figure(go.Pie(labels=list(tc.index), values=list(tc.values), hole=0.55, sort=False,
-                               marker=dict(colors=[fabpo_colors().get(t, COLORS["slate"]) for t in tc.index]),
-                               textinfo="label+value"))
-        chart(fig, "Delivery Timing Split (POs)", 380, ns="fpo", legend="bottom")
-    with c2:
         ot = x["order_type"].value_counts()
         fig = go.Figure(go.Pie(labels=list(ot.index), values=list(ot.values), hole=0.55,
                                marker=dict(colors=pal()[:max(1, len(ot))]), textinfo="label+value"))
-        chart(fig, "Order Type Split (POs)", 380, ns="fpo", legend="bottom")
+        chart(fig, "Order Type Split (POs)", 400, ns="fpo", legend="bottom")
+
+    c1, c2 = st.columns([1, 1], gap="medium")
+    with c1:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name="Total Pcs", x=list(mon.index), y=mon["pcs"], marker_color=COLORS["purple"]))
+        fig.add_trace(go.Scatter(name="RCVD %", x=list(mon.index), y=mon["pct"], mode="lines+markers",
+                                 line=dict(color=COLORS["orange"], width=2), yaxis="y2"))
+        fig.update_layout(yaxis=dict(title="Pcs"),
+                          yaxis2=dict(title="RCVD %", overlaying="y", side="right", showgrid=False, range=[0, 120],
+                                      tickfont=dict(color=PLOT_MUTED), title_font=dict(color=PLOT_MUTED)))
+        chart(fig, "Monthly Total Pcs & RCVD %", 380, ns="fpo")
+    with c2:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name="Pending (mtr)", x=list(mon.index), y=mon["pending"], marker_color=COLORS["red"]))
+        chart(fig, "Monthly Pending Fabric (mtr)", 380, ns="fpo", legend="none")
     st.markdown("---")
 
     # ---------------- vendor ----------------
@@ -2129,84 +2127,30 @@ def _fabpo_body(sheet_name, cfg, tab):
                              marker_color=COLORS["red"]))
         fig.update_layout(barmode="stack")
         chart(fig, "Vendor Wise: Received vs Pending Fabric (mtr)", max(340, 32 * len(o) + 120), ns="fpo")
-    late_v = vv[vv["Delayed POs"] > 0].sort_values("Avg Delay (days)")
-    if not late_v.empty:
-        fig = px.bar(late_v, x="Avg Delay (days)", y="Vendor", orientation="h", text_auto=".1f",
-                     color_discrete_sequence=[COLORS["red"]])
+
+    c1, c2 = st.columns([1, 1], gap="medium")
+    with c1:
+        order = vv.sort_values("RCVD %")
+        fig = px.bar(order, x="RCVD %", y="Vendor", orientation="h", text_auto=".1f",
+                     color="RCVD %", range_color=[0, 100],
+                     color_continuous_scale=[[0, COLORS["red"]], [0.5, COLORS["amber"]], [1, COLORS["green"]]])
+        fig.update_layout(coloraxis_showscale=False)
         fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_xaxes(range=[0, 115], title="Received %")
         fig.update_yaxes(title="")
-        chart(fig, "Vendor Wise: Average Delay (Days)", max(320, 32 * len(late_v) + 120), ns="fpo", legend="none",
-              subtitle="Sirf wo vendors jinke PO delayed / overdue hain.")
-    else:
-        empty_card("Vendor Wise: Average Delay (Days)", "Selected filters me koi delayed PO nahi hai. 🎉", ns="fpo")
-    st.markdown("---")
+        chart(fig, "Vendor Wise: Received %", max(340, 32 * len(order) + 120), ns="fpo", legend="none")
+    with c2:
+        top = vv.sort_values("Fabric Ordered (mtr)", ascending=False)
+        fig = go.Figure(go.Pie(labels=list(top["Vendor"]), values=list(top["Fabric Ordered (mtr)"]), hole=0.55,
+                               marker=dict(colors=pal()[:max(1, len(top))]), textinfo="label+percent"))
+        chart(fig, "Vendor Share of Fabric Ordered (mtr)", max(340, 32 * len(top) + 120), ns="fpo", legend="bottom")
 
-    # ---------------- designer / client / item ----------------
-    badge("👨‍🎨 Designer · 🏢 Client · 👗 Item wise")
-    for label, colname, nm in (("Designer", "designer", "fabpo_designer"), ("Client", "client", "fabpo_client"),
-                               ("Item", "item", "fabpo_item")):
-        g = fabpo_group(x, colname, label)
-        gg = g[g[label] != "TOTAL"].sort_values("Fabric Ordered (mtr)")
-        c1, c2 = st.columns([1.5, 1], gap="medium")
-        with c1:
-            table_with_download(g, nm, pct_cols=FPO_PCT, dec_cols=FPO_DEC, height=380)
-        with c2:
-            fig = go.Figure()
-            fig.add_trace(go.Bar(name="Ordered (mtr)", y=gg[label], x=gg["Fabric Ordered (mtr)"], orientation="h",
-                                 marker_color=COLORS["blue"]))
-            fig.add_trace(go.Bar(name="Received (mtr)", y=gg[label], x=gg["Fabric Rcvd (mtr)"], orientation="h",
-                                 marker_color=COLORS["green"]))
-            fig.update_layout(barmode="group")
-            chart(fig, f"{label} Wise: Fabric Ordered vs Received (mtr)", max(340, 40 * len(gg) + 120), ns="fpo")
-    st.markdown("---")
-
-    # ---------------- delayed / pending / all POs ----------------
-    badge("⏰ Delayed & Overdue POs  (sabse zyada delay upar)")
-    late = x[x["is_late"] == 1].sort_values("delay_days", ascending=False)
-    if late.empty:
-        notice("Selected filters me koi delayed ya overdue PO nahi hai.", "success")
-    else:
-        lt = pd.DataFrame({
-            "PO No.": late["po"], "Vendor": late["vendor"], "Order Date": _fpo_date(late["order_date"]),
-            "Delivery Date": _fpo_date(late["due"]), "Rcvd Date": late["rcvd_text"],
-            "Delay Days": late["delay_days"], "Timing": late["timing"], "Client": late["client"],
-            "Designer": late["designer"], "Collection": late["collection"], "Status": late["status"],
-            "Pending (mtr)": late["pending"]})
-        table_with_download(lt, "fabpo_delayed", dec_cols=("Pending (mtr)",), height=420)
-        top = late.head(10).iloc[::-1]
-        fig = go.Figure(go.Bar(y=top["po"] + " · " + top["vendor"], x=top["delay_days"], orientation="h",
-                               marker_color=[fabpo_colors()[t] for t in top["timing"]], text=top["delay_days"],
-                               textposition="outside", cliponaxis=False))
-        chart(fig, "Top 10 Most Delayed POs (Days)", max(320, 34 * len(top) + 120), ns="fpo", legend="none")
-
-    st.markdown("---")
-    badge("⏳ Pending POs (abhi receive nahi hue)")
-    pend = x[x["fulfil"].isin(["Pending", "Partial"])].sort_values("due")
-    if pend.empty:
-        notice("Selected filters me koi pending PO nahi hai.", "success")
-    else:
-        pt = pd.DataFrame({
-            "PO No.": pend["po"], "Vendor": pend["vendor"], "Order Date": _fpo_date(pend["order_date"]),
-            "Delivery Date": _fpo_date(pend["due"]),
-            "Days To Due": pend["days_to_due"].fillna(0).astype(int),
-            "Timing": pend["timing"], "Fabric Ordered (mtr)": pend["ordered"], "Fabric Rcvd (mtr)": pend["rcvd"],
-            "Pending (mtr)": pend["pending"], "Client": pend["client"], "Designer": pend["designer"],
-            "Collection": pend["collection"]})
-        st.caption("Days To Due: negative = delivery date nikal chuki hai (overdue).")
-        table_with_download(pt, "fabpo_pending", dec_cols=("Fabric Ordered (mtr)", "Fabric Rcvd (mtr)",
-                                                          "Pending (mtr)"), height=420)
-
-    st.markdown("---")
-    badge("📋 All PO Details")
-    allpo = pd.DataFrame({
-        "Vendor": x["vendor"], "PO No.": x["po"], "Order Date": _fpo_date(x["order_date"]),
-        "Delivery Date": _fpo_date(x["due"]), "Rcvd Date": x["rcvd_text"], "Delay Days": x["delay_days"],
-        "Order Type": x["order_type"], "Client": x["client"], "Designer": x["designer"],
-        "Collection": x["collection"], "Status": x["status"], "Actual Order Qty": x["qty"],
-        "Fabric Ordered (mtr)": x["ordered"], "Fabric Rcvd (mtr)": x["rcvd"], "Pending (mtr)": x["pending"],
-        "Total Pcs": x["total_pc"], "Item": x["item"], "Timing": x["timing"]})
-    table_with_download(allpo, "fabpo_all", dec_cols=("Actual Order Qty", "Fabric Ordered (mtr)",
-                                                      "Fabric Rcvd (mtr)", "Pending (mtr)"), height=560)
+    pcs = vv.sort_values("Total Pcs")
+    fig = go.Figure(go.Bar(y=pcs["Vendor"], x=pcs["Total Pcs"], orientation="h", marker_color=COLORS["purple"],
+                           text=pcs["Total Pcs"].map(lambda v: f"{v:,.0f}"), textposition="outside",
+                           cliponaxis=False))
+    fig.update_yaxes(title="")
+    chart(fig, "Vendor Wise: Total Pcs", max(320, 32 * len(pcs) + 120), ns="fpo", legend="none")
 
 
 # -----------------------------------------------------------------------------
