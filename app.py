@@ -2173,7 +2173,7 @@ def _fabpo_body(sheet_name, cfg, tab):
 NEW_TARGET_CR = 50.2                 # yearly NEW-order target in crore (can also be changed on the dashboard)
 NEW_MONTHLY_WEIGHTS = [1] * 12       # Apr..Mar. Equal = target / 12 per month. Seasonal split? e.g. [1, 1, 1, 1, 1, 1, 1.5, 1.5, 1.5, 1, 1, 1]
 TGT_COLS = {                         # field -> (normalised header name, fallback column position A=0 ...)
-    "sno": ("SNO", 0), "date": ("ORDERDATE", 1), "barcode": ("BARCODE", 3), "item": ("ITEMNAME", 4),
+    "sno": ("SNO", 0), "date": ("ORDERDATE", 1), "image": ("IMAGE", 2), "barcode": ("BARCODE", 3), "item": ("ITEMNAME", 4),
     "size": ("SIZE", 5), "pcs": ("NOOFPCS", 6), "rate": ("RATE", 7), "order_by": ("ORDERBY", 8),
     "designer": ("DESIGNER", 9), "sheet_total": ("TOTALAMOUNT", 10),
 }
@@ -2266,6 +2266,33 @@ def build_target_orders(values, source):
     return d[keep], header_ok
 
 
+def _img_url(cell):
+    """=IMAGE("url") formula ya seedha link -> usable image URL ('' agar nahi mila). Drive links thumbnail me badle jate hain."""
+    t = str(cell or "").strip()
+    m = re.search(r'IMAGE\(\s*"([^"]+)"', t, re.I)
+    url = m.group(1) if m else (t if re.match(r"https?://", t, re.I) else "")
+    if not url:
+        return ""
+    d = re.search(r"drive\.google\.com/(?:file/d/|open\?id=|uc\?(?:export=\w+&)?id=)([\w-]+)", url)
+    return f"https://drive.google.com/thumbnail?id={d.group(1)}&sz=w300" if d else url
+
+
+@st.cache_data(ttl=LIVE_TTL, show_spinner=False)
+def fetch_image_urls(sheet_id, tab_title, col_idx):
+    """IMAGE column ke formulas padhta hai -> {sheet_row: url}. Fail hone par khaali dict (dashboard chalta rahta hai)."""
+    try:
+        c = idx_to_col(col_idx)
+        resp = _open_book(sheet_id).values_get(f"{_a1_tab(tab_title)}!{c}:{c}", params={"valueRenderOption": "FORMULA"})
+        out = {}
+        for i, row in enumerate(resp.get("values", []), start=1):
+            u = _img_url(row[0] if row else "")
+            if u:
+                out[i] = u
+        return out
+    except Exception:
+        return {}
+
+
 def load_target_data(cfg):
     """Reads NEW + REPEAT tabs (cached, LIVE_TTL). Returns (df, notes, synced_label)."""
     sheet_id = cfg["id"]
@@ -2279,6 +2306,11 @@ def load_target_data(cfg):
         pack = fetch_grid(sheet_id, tab)
         synced = pack["synced"]
         df, header_ok = build_target_orders(pack["values"], source)
+        if not df.empty:
+            _hr = _tgt_header_row(pack["values"])
+            _cmap = _tgt_col_map(pack["values"][_hr if _hr is not None else 1])
+            imgs = fetch_image_urls(sheet_id, tab, _cmap["image"])
+            df["image"] = [imgs.get(r, "") for r in df.index]
         if not header_ok:
             notes.append(f"'{tab}' tab me header row (ORDER DATE / NO.OF PCS / RATE) nahi mili - default columns "
                          "(A..K) use hue hain, numbers check kar lein.")
@@ -2594,39 +2626,41 @@ def _target_sections(x, all_months):
     with c2:
         donut(byc_b["Order By"], byc_b["Total Revenue"], "Order By Share of Revenue", height=360)
 
-    # ---------------- rate analysis ----------------
+    # ---------------- top repeat-order designs ----------------
     st.markdown("---")
-    badge("💰 Rate Analysis (Rate = 1 pc ka rate)")
-    rs = x.groupby("rate").agg(pcs=("pcs", "sum"), orders=("pcs", "size"), revenue=("revenue", "sum")).reset_index()
-    total_rev = float(rs["revenue"].sum())
-    rs["Share %"] = rs["revenue"].map(lambda v: safe_div_pct(v, total_rev))
-    rs["Rate (₹/pc)"] = rs["rate"].map(lambda v: f"₹{v:,.0f}")
-    by_rev = rs.sort_values("revenue", ascending=False)
-    rtab = by_rev[["Rate (₹/pc)", "pcs", "orders", "revenue", "Share %"]].rename(
-        columns={"pcs": "Total Pcs", "orders": "Orders", "revenue": "Total Revenue"})
-    rtab = pd.concat([rtab, pd.DataFrame([{"Rate (₹/pc)": "TOTAL", "Total Pcs": float(rs["pcs"].sum()),
-                                           "Orders": int(rs["orders"].sum()), "Total Revenue": total_rev,
-                                           "Share %": 100.0 if total_rev else 0.0}])], ignore_index=True)
-    c1, c2 = st.columns([1.2, 1], gap="medium")
-    with c1:
-        table_with_download(rtab, "target_rate", pct_cols=("Share %",), money_cols=("Total Revenue",), height=420)
-    with c2:
-        p = rs.sort_values("rate").head(30)
-        fig = go.Figure(go.Bar(x=list(p["Rate (₹/pc)"]), y=p["pcs"].tolist(), marker_color=COLORS["teal"],
-                               hovertemplate="Rate %{x}<br>%{y:,.0f} pcs<extra></extra>"))
-        fig.update_xaxes(title="Rate per piece", type="category")
-        fig.update_yaxes(title="Pcs")
-        chart(fig, "Pcs Ordered by Rate Slab", 420, ns="tgt", legend="none")
-
-    # ---------------- top designs ----------------
-    st.markdown("---")
-    badge("🏆 Top 15 Designs by Revenue")
-    t = x.sort_values("revenue", ascending=False).head(15)
-    tbl = pd.DataFrame({"Barcode": t["barcode"].values, "Item Name": t["item"].values,
-                        "Designer": t["designer"].values, "Order By": t["order_by"].values,
-                        "Type": t["source"].values, "Order Date": t["date"].dt.strftime("%d/%m/%Y").fillna("").values,
-                        "Pcs": t["pcs"].values, "Rate (₹/pc)": t["rate"].values, "Revenue": t["revenue"].values})
-    table_with_download(tbl, "target_top_designs", money_cols=("Rate (₹/pc)", "Revenue"), height=520)
+    badge("🔁 Top 15 Designs by Repeat Orders")
+    rp = x[x["source"] == "REPEAT"]
+    if rp.empty:
+        notice("Selected filters me koi REPEAT order nahi hai (Order Type filter ya baaki filters check karein).", "info")
+    else:
+        def _first(sr):
+            v = [i for i in sr if i]
+            return v[0] if v else ""
+        g = rp.sort_values("date").groupby("barcode").agg(
+            image=("image", _first), item=("item", "first"),
+            designer=("designer", lambda v: v.mode().iloc[0] if len(v.mode()) else ""),
+            orders=("pcs", "size"), pcs=("pcs", "sum"), revenue=("revenue", "sum"),
+            last=("date", "max")).reset_index()
+        g = g.sort_values(["orders", "pcs", "revenue"], ascending=False).head(15).reset_index(drop=True)
+        g["last"] = g["last"].dt.strftime("%d/%m/%Y").fillna("")
+        rows = []
+        for i, r in g.iterrows():
+            img = (f'<img src="{html.escape(r["image"], quote=True)}" loading="lazy" referrerpolicy="no-referrer" '
+                   f'style="height:64px;width:64px;object-fit:cover;border-radius:8px;">') if r["image"] else "—"
+            rows.append(f"<tr><td>{i + 1}</td><td style='text-align:center'>{img}</td><td>{_esc(r['barcode'])}</td>"
+                        f"<td>{_esc(r['item'])}</td><td>{_esc(r['designer'])}</td><td>{int(r['orders']):,}</td>"
+                        f"<td>{r['pcs']:,.0f}</td><td>{_esc(inr(r['revenue']))}</td><td>{_esc(r['last'])}</td></tr>")
+        heads = ["#", "Image", "Barcode", "Item Name", "Designer", "Repeat Orders", "Repeat Pcs", "Repeat Revenue", "Last Repeat Date"]
+        _html('<div class="tbl-wrap" style="max-height:640px"><table><thead><tr>'
+              + "".join(f"<th>{h}</th>" for h in heads) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>")
+        if not g["image"].astype(bool).any():
+            st.caption("Images nahi dikh rahi? Sheet ke IMAGE column me =IMAGE(\"link\") formula ya direct link hona chahiye. "
+                       "'Insert → Image in cell' / floating images API se read nahi hoti.")
+        dl = g.rename(columns={"image": "Image URL", "barcode": "Barcode", "item": "Item Name", "designer": "Designer",
+                               "orders": "Repeat Orders", "pcs": "Repeat Pcs", "revenue": "Repeat Revenue",
+                               "last": "Last Repeat Date"})
+        st.download_button("⬇️ Download CSV", dl.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="target_top_repeat_designs.csv", mime="text/csv", key="dl_target_top_repeat")
 
     with st.expander("📄 Filtered order lines (full data)"):
         full = x.sort_values(["date", "sheet_row"]).copy()
