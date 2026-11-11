@@ -537,6 +537,8 @@ def style_fig(fig, height=360, legend="top"):
         leg = dict(orientation="h", yanchor="top", y=-0.04, xanchor="center", x=0.5, title_text="")
     elif legend == "none":
         leg = dict(title_text="")
+    elif legend == "right":
+        leg = dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02, title_text="")
     else:
         leg = dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, title_text="")
     leg.update(font=dict(size=11, color=PLOT_TEXT), bgcolor="rgba(0,0,0,0)")
@@ -2095,62 +2097,57 @@ def _fabpo_body(sheet_name, cfg, tab):
                                marker=dict(colors=pal()[:max(1, len(ot))]), textinfo="label+value"))
         chart(fig, "Order Type Split (POs)", 400, ns="fpo", legend="bottom")
 
-    c1, c2 = st.columns([1, 1], gap="medium")
-    with c1:
-        fig = go.Figure()
-        fig.add_trace(go.Bar(name="Total Pcs", x=list(mon.index), y=mon["pcs"], marker_color=COLORS["purple"]))
-        fig.add_trace(go.Scatter(name="RCVD %", x=list(mon.index), y=mon["pct"], mode="lines+markers",
-                                 line=dict(color=COLORS["orange"], width=2), yaxis="y2"))
-        fig.update_layout(yaxis=dict(title="Pcs"),
-                          yaxis2=dict(title="RCVD %", overlaying="y", side="right", showgrid=False, range=[0, 120],
-                                      tickfont=dict(color=PLOT_MUTED), title_font=dict(color=PLOT_MUTED)))
-        chart(fig, "Monthly Total Pcs & RCVD %", 380, ns="fpo")
-    with c2:
-        fig = go.Figure()
-        fig.add_trace(go.Bar(name="Pending (mtr)", x=list(mon.index), y=mon["pending"], marker_color=COLORS["red"]))
-        chart(fig, "Monthly Pending Fabric (mtr)", 380, ns="fpo", legend="none")
+    mrows = [{"Month": m, **fabpo_stats(x[x["month"] == m])} for m in mon.index]
+    mtbl = pd.DataFrame(mrows)[["Month", "POs", "Fabric Ordered (mtr)", "Fabric Rcvd (mtr)", "Pending (mtr)",
+                                "RCVD %", "Total Pcs"]]
+    mtbl = pd.concat([mtbl, pd.DataFrame([{"Month": "TOTAL", **{k: s[k] for k in mtbl.columns[1:]}}])],
+                     ignore_index=True)
+    badge("🗓️ Month Wise Summary")
+    table_with_download(mtbl, "fabpo_monthly", pct_cols=("RCVD %",), dec_cols=FPO_DEC,
+                        height=min(520, 64 + 38 * len(mtbl)))
     st.markdown("---")
 
     # ---------------- vendor ----------------
     badge("🏭 Vendor Scorecard")
     vend = fabpo_group(x, "vendor", "Vendor")
     vv = vend[vend["Vendor"] != "TOTAL"]
-    c1, c2 = st.columns([1.5, 1], gap="medium")
-    with c1:
-        table_with_download(vend, "fabpo_vendor", pct_cols=FPO_PCT, dec_cols=FPO_DEC, height=420)
-    with c2:
-        o = vv.sort_values("Fabric Ordered (mtr)")
-        fig = go.Figure()
-        fig.add_trace(go.Bar(name="Received", y=o["Vendor"], x=o["Fabric Rcvd (mtr)"], orientation="h",
-                             marker_color=COLORS["green"]))
-        fig.add_trace(go.Bar(name="Pending", y=o["Vendor"], x=o["Pending (mtr)"], orientation="h",
-                             marker_color=COLORS["red"]))
-        fig.update_layout(barmode="stack")
-        chart(fig, "Vendor Wise: Received vs Pending Fabric (mtr)", max(340, 32 * len(o) + 120), ns="fpo")
+    table_with_download(vend, "fabpo_vendor", pct_cols=FPO_PCT, dec_cols=FPO_DEC, height=420)
 
-    c1, c2 = st.columns([1, 1], gap="medium")
-    with c1:
-        order = vv.sort_values("RCVD %")
-        fig = px.bar(order, x="RCVD %", y="Vendor", orientation="h", text_auto=".1f",
-                     color="RCVD %", range_color=[0, 100],
-                     color_continuous_scale=[[0, COLORS["red"]], [0.5, COLORS["amber"]], [1, COLORS["green"]]])
-        fig.update_layout(coloraxis_showscale=False)
-        fig.update_traces(textposition="outside", cliponaxis=False)
-        fig.update_xaxes(range=[0, 115], title="Received %")
-        fig.update_yaxes(title="")
-        chart(fig, "Vendor Wise: Received %", max(340, 32 * len(order) + 120), ns="fpo", legend="none")
-    with c2:
-        top = vv.sort_values("Fabric Ordered (mtr)", ascending=False)
-        fig = go.Figure(go.Pie(labels=list(top["Vendor"]), values=list(top["Fabric Ordered (mtr)"]), hole=0.55,
-                               marker=dict(colors=pal()[:max(1, len(top))]), textinfo="label+percent"))
-        chart(fig, "Vendor Share of Fabric Ordered (mtr)", max(340, 32 * len(top) + 120), ns="fpo", legend="bottom")
+    # Received vs Pending: vendors across the width (same layout as the monthly charts)
+    o = vv.sort_values("Fabric Ordered (mtr)", ascending=False)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name="Received (mtr)", x=list(o["Vendor"]), y=o["Fabric Rcvd (mtr)"],
+                         marker_color=COLORS["green"], hovertemplate="%{x}<br>Received: %{y:,.0f} mtr<extra></extra>"))
+    fig.add_trace(go.Bar(name="Pending (mtr)", x=list(o["Vendor"]), y=o["Pending (mtr)"],
+                         marker_color=COLORS["red"], hovertemplate="%{x}<br>Pending: %{y:,.0f} mtr<extra></extra>"))
+    fig.update_layout(barmode="stack")
+    fig.update_xaxes(title="", tickangle=-30 if len(o) > 4 else 0)
+    fig.update_yaxes(title="Fabric (mtr)")
+    chart(fig, "Vendor Wise: Received vs Pending Fabric (mtr)", 420, ns="fpo")
 
-    pcs = vv.sort_values("Total Pcs")
-    fig = go.Figure(go.Bar(y=pcs["Vendor"], x=pcs["Total Pcs"], orientation="h", marker_color=COLORS["purple"],
-                           text=pcs["Total Pcs"].map(lambda v: f"{v:,.0f}"), textposition="outside",
-                           cliponaxis=False))
-    fig.update_yaxes(title="")
-    chart(fig, "Vendor Wise: Total Pcs", max(320, 32 * len(pcs) + 120), ns="fpo", legend="none")
+    # Vendor share: donut (percent inside, names in a side legend -> no overlapping labels) + share table
+    share = vv[vv["Fabric Ordered (mtr)"] > 0].sort_values("Fabric Ordered (mtr)", ascending=False)
+    c1, c2 = st.columns([1.2, 1], gap="medium")
+    with c1:
+        if share.empty:
+            empty_card("Vendor Share of Fabric Ordered (mtr)", "Selected filters ke liye fabric ordered data nahi hai.",
+                       ns="fpo")
+        else:
+            base = pal()
+            colors = [base[i % len(base)] for i in range(len(share))]
+            fig = go.Figure(go.Pie(labels=list(share["Vendor"]), values=list(share["Fabric Ordered (mtr)"]), hole=0.55,
+                                   sort=False, direction="clockwise", marker=dict(colors=colors),
+                                   textinfo="percent", textposition="inside", insidetextorientation="horizontal",
+                                   hovertemplate="%{label}<br>%{value:,.0f} mtr (%{percent})<extra></extra>"))
+            fig.update_layout(margin=dict(l=8, r=8, t=10, b=8))
+            chart(fig, "Vendor Share of Fabric Ordered (mtr)", 440, ns="fpo", legend="right")
+    with c2:
+        if not share.empty:
+            badge("📋 Vendor Share")
+            stbl = share[["Vendor", "Fabric Ordered (mtr)"]].copy()
+            stbl["Share %"] = stbl["Fabric Ordered (mtr)"] / stbl["Fabric Ordered (mtr)"].sum() * 100
+            stbl = with_total(stbl, "Vendor", pct=("Share %", "Fabric Ordered (mtr)", "Fabric Ordered (mtr)"))
+            show_table(stbl, pct_cols=("Share %",), dec_cols=("Fabric Ordered (mtr)",), height=380)
 
 
 # -----------------------------------------------------------------------------
