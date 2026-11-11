@@ -46,6 +46,13 @@ SHEET_REGISTRY = {
         "gid": 418084418,  # fallback only (INDEX tab)
         "source_tabs": ["INDEX"],
     },
+    "Designer Target": {
+        "id": "14USlaIteR3xlHjwzJOhZjLoyAZi-xAiF4LMXUE_UR2Y",
+        "type": "target_revenue",
+        "source_tabs": ["NEW"],        # NEW orders  -> yearly target applies here
+        "repeat_tabs": ["REPEAT"],     # REPEAT orders -> revenue only
+        "annual_target_cr": 50.2,      # yearly NEW target in crore (also editable on the dashboard)
+    },
 }
 
 # Google Sheet data is re-read at most once per this many seconds (live updates)
@@ -605,7 +612,7 @@ def _rate_class(v):
     return "r-bad"
 
 
-def show_table(df, pct_cols=(), dec_cols=(), height=None):
+def show_table(df, pct_cols=(), dec_cols=(), height=None, money_cols=(), rate_cols=None, rate_fn=None):
     """Theme-aware HTML table (sticky header, TOTAL row highlighted, scrolls instead of overlapping)."""
     if df is None or df.empty:
         notice("Selected filters ke liye data nahi hai.")
@@ -614,6 +621,8 @@ def show_table(df, pct_cols=(), dec_cols=(), height=None):
     numeric = {c: pd.api.types.is_numeric_dtype(df[c]) for c in cols}
     head = "".join(f"<th>{_esc(c)}</th>" for c in cols)
     body = []
+    rate_cols = RATE_COLS if rate_cols is None else set(rate_cols)
+    rate_fn = rate_fn or _rate_class
     value_cols = [c for c in cols[1:] if numeric[c] and c not in pct_cols]
     for _, row in df.iterrows():
         first = str(row.iloc[0]).strip().upper()
@@ -627,8 +636,10 @@ def show_table(df, pct_cols=(), dec_cols=(), height=None):
                 fv = float(v)
                 if c in pct_cols:
                     txt = f"{fv:.1f}%"
-                    if c in RATE_COLS and cls != "ref" and has_data:
-                        klass = _rate_class(fv)
+                    if c in rate_cols and cls != "ref" and has_data:
+                        klass = rate_fn(fv)
+                elif c in money_cols:
+                    txt = inr(fv)
                 elif c in dec_cols:
                     txt = f"{fv:,.2f}"
                 else:
@@ -2151,7 +2162,522 @@ def _fabpo_body(sheet_name, cfg, tab):
 
 
 # -----------------------------------------------------------------------------
-# 10. MAIN ROUTER
+# 10. TARGET & REVENUE DASHBOARD  (sheet: "DESIGNER'S TARGET ACHIEVED 2026-27")
+#     Source tabs: "NEW" and "REPEAT"  ->  row 1 = title, row 2 = header, data from row 3
+#     Columns (A..K): S.NO | ORDER DATE | IMAGE | BARCODE | ITEM NAME | SIZE | NO.OF PCS | RATE |
+#                     ORDER BY | DESIGNER | TOTAL AMOUNT
+#     Revenue = NO.OF PCS x RATE  (RATE = price of ONE piece).  The sheet's TOTAL AMOUNT column is only
+#     used to cross-check the calculation (see "Data Quality Check" at the bottom of the dashboard).
+#     Yearly target (50.2 Cr) is for NEW orders only; achievement is tracked by ORDER DATE month.
+# -----------------------------------------------------------------------------
+NEW_TARGET_CR = 50.2                 # yearly NEW-order target in crore (can also be changed on the dashboard)
+NEW_MONTHLY_WEIGHTS = [1] * 12       # Apr..Mar. Equal = target / 12 per month. Seasonal split? e.g. [1, 1, 1, 1, 1, 1, 1.5, 1.5, 1.5, 1, 1, 1]
+TGT_COLS = {                         # field -> (normalised header name, fallback column position A=0 ...)
+    "sno": ("SNO", 0), "date": ("ORDERDATE", 1), "barcode": ("BARCODE", 3), "item": ("ITEMNAME", 4),
+    "size": ("SIZE", 5), "pcs": ("NOOFPCS", 6), "rate": ("RATE", 7), "order_by": ("ORDERBY", 8),
+    "designer": ("DESIGNER", 9), "sheet_total": ("TOTALAMOUNT", 10),
+}
+REV_MONEY = ("New Revenue", "Repeat Revenue", "Total Revenue", "Avg Rate (₹/pc)")
+
+
+def inr(v):
+    """Full rupee amount with Indian digit grouping: 5020000 -> ₹50,20,000."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if not np.isfinite(v):
+        return ""
+    s = f"{int(round(abs(v))):d}"
+    if len(s) > 3:
+        s = re.sub(r"(\d)(?=(\d\d)+$)", r"\1,", s[:-3]) + "," + s[-3:]
+    return f"{'-' if v < 0 and round(abs(v)) else ''}₹{s}"
+
+
+def inr_short(v):
+    """Compact amount for KPI tiles: ₹50.20 Cr / ₹3.29 L / ₹4,500."""
+    v = float(v)
+    a, sign = abs(v), ("-" if v < 0 else "")
+    if a >= 1e7:
+        return f"{sign}₹{a / 1e7:,.2f} Cr"
+    if a >= 1e5:
+        return f"{sign}₹{a / 1e5:,.2f} L"
+    return f"{sign}₹{a:,.0f}"
+
+
+def _tgt_header_row(grid):
+    for r in range(min(10, len(grid))):
+        keys = {norm_key(c) for c in grid[r]}
+        if "ORDERDATE" in keys and ({"NOOFPCS", "RATE", "BARCODE"} & keys):
+            return r
+    return None
+
+
+def _tgt_col_map(header):
+    keys = [norm_key(h) for h in header]
+    out = {}
+    for field, (name, pos) in TGT_COLS.items():
+        idx = keys.index(name) if name in keys else next((i for i, k in enumerate(keys) if k.startswith(name)), None)
+        out[field] = idx if idx is not None else pos
+    return out
+
+
+def build_target_orders(values, source):
+    """Raw tab grid (unformatted) -> one clean row per order line. Returns (df, header_found)."""
+    hr = _tgt_header_row(values)
+    header_ok = hr is not None
+    if hr is None:
+        hr = 1 if len(values) > 1 else 0
+    if not values:
+        return pd.DataFrame(), header_ok
+    cmap = _tgt_col_map(values[hr])
+    rows = values[hr + 1:]
+    if not rows:
+        return pd.DataFrame(), header_ok
+    width = max(max(len(r) for r in rows), max(cmap.values()) + 1)
+    # index = real sheet row number (header is on sheet row hr+1, so first data row is hr+2)
+    grid = pd.DataFrame([list(r) + [""] * (width - len(r)) for r in rows], index=range(hr + 2, hr + 2 + len(rows)))
+
+    def col(field):
+        return grid[cmap[field]]
+
+    pcs, rate, sno = num(col("pcs")), num(col("rate")), num(col("sno"))
+    barcode = clean_text(col("barcode")).str.upper()
+    item = clean_text(col("item")).str.upper()
+    label_cells = pd.concat([clean_text(col(f)).str.upper() for f in ("sno", "date", "barcode", "item")], axis=1)
+    totalish = label_cells.apply(lambda c: c.str.contains(r"\bTOTAL\b", regex=True)).any(axis=1)
+    has_id = (barcode != "") | (item != "") | (sno > 0)
+    keep = (pcs > 0) & has_id & ~totalish            # drops blank rows, TOTAL rows, helper rows
+
+    d = pd.DataFrame(index=grid.index)
+    d.index.name = "sheet_row"
+    d["source"] = source
+    d["date"] = parse_dates(col("date"))
+    d["month"] = month_label(d["date"])
+    d["barcode"] = barcode.replace("", "(NO BARCODE)")
+    d["item"] = item.replace("", "(NO ITEM)")
+    d["size"] = clean_text(col("size"))
+    d["pcs"] = pcs
+    d["rate"] = rate
+    d["order_by"] = clean_text(col("order_by")).str.upper().replace("", "(BLANK)")
+    d["designer"] = clean_text(col("designer")).str.upper().replace("", "(NOT ASSIGNED)")
+    d["sheet_total"] = num(col("sheet_total"))
+    d["revenue"] = d["pcs"] * d["rate"]
+    return d[keep], header_ok
+
+
+def load_target_data(cfg):
+    """Reads NEW + REPEAT tabs (cached, LIVE_TTL). Returns (df, notes, synced_label)."""
+    sheet_id = cfg["id"]
+    titles = [t for t, _ in list_tabs_meta(sheet_id)]
+    frames, notes, synced = [], [], now_label()
+    for source, names in (("NEW", cfg.get("source_tabs", ["NEW"])), ("REPEAT", cfg.get("repeat_tabs", ["REPEAT"]))):
+        tab = next((t for t in (find_tab(titles, n) for n in names) if t), None)
+        if tab is None:
+            notes.append(f"'{source}' tab sheet me nahi mila (expected: {', '.join(names)}) - uska data count nahi hua.")
+            continue
+        pack = fetch_grid(sheet_id, tab)
+        synced = pack["synced"]
+        df, header_ok = build_target_orders(pack["values"], source)
+        if not header_ok:
+            notes.append(f"'{tab}' tab me header row (ORDER DATE / NO.OF PCS / RATE) nahi mili - default columns "
+                         "(A..K) use hue hain, numbers check kar lein.")
+        if not df.empty:
+            df["tab"] = tab
+            frames.append(df)
+    if not frames:
+        return pd.DataFrame(), notes, synced
+    return pd.concat(frames).reset_index(), notes, synced
+
+
+def _month_start(i):
+    return pd.Timestamp(year=FY_START_YEAR if i < 9 else FY_START_YEAR + 1, month=FY_MONTH_NOS[i], day=1)
+
+
+def target_monthly(d, annual_target, today):
+    """Month-wise NEW target vs achieved. Returns (table without TOTAL row, FY month start dates)."""
+    extra = sorted({m for m in d["month"].unique() if m not in FY_MONTH_LABELS}, key=month_sort_key)
+    months = FY_MONTH_LABELS + extra
+    w = np.asarray(NEW_MONTHLY_WEIGHTS, dtype=float)
+    w = w / w.sum() if w.sum() > 0 else np.full(12, 1 / 12)
+    tgt = pd.Series(0.0, index=months)
+    tgt.loc[FY_MONTH_LABELS] = annual_target * w
+    is_new = d["source"] == "NEW"
+    new = d[is_new].groupby("month")["revenue"].sum().reindex(months, fill_value=0.0)
+    rep = d[~is_new].groupby("month")["revenue"].sum().reindex(months, fill_value=0.0)
+    starts = pd.Series([_month_start(i) for i in range(12)] + [pd.NaT] * len(extra), index=months)
+    in_fy = pd.Series([True] * 12 + [False] * len(extra), index=months)
+    future = in_fy & (starts > today) & (new == 0)          # month not started yet -> no % / variance shown
+
+    pct = pd.Series(np.where(tgt > 0, new / tgt.replace(0, np.nan) * 100, np.nan), index=months)
+    pct[future] = np.nan
+    var = (new - tgt).where(in_fy & ~future)
+    cum_t = tgt.where(in_fy).cumsum()
+    cum_a = new.where(in_fy).cumsum().where(~future)
+    cum_p = cum_a / cum_t.replace(0, np.nan) * 100
+    df = pd.DataFrame({
+        "Month": months, "Target": tgt.values, "Achieved (New)": new.values, "Achieved %": pct.values,
+        "Variance": var.values, "Cum. Target": cum_t.values, "Cum. Achieved": cum_a.values, "Cum. %": cum_p.values,
+        "Repeat Revenue": rep.values, "New + Repeat": (new + rep).values})
+    return df, starts
+
+
+def target_rate_class(v):
+    return "r-good" if v >= 100 else ("r-mid" if v >= 75 else "r-bad")
+
+
+def _rev_stats(g):
+    rev, pcs = float(g["revenue"].sum()), float(g["pcs"].sum())
+    return {"New Revenue": float(g.loc[g["source"] == "NEW", "revenue"].sum()),
+            "Repeat Revenue": float(g.loc[g["source"] == "REPEAT", "revenue"].sum()),
+            "Total Revenue": rev, "Total Pcs": pcs, "Orders": int(len(g)),
+            "Avg Rate (₹/pc)": (rev / pcs) if pcs else 0.0}
+
+
+def rev_group(x, col, label, index=None, share=True):
+    """Revenue table grouped by `col` (+ TOTAL row, totals recomputed - averages are never summed)."""
+    total = float(x["revenue"].sum())
+    keys = list(index) if index is not None else list(dict.fromkeys(x[col]))
+    rows = []
+    for k in keys:
+        s = _rev_stats(x[x[col] == k])
+        if share:
+            s["Share %"] = safe_div_pct(s["Total Revenue"], total)
+        rows.append({label: k, **s})
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    if index is None:
+        df = df.sort_values("Total Revenue", ascending=False).reset_index(drop=True)
+    tot = {label: "TOTAL", **_rev_stats(x)}
+    if share:
+        tot["Share %"] = 100.0 if total else 0.0
+    cols = [label, "New Revenue", "Repeat Revenue", "Total Revenue"] + (["Share %"] if share else []) + \
+           ["Total Pcs", "Orders", "Avg Rate (₹/pc)"]
+    return pd.concat([df, pd.DataFrame([tot])], ignore_index=True)[cols]
+
+
+def donut(labels, values, title, ns="tgt", height=400):
+    base = pal()
+    fig = go.Figure(go.Pie(labels=list(labels), values=list(values), hole=0.55, sort=False, direction="clockwise",
+                           marker=dict(colors=[base[i % len(base)] for i in range(len(labels))]),
+                           textinfo="percent", textposition="inside", insidetextorientation="horizontal",
+                           hovertemplate="%{label}<br>₹%{value:,.0f} (%{percent})<extra></extra>"))
+    chart(fig, title, height, ns=ns, legend="right")
+
+
+def render_target_dashboard(sheet_name, cfg):
+    run_live(_target_body, sheet_name, cfg)
+
+
+def _target_body(sheet_name, cfg):
+    try:
+        d, notes, synced = load_target_data(cfg)
+    except SheetAccessError as e:
+        show_access_error(e)
+        return
+    hero("🎯", "Designer Target & Revenue Dashboard", None, synced)
+    for n in notes:
+        notice(n, "warning")
+    if d.empty:
+        notice("Target sheet me order data nahi mila. Expected: 'NEW' aur 'REPEAT' tab, row 2 = header (ORDER DATE, "
+               "BARCODE, ITEM NAME, NO.OF PCS, RATE, ORDER BY, DESIGNER, TOTAL AMOUNT), row 3 se data.", "warning")
+        return
+
+    # ---------------- target settings ----------------
+    with st.expander("⚙️ Target Settings", expanded=False):
+        annual_cr = st.number_input("Yearly NEW order target (₹ Cr)", min_value=0.0, step=0.1, format="%.2f",
+                                    value=float(cfg.get("annual_target_cr", NEW_TARGET_CR)), key="tgt_annual_cr")
+        st.caption("Monthly target = yearly target ÷ 12 (barabar split). Seasonal split chahiye to code me "
+                   "NEW_MONTHLY_WEIGHTS badal dein. Target sirf NEW orders par lagta hai, REPEAT alag dikhaya jata hai.")
+    annual_target = float(annual_cr) * 1e7
+    today = _today_ist()
+
+    # =============== A) TARGET TRACKER (overall - filters apply nahi hote) ===============
+    mt, starts = target_monthly(d, annual_target, today)
+    new_total = float(d.loc[d["source"] == "NEW", "revenue"].sum())
+    rep_total = float(d.loc[d["source"] == "REPEAT", "revenue"].sum())
+    ach_pct = safe_div_pct(new_total, annual_target)
+    remaining = max(annual_target - new_total, 0.0)
+    elapsed = [m for m in FY_MONTH_LABELS if starts[m] <= today]
+    months_left = sum(1 for m in FY_MONTH_LABELS if (starts[m] + pd.offsets.MonthEnd(0)) >= today)
+    sched = float(mt.loc[mt["Month"].isin(elapsed), "Target"].sum())
+    gap = new_total - sched
+    if not elapsed:
+        sched_txt = "FY not started"
+    else:
+        sched_txt = f"{'Ahead' if gap >= 0 else 'Behind'} {inr_short(abs(gap))}"
+    req_txt = f"{inr_short(remaining / months_left)} ({months_left} mo left)" if months_left and remaining > 0 else \
+        ("Target Achieved 🎉" if remaining <= 0 and annual_target > 0 else "—")
+
+    badge("🎯 NEW Order Target Tracker (overall - niche ke filters yahan apply nahi hote)")
+    metrics([("Yearly Target (New)", inr_short(annual_target)),
+             ("Achieved (New)", inr_short(new_total)),
+             ("Achieved %", f"{ach_pct:.1f}%"),
+             ("Remaining Target", inr_short(remaining)),
+             (f"Vs Schedule (till {elapsed[-1] if elapsed else '-'})", sched_txt),
+             ("Required / Month", req_txt),
+             ("Repeat Revenue", inr_short(rep_total)),
+             ("Total Revenue (New + Repeat)", inr_short(new_total + rep_total))])
+
+    st.caption("Vs Schedule = ab tak ke mahino (current month ko milakar) ka cumulative target minus achieved. "
+               "Required / Month = remaining target ÷ bache hue mahine (current month ko milakar).")
+    top = max(100, int(np.ceil(ach_pct / 20.0) * 20))
+    steps = [dict(range=[0, 50], color=_hex_to_rgba(COLORS["red"], 0.25)),
+             dict(range=[50, 100], color=_hex_to_rgba(COLORS["amber"], 0.25))]
+    if top > 100:
+        steps.append(dict(range=[100, top], color=_hex_to_rgba(COLORS["green"], 0.25)))
+    gauge = go.Figure(go.Indicator(
+        mode="gauge+number", value=float(ach_pct), number=dict(suffix="%", valueformat=".1f", font=dict(size=38, color=PLOT_TEXT)),
+        gauge=dict(axis=dict(range=[0, top], tickfont=dict(color=PLOT_MUTED)), bar=dict(color=COLORS["blue"]),
+                   bgcolor="rgba(0,0,0,0)", borderwidth=0, steps=steps,
+                   threshold=dict(line=dict(color=PLOT_TEXT, width=3), thickness=0.8, value=100))))
+    body = mt.copy()
+    labels = list(body["Month"])
+    cr = 1e7
+    c1, c2 = st.columns([1, 2], gap="medium")
+    with c1:
+        chart(gauge, "Yearly Target Achieved %", 330, ns="tgt", legend="none",
+              subtitle=f"{inr_short(new_total)} of {inr_short(annual_target)} (New orders)")
+    with c2:
+        ach_cr = (body["Achieved (New)"] / cr).tolist()
+        tgt_cr = (body["Target"] / cr).tolist()
+        colors = [COLORS["green"] if (t > 0 and a >= t) else COLORS["blue"] for a, t in zip(ach_cr, tgt_cr)]
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name="Achieved (New)", x=labels, y=ach_cr, marker_color=colors,
+                             text=[f"{v:.2f}" if v else "" for v in ach_cr], textposition="outside", cliponaxis=False,
+                             hovertemplate="%{x}<br>Achieved: ₹%{y:.2f} Cr<extra></extra>"))
+        fig.add_trace(go.Scatter(name="Monthly Target", x=labels, y=tgt_cr, mode="lines+markers",
+                                 line=dict(color=COLORS["amber"], width=2, dash="dash"),
+                                 hovertemplate="%{x}<br>Target: ₹%{y:.2f} Cr<extra></extra>"))
+        fig.update_yaxes(title="₹ Cr")
+        fig.update_xaxes(title="")
+        chart(fig, "Month-wise NEW Order: Achieved vs Target (₹ Cr)", 330, ns="tgt",
+              subtitle="Green bar = month ka target poora hua")
+
+    # month-wise table (+ TOTAL row)
+    tot = {"Month": "TOTAL", "Target": float(body.loc[body["Month"].isin(FY_MONTH_LABELS), "Target"].sum()),
+           "Achieved (New)": new_total, "Achieved %": ach_pct if annual_target > 0 else np.nan,
+           "Variance": new_total - annual_target, "Cum. Target": np.nan, "Cum. Achieved": np.nan, "Cum. %": np.nan,
+           "Repeat Revenue": rep_total, "New + Repeat": new_total + rep_total}
+    shown = pd.concat([body, pd.DataFrame([tot])], ignore_index=True)
+    money = ("Target", "Achieved (New)", "Variance", "Cum. Target", "Cum. Achieved", "Repeat Revenue", "New + Repeat")
+    badge("📅 Month-wise Target vs Achieved (Order Date month, NEW orders)")
+    c1, c2 = st.columns([1.55, 1], gap="medium")
+    with c1:
+        table_with_download(shown, "target_monthly", pct_cols=("Achieved %", "Cum. %"), money_cols=money,
+                            rate_cols=("Achieved %", "Cum. %"), rate_fn=target_rate_class, height=560)
+        st.caption("Achieved % ka rang: 🟢 ≥100%  🟡 75-99%  🔴 <75%. Jo mahina abhi shuru nahi hua uska % khaali dikhta hai.")
+        nd = float(d.loc[(d["month"] == "(NO DATE)") & (d["source"] == "NEW"), "revenue"].sum())
+        if nd > 0:
+            notice(f"{inr(nd)} ke NEW orders ki Order Date khaali/unreadable hai - ye total me count hue, "
+                   "par kisi month me nahi (table me '(NO DATE)' row).", "warning")
+    with c2:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(name="Cumulative Target", x=labels, y=(body["Cum. Target"] / cr).tolist(),
+                                 mode="lines+markers", line=dict(color=COLORS["amber"], width=2, dash="dash"),
+                                 hovertemplate="%{x}<br>Cum. Target: ₹%{y:.2f} Cr<extra></extra>"))
+        fig.add_trace(go.Scatter(name="Cumulative Achieved", x=labels, y=(body["Cum. Achieved"] / cr).tolist(),
+                                 mode="lines+markers", line=dict(color=COLORS["green"], width=3), fill="tozeroy",
+                                 fillcolor=_hex_to_rgba(COLORS["green"], 0.12),
+                                 hovertemplate="%{x}<br>Cum. Achieved: ₹%{y:.2f} Cr<extra></extra>"))
+        fig.update_yaxes(title="₹ Cr")
+        fig.update_xaxes(title="")
+        chart(fig, "Cumulative NEW Order Achievement vs Target (₹ Cr)", 560, ns="tgt")
+
+    # =============== B) FILTERED ANALYTICS ===============
+    st.markdown("---")
+    keys = {"month": "tgt_month", "designer": "tgt_designer", "item": "tgt_item", "order_by": "tgt_orderby",
+            "source": "tgt_source"}
+    extra_m = sorted({m for m in d["month"].unique() if m not in FY_MONTH_LABELS}, key=month_sort_key)
+    all_months = FY_MONTH_LABELS + extra_m
+
+    def opts(c):
+        return sorted(v for v in d[c].unique() if v)
+
+    badge("🔎 Interactive Filters  (kuch select na karein = ALL)")
+    c = st.columns([1.1, 1.2, 1.3, 1.1, 1.0, 0.75], vertical_alignment="bottom")
+    f_month = multi(c[0], "Order Month", all_months, keys["month"], "All months")
+    f_des = multi(c[1], "Designer", opts("designer"), keys["designer"], "All designers")
+    f_item = multi(c[2], "Item Name", opts("item"), keys["item"], "All items")
+    f_by = multi(c[3], "Order By", opts("order_by"), keys["order_by"], "All")
+    f_src = multi(c[4], "Order Type", ["NEW", "REPEAT"], keys["source"], "NEW + REPEAT")
+    c[5].button("↺ Reset", key="tgt_reset", on_click=_reset_filters, args=({k: [] for k in keys.values()},), **STRETCH)
+
+    x = d
+    for sel, colname in ((f_month, "month"), (f_des, "designer"), (f_item, "item"), (f_by, "order_by"),
+                         (f_src, "source")):
+        if sel:
+            x = x[x[colname].isin(sel)]
+    if x.empty:
+        notice("Selected filters ke liye koi order nahi mila.")
+    else:
+        _target_sections(x, all_months)
+
+    # =============== C) DATA QUALITY ===============
+    _target_quality(d)
+
+
+def _target_sections(x, all_months):
+    s = _rev_stats(x)
+    des = rev_group(x, "designer", "Designer")
+    itm = rev_group(x, "item", "Item Name")
+    byc = rev_group(x, "order_by", "Order By")
+    des_b, itm_b, byc_b = (t[t.iloc[:, 0] != "TOTAL"] for t in (des, itm, byc))
+    top_des = f"{des_b.iloc[0, 0]} ({inr_short(des_b.iloc[0]['Total Revenue'])})" if len(des_b) else "N/A"
+    top_itm = f"{itm_b.iloc[0, 0]} ({inr_short(itm_b.iloc[0]['Total Revenue'])})" if len(itm_b) else "N/A"
+
+    badge("📊 Revenue Key Performance Indicators (filters ke hisab se)")
+    metrics([("Total Revenue", inr_short(s["Total Revenue"])),
+             ("New Order Revenue", inr_short(s["New Revenue"])),
+             ("Repeat Order Revenue", inr_short(s["Repeat Revenue"])),
+             ("Repeat Share %", f"{safe_div_pct(s['Repeat Revenue'], s['Total Revenue']):.1f}%"),
+             ("Total Pcs", f"{s['Total Pcs']:,.0f} Pcs"),
+             ("Order Lines", f"{s['Orders']:,}"),
+             ("Unique Designs (Barcode)", f"{x['barcode'].nunique():,}"),
+             ("Avg Rate / Pc", inr(s["Avg Rate (₹/pc)"])),
+             ("🏆 Top Designer", top_des), ("🏆 Top Item", top_itm)])
+    st.markdown("---")
+
+    # ---------------- month-wise revenue ----------------
+    badge("📅 Month-wise Revenue (New vs Repeat)")
+    mrev = rev_group(x, "month", "Month", index=all_months, share=False)
+    mbody = mrev[mrev["Month"] != "TOTAL"]
+    c1, c2 = st.columns([1.3, 1], gap="medium")
+    with c1:
+        table_with_download(mrev, "target_month_revenue", money_cols=REV_MONEY, height=560)
+    with c2:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name="New", x=list(mbody["Month"]), y=(mbody["New Revenue"] / 1e5).tolist(),
+                             marker_color=COLORS["green"], hovertemplate="%{x}<br>New: ₹%{y:,.2f} L<extra></extra>"))
+        fig.add_trace(go.Bar(name="Repeat", x=list(mbody["Month"]), y=(mbody["Repeat Revenue"] / 1e5).tolist(),
+                             marker_color=COLORS["purple"], hovertemplate="%{x}<br>Repeat: ₹%{y:,.2f} L<extra></extra>"))
+        fig.update_layout(barmode="stack")
+        fig.update_yaxes(title="₹ Lakh")
+        fig.update_xaxes(title="")
+        chart(fig, "Monthly Revenue: New vs Repeat (₹ Lakh)", 560, ns="tgt")
+
+    # ---------------- designer ----------------
+    st.markdown("---")
+    badge("👩‍🎨 Designer-wise Revenue")
+    c1, c2 = st.columns([1.5, 1], gap="medium")
+    with c1:
+        table_with_download(des, "target_designer", pct_cols=("Share %",), money_cols=REV_MONEY, height=460)
+    with c2:
+        o = des_b.sort_values("Total Revenue")
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name="New", y=list(o["Designer"]), x=(o["New Revenue"] / 1e5).tolist(), orientation="h",
+                             marker_color=COLORS["green"], hovertemplate="%{y}<br>New: ₹%{x:,.2f} L<extra></extra>"))
+        fig.add_trace(go.Bar(name="Repeat", y=list(o["Designer"]), x=(o["Repeat Revenue"] / 1e5).tolist(),
+                             orientation="h", marker_color=COLORS["purple"],
+                             hovertemplate="%{y}<br>Repeat: ₹%{x:,.2f} L<extra></extra>"))
+        fig.update_layout(barmode="stack")
+        fig.update_xaxes(title="₹ Lakh")
+        fig.update_yaxes(title="")
+        chart(fig, "Designer-wise Revenue (₹ Lakh)", max(340, 34 * len(o) + 130), ns="tgt")
+
+    # ---------------- item ----------------
+    st.markdown("---")
+    badge("👗 Item-wise Revenue")
+    c1, c2 = st.columns([1.5, 1], gap="medium")
+    with c1:
+        table_with_download(itm, "target_item", pct_cols=("Share %",), money_cols=REV_MONEY, height=460)
+    with c2:
+        donut(itm_b["Item Name"], itm_b["Total Revenue"], "Item Share of Revenue", height=420)
+
+    # ---------------- order by ----------------
+    st.markdown("---")
+    badge("🏷️ Order By-wise Revenue")
+    c1, c2 = st.columns([1.5, 1], gap="medium")
+    with c1:
+        table_with_download(byc, "target_orderby", pct_cols=("Share %",), money_cols=REV_MONEY, height=360)
+    with c2:
+        donut(byc_b["Order By"], byc_b["Total Revenue"], "Order By Share of Revenue", height=360)
+
+    # ---------------- rate analysis ----------------
+    st.markdown("---")
+    badge("💰 Rate Analysis (Rate = 1 pc ka rate)")
+    rs = x.groupby("rate").agg(pcs=("pcs", "sum"), orders=("pcs", "size"), revenue=("revenue", "sum")).reset_index()
+    total_rev = float(rs["revenue"].sum())
+    rs["Share %"] = rs["revenue"].map(lambda v: safe_div_pct(v, total_rev))
+    rs["Rate (₹/pc)"] = rs["rate"].map(lambda v: f"₹{v:,.0f}")
+    by_rev = rs.sort_values("revenue", ascending=False)
+    rtab = by_rev[["Rate (₹/pc)", "pcs", "orders", "revenue", "Share %"]].rename(
+        columns={"pcs": "Total Pcs", "orders": "Orders", "revenue": "Total Revenue"})
+    rtab = pd.concat([rtab, pd.DataFrame([{"Rate (₹/pc)": "TOTAL", "Total Pcs": float(rs["pcs"].sum()),
+                                           "Orders": int(rs["orders"].sum()), "Total Revenue": total_rev,
+                                           "Share %": 100.0 if total_rev else 0.0}])], ignore_index=True)
+    c1, c2 = st.columns([1.2, 1], gap="medium")
+    with c1:
+        table_with_download(rtab, "target_rate", pct_cols=("Share %",), money_cols=("Total Revenue",), height=420)
+    with c2:
+        p = rs.sort_values("rate").head(30)
+        fig = go.Figure(go.Bar(x=list(p["Rate (₹/pc)"]), y=p["pcs"].tolist(), marker_color=COLORS["teal"],
+                               hovertemplate="Rate %{x}<br>%{y:,.0f} pcs<extra></extra>"))
+        fig.update_xaxes(title="Rate per piece", type="category")
+        fig.update_yaxes(title="Pcs")
+        chart(fig, "Pcs Ordered by Rate Slab", 420, ns="tgt", legend="none")
+
+    # ---------------- top designs ----------------
+    st.markdown("---")
+    badge("🏆 Top 15 Designs by Revenue")
+    t = x.sort_values("revenue", ascending=False).head(15)
+    tbl = pd.DataFrame({"Barcode": t["barcode"].values, "Item Name": t["item"].values,
+                        "Designer": t["designer"].values, "Order By": t["order_by"].values,
+                        "Type": t["source"].values, "Order Date": t["date"].dt.strftime("%d/%m/%Y").fillna("").values,
+                        "Pcs": t["pcs"].values, "Rate (₹/pc)": t["rate"].values, "Revenue": t["revenue"].values})
+    table_with_download(tbl, "target_top_designs", money_cols=("Rate (₹/pc)", "Revenue"), height=520)
+
+    with st.expander("📄 Filtered order lines (full data)"):
+        full = x.sort_values(["date", "sheet_row"]).copy()
+        full["Order Date"] = full["date"].dt.strftime("%d/%m/%Y").fillna("")
+        full = full[["tab", "sheet_row", "Order Date", "barcode", "item", "size", "pcs", "rate", "revenue",
+                     "order_by", "designer"]]
+        full.columns = ["Tab", "Sheet Row", "Order Date", "Barcode", "Item Name", "Size", "Pcs", "Rate (₹/pc)",
+                        "Revenue", "Order By", "Designer"]
+        st.dataframe(full, hide_index=True, **STRETCH)
+        st.download_button("⬇️ Download CSV", full.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="target_order_lines.csv", mime="text/csv", key="dl_target_lines")
+
+
+def _target_quality(d):
+    """Cross-checks Revenue (PCS x RATE) with the sheet's own TOTAL AMOUNT column and flags bad rows."""
+    st.markdown("---")
+    badge("🧪 Data Quality Check (poora data, filters ke bina)")
+    calc, sheet = float(d["revenue"].sum()), float(d["sheet_total"].sum())
+    mism = d[(d["sheet_total"] > 0) & ((d["revenue"] - d["sheet_total"]).abs() > 1)]
+    no_total = d[(d["sheet_total"] <= 0) & (d["revenue"] > 0)]
+    no_rate = d[d["rate"] <= 0]
+    no_date = d[d["month"] == "(NO DATE)"]
+    notice(f"Order lines: {len(d):,}  ·  Calculated revenue (Pcs × Rate): {inr(calc)}  ·  "
+           f"Sheet 'TOTAL AMOUNT' sum: {inr(sheet)}", "info")
+    if mism.empty and no_total.empty:
+        notice("Calculation sheet ke TOTAL AMOUNT column se match karti hai.", "success")
+    if not mism.empty:
+        notice(f"{len(mism):,} rows me Pcs × Rate sheet ke TOTAL AMOUNT se alag hai (net difference "
+               f"{inr(mism['revenue'].sum() - mism['sheet_total'].sum())}). Dashboard Pcs × Rate use karta hai.", "warning")
+    if not no_total.empty:
+        notice(f"{len(no_total):,} rows me TOTAL AMOUNT khaali/0 hai par Pcs × Rate se revenue bana - dashboard me count hua.",
+               "warning")
+    if not no_rate.empty:
+        notice(f"{len(no_rate):,} rows me RATE khaali/0 hai - inka revenue 0 gina gaya ({int(no_rate['pcs'].sum()):,} pcs).",
+               "warning")
+    if not no_date.empty:
+        notice(f"{len(no_date):,} rows ki ORDER DATE khaali/unreadable hai - month-wise table me '(NO DATE)' me jayengi.",
+               "warning")
+    bad = pd.concat([mism, no_rate, no_date]).drop_duplicates(subset=["tab", "sheet_row"])
+    if not bad.empty:
+        with st.expander(f"Check karne wali rows ({len(bad):,})"):
+            b = pd.DataFrame({"Location": bad["tab"] + " · row " + bad["sheet_row"].astype(int).astype(str),
+                              "Barcode": bad["barcode"].values, "Pcs": bad["pcs"].values,
+                              "Rate (₹/pc)": bad["rate"].values, "Calculated": bad["revenue"].values,
+                              "Sheet Total": bad["sheet_total"].values,
+                              "Difference": (bad["revenue"] - bad["sheet_total"]).values})
+            show_table(b, money_cols=("Rate (₹/pc)", "Calculated", "Sheet Total", "Difference"), height=360)
+
+
+# -----------------------------------------------------------------------------
+# 11. MAIN ROUTER
 # -----------------------------------------------------------------------------
 LIVE_OPTIONS = {"Off": 0, "Every 1 min": 60, "Every 2 min": 120, "Every 5 min": 300}
 
@@ -2168,7 +2694,7 @@ def main():
     apply_theme()
     with st.sidebar:
         st.markdown("### ⏱️ Live Updates")
-        choice = st.selectbox("Auto-refresh (Sample, Fabricator & Fabric PO)", list(LIVE_OPTIONS.keys()), index=2, key="live_choice",
+        choice = st.selectbox("Auto-refresh (Sample, Fabricator, Fabric PO & Target)", list(LIVE_OPTIONS.keys()), index=2, key="live_choice",
                               help="Google Sheet me change hone par dashboard itne time me khud update ho jayega. "
                                    "Master Sheet ke liye Refresh button use karein ya page reload karein.")
         st.session_state["live_secs"] = LIVE_OPTIONS[choice]
@@ -2178,17 +2704,19 @@ def main():
 
     fy = f"{FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}"
     _html(f'<div class="dashboard-hero"><div class="hero-t">📊 Executive Operations &amp; Production Hub {fy}</div>'
-          f'<p>Designer · Production · Client · Sample · Fabricator · Fabric PO — live from Google Sheets</p></div>')
+          f'<p>Designer · Production · Client · Sample · Fabricator · Fabric PO · Target &amp; Revenue — live from Google Sheets</p></div>')
 
     master_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "tracker")
     sample_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "sample_summary")
     fab_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "overview_fabricators")
     po_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "fabric_po")
+    tgt_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "target_revenue")
     master_cfg = SHEET_REGISTRY[master_name]
 
-    t_des, t_prod, t_cli, t_smp, t_fab, t_po = st.tabs([
+    t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt = st.tabs([
         "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
-        "🔬 Sample Dashboard", "🧵 Fabricator Dashboard", "🧾 Fabric PO Dashboard"])
+        "🔬 Sample Dashboard", "🧵 Fabricator Dashboard", "🧾 Fabric PO Dashboard",
+        "🎯 Target & Revenue Dashboard"])
 
     # Master Sheet: loaded once, shared by its 3 dashboards
     master_err, d_all = None, None
@@ -2213,6 +2741,8 @@ def main():
         _safe(render_fabricator_dashboard, fab_name, SHEET_REGISTRY[fab_name])
     with t_po:
         _safe(render_fabric_po_dashboard, po_name, SHEET_REGISTRY[po_name])
+    with t_tgt:
+        _safe(render_target_dashboard, tgt_name, SHEET_REGISTRY[tgt_name])
 
 
 if __name__ == "__main__":
