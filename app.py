@@ -142,6 +142,7 @@ THEMES = {
         "TOTAL_BG": "#e3ecff", "TOTAL_TEXT": "#0b2a6b",
         "GOOD_BG": "#dcfce7", "GOOD_TX": "#166534", "MID_BG": "#fef3c7", "MID_TX": "#92400e",
         "BAD_BG": "#fee2e2", "BAD_TX": "#991b1b",
+        "BAR": "rgba(37, 99, 235, 0.17)", "BAR_NEG": "rgba(220, 38, 38, 0.15)",
         "SHADOW": "0 2px 10px rgba(15, 23, 42, 0.06)", "SCHEME": "light",
     },
     "dark": {
@@ -152,6 +153,7 @@ THEMES = {
         "TOTAL_BG": "#1e3a66", "TOTAL_TEXT": "#e6f0ff",
         "GOOD_BG": "rgba(52, 211, 153, 0.18)", "GOOD_TX": "#6ee7b7", "MID_BG": "rgba(251, 191, 36, 0.16)",
         "MID_TX": "#fcd34d", "BAD_BG": "rgba(248, 113, 113, 0.16)", "BAD_TX": "#fca5a5",
+        "BAR": "rgba(96, 165, 250, 0.26)", "BAR_NEG": "rgba(248, 113, 113, 0.24)",
         "SHADOW": "0 2px 12px rgba(0, 0, 0, 0.35)", "SCHEME": "dark",
     },
 }
@@ -167,7 +169,7 @@ CSS_TEMPLATE = """
     --title-bg: __TITLE_BG__; --title-text: __TITLE_TEXT__; --th-bg: __TH_BG__; --th-text: __TH_TEXT__;
     --row-alt: __ROW_ALT__; --row-hover: __ROW_HOVER__; --total-bg: __TOTAL_BG__; --total-text: __TOTAL_TEXT__;
     --good-bg: __GOOD_BG__; --good-tx: __GOOD_TX__; --mid-bg: __MID_BG__; --mid-tx: __MID_TX__;
-    --bad-bg: __BAD_BG__; --bad-tx: __BAD_TX__; --shadow: __SHADOW__;
+    --bad-bg: __BAD_BG__; --bad-tx: __BAD_TX__; --shadow: __SHADOW__; --bar: __BAR__; --bar-neg: __BAR_NEG__;
 }
 .stApp { background-color: var(--app-bg); color: var(--text-color); color-scheme: __SCHEME__;
          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -342,6 +344,9 @@ label:has(input[role="switch"]) > span + div > div { background-color: #ffffff !
 .tbl-wrap td.r-mid { background: var(--mid-bg) !important; color: var(--mid-tx); font-weight: 700; }
 .tbl-wrap td.r-bad { background: var(--bad-bg) !important; color: var(--bad-tx); font-weight: 700; }
 .tbl-wrap td.zero { color: var(--muted-color); }
+.tbl-wrap th.key { box-shadow: inset 0 -3px 0 var(--accent); }
+.tbl-wrap th.key .arw { font-size: .62rem; margin-left: 3px; opacity: .9; }
+.tbl-wrap td.key { font-weight: 700; background-repeat: no-repeat; }
 
 /* ---------- notes ---------- */
 .note { border: 1px solid var(--border-color); border-left: 4px solid var(--accent); background: var(--panel-bg);
@@ -644,14 +649,49 @@ def _rate_class(v):
     return "r-bad"
 
 
-def show_table(df, pct_cols=(), dec_cols=(), height=None, money_cols=(), rate_cols=None, rate_fn=None):
-    """Theme-aware HTML table (sticky header, TOTAL row highlighted, scrolls instead of overlapping)."""
+def _is_pinned(label):
+    t = str(label).strip().upper()
+    return t in TOTAL_LABELS or t.startswith("ALL OVER")
+
+
+def order_rows(df, key_col=None, sort=True, sort_abs=False):
+    """Rows sorted by the important column (high -> low); TOTAL / ALL OVER rows stay at the bottom.
+    sort=False keeps the existing (month / timeline) order."""
+    if df is None or df.empty or not key_col or key_col not in df.columns or not sort:
+        return df
+    pinned = df.iloc[:, 0].map(_is_pinned)
+    body, tail = df[~pinned], df[pinned]
+    vals = pd.to_numeric(body[key_col], errors="coerce")
+    if sort_abs:
+        vals = vals.abs()
+    order = vals.fillna(-np.inf).sort_values(ascending=False, kind="mergesort").index
+    return pd.concat([body.loc[order], tail], ignore_index=True)
+
+
+def show_table(df, pct_cols=(), dec_cols=(), height=None, money_cols=(), rate_cols=None, rate_fn=None,
+               key_col=None, sort=True, sort_abs=False):
+    """Theme-aware HTML table (sticky header, TOTAL row highlighted, scrolls instead of overlapping).
+    key_col = important column: rows sorted by it (high -> low, unless sort=False) and shown with colour bars."""
     if df is None or df.empty:
         notice("Selected filters ke liye data nahi hai.")
         return
+    if key_col not in df.columns:
+        key_col = None
+    df = order_rows(df, key_col, sort, sort_abs)
     cols = list(df.columns)
     numeric = {c: pd.api.types.is_numeric_dtype(df[c]) for c in cols}
-    head = "".join(f"<th>{_esc(c)}</th>" for c in cols)
+    bar_max = 0.0
+    if key_col and numeric[key_col]:
+        kv = pd.to_numeric(df.loc[~df.iloc[:, 0].map(_is_pinned), key_col], errors="coerce").abs()
+        bar_max = float(kv.max()) if kv.notna().any() else 0.0
+
+    def _th(c):
+        if c != key_col:
+            return f"<th>{_esc(c)}</th>"
+        tip = "Is column ke hisaab se bada → chhota" if sort else "Is column ko rang se highlight kiya gaya hai"
+        arrow = '<span class="arw">▼</span>' if sort else ""
+        return f'<th class="key" title="{tip}">{_esc(c)}{arrow}</th>'
+    head = "".join(_th(c) for c in cols)
     body = []
     rate_cols = RATE_COLS if rate_cols is None else set(rate_cols)
     rate_fn = rate_fn or _rate_class
@@ -680,6 +720,14 @@ def show_table(df, pct_cols=(), dec_cols=(), height=None, money_cols=(), rate_co
                     klass = "zero"
             else:
                 txt = "" if (v is None or (isinstance(v, float) and np.isnan(v))) else str(v)
+            if c == key_col and not cls:
+                klass = (klass + " key").strip()
+                if bar_max > 0 and numeric[c] and pd.notna(v) and float(v) != 0:
+                    w = min(100.0, abs(float(v)) / bar_max * 100)
+                    bar = "var(--bar-neg)" if float(v) < 0 else "var(--bar)"
+                    cells.append(f'<td class="{klass}" style="background-image:linear-gradient(90deg,{bar} {w:.1f}%,'
+                                 f'transparent {w:.1f}%)">{_esc(txt)}</td>')
+                    continue
             cells.append(f'<td class="{klass}">{_esc(txt)}</td>' if klass else f"<td>{_esc(txt)}</td>")
         body.append(f'<tr class="{cls}">' + "".join(cells) + "</tr>" if cls else "<tr>" + "".join(cells) + "</tr>")
     style = f' style="max-height:{int(height)}px"' if height else ""
@@ -981,7 +1029,7 @@ def designer_dashboard(d_all, key):
     badge("📊 Designer Volume & Share Breakdown")
     c1, c2 = st.columns([1.2, 1], gap="medium")
     with c1:
-        show_table(add_total(g, "Designer Name"), pct_cols=("Share %",))
+        show_table(add_total(g, "Designer Name"), pct_cols=("Share %",), key_col="Total Volume (Pcs)")
     with c2:
         melted = g.melt(id_vars="Designer Name", value_vars=["New Orders (Pcs)", "Repeat Orders (Pcs)"],
                         var_name="Order Type", value_name="Qty")
@@ -1002,7 +1050,7 @@ def designer_dashboard(d_all, key):
 
     c3, c4 = st.columns([1.25, 1], gap="medium")
     with c3:
-        show_table(add_total(cat_df, "Designer"))
+        show_table(add_total(cat_df, "Designer"), key_col="TOTAL")
     with c4:
         months = month_list(d_all)
         trend = x[x["qty"] != 0].groupby(["month", "designer"], as_index=False)["qty"].sum()
@@ -1040,7 +1088,7 @@ def client_dashboard(d_all, key):
 
     c1, c2, c3 = st.columns([1.25, 1, 1], gap="medium")
     with c1:
-        show_table(add_total(m, "MONTH"), height=520)
+        show_table(add_total(m, "MONTH"), height=520, key_col="ORDER QTY", sort=False)
     with c2:
         pie_df = m[m["ORDER QTY"] > 0]
         title = "Client Monthly Order Trend (Pcs)"
@@ -1075,7 +1123,7 @@ def client_dashboard(d_all, key):
 
     c4, c5 = st.columns([1.35, 1], gap="medium")
     with c4:
-        show_table(add_total(cat_df, "MONTH"), height=520)
+        show_table(add_total(cat_df, "MONTH"), height=520, key_col="TOTAL", sort=False)
     with c5:
         long = cat_df.melt(id_vars="MONTH", value_vars=cats, var_name="Category", value_name="Pcs")
         long = long[long["Pcs"] != 0]
@@ -1115,7 +1163,7 @@ def production_dashboard(d_all, key):
 
     c1, c2 = st.columns([1, 1.35], gap="medium")
     with c1:
-        show_table(add_total(cat, "CATEGORY"))
+        show_table(add_total(cat, "CATEGORY"), key_col="PENDING (AU)")
     with c2:
         chart_df = cat.melt(id_vars="CATEGORY", value_vars=["IN-PRODUCTION (AS)", "RECEIVED (AT)", "PENDING (AU)"],
                             var_name="Metric", value_name="PCS")
@@ -1137,7 +1185,7 @@ def production_dashboard(d_all, key):
         with f2:
             tbl = fab.rename(columns={"fabricator": "FABRICATOR", "pending": "PENDING PCS"})
             tbl["SHARE %"] = tbl["PENDING PCS"] / tbl["PENDING PCS"].sum() * 100
-            show_table(add_total(tbl, "FABRICATOR"), pct_cols=("SHARE %",), height=440)
+            show_table(add_total(tbl, "FABRICATOR"), pct_cols=("SHARE %",), height=440, key_col="PENDING PCS")
     else:
         notice("Selected filters ke liye fabricator pending data nahi hai.")
 
@@ -1155,7 +1203,7 @@ def production_dashboard(d_all, key):
 
     m1, m2 = st.columns([1, 1.35], gap="medium")
     with m1:
-        show_table(add_total(mdf, "MONTH"), height=520)
+        show_table(add_total(mdf, "MONTH"), height=520, key_col="PENDING (AU)", sort=False)
     with m2:
         line_df = mdf.melt(id_vars="MONTH", value_vars=["IN-PRODUCTION (AS)", "RECEIVED (AT)", "PENDING (AU)"],
                            var_name="Metric", value_name="PCS")
@@ -1409,6 +1457,7 @@ def with_total(df, label_col, pct=None, label="TOTAL"):
 
 
 def table_with_download(df, name, **kw):
+    df = order_rows(df, kw.get("key_col"), kw.get("sort", True), kw.get("sort_abs", False))
     show_table(df, **kw)
     st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"{name}.csv", mime="text/csv", key=f"dl_{name}")
@@ -1636,7 +1685,7 @@ def _sample_body(sheet_name, cfg, tab):
     c1, c2 = st.columns([1.15, 1], gap="medium")
     with c1:
         shown = with_total(mt, "Month", pct=("Approval %", "Approved", "Total"))
-        table_with_download(shown, "sample_monthly", pct_cols=("Approval %",), height=560)
+        table_with_download(shown, "sample_monthly", pct_cols=("Approval %",), height=560, key_col="Total", sort=False)
         nd = mt.loc[mt["Month"] == "(NO DATE)", "Total"].sum()
         if nd > 0:
             notice(f"{fmt(nd)} samples ki Process Date khaali ya unreadable hai - table me '(NO DATE)' row dekhein.", "warning")
@@ -1681,7 +1730,7 @@ def _sample_body(sheet_name, cfg, tab):
     c1, c2 = st.columns([1.25, 1], gap="medium")
     with c1:
         table_with_download(with_total(des_tbl, "Designer", pct=("Approval %", "Approved", "Total")),
-                            "sample_designer", pct_cols=("Approval %",), height=560)
+                            "sample_designer", pct_cols=("Approval %",), height=560, key_col="Total")
     with c2:
         entity_chart(des_tbl, "Designer", "Designer-wise Status (Pcs)")
 
@@ -1694,7 +1743,7 @@ def _sample_body(sheet_name, cfg, tab):
     c1, c2 = st.columns([1.25, 1], gap="medium")
     with c1:
         table_with_download(with_total(ven_tbl, "Vendor", pct=("Approval %", "Approved", "Total")),
-                            "sample_vendor", pct_cols=("Approval %",), height=560)
+                            "sample_vendor", pct_cols=("Approval %",), height=560, key_col="Total")
     with c2:
         entity_chart(ven_tbl, "Vendor", "Vendor-wise Status (Pcs)")
 
@@ -1854,7 +1903,8 @@ def _fab_body(sheet_name, cfg, tab):
     c1, c2 = st.columns([1.15, 1], gap="medium")
     with c1:
         table_with_download(with_total(monthly, "Month", pct=("RCVD %", "RCVD (Pcs)", "Pcs Under Production")),
-                            "fabricator_monthly", pct_cols=("RCVD %",), dec_cols=("Fabric Issue (mtr)",), height=560)
+                            "fabricator_monthly", pct_cols=("RCVD %",), dec_cols=("Fabric Issue (mtr)",), height=560,
+                            key_col="Pcs Under Production", sort=False)
     with c2:
         fig = go.Figure()
         for col_name, color in (("Pcs Under Production", COLORS["blue"]), ("RCVD (Pcs)", COLORS["green"]),
@@ -1898,7 +1948,7 @@ def _fab_body(sheet_name, cfg, tab):
     c1, c2 = st.columns([1.3, 1], gap="medium")
     with c1:
         table_with_download(shown, "fabricator_scorecard", pct_cols=("RCVD %",), dec_cols=("Fabric Issue (mtr)",),
-                            height=520)
+                            height=520, key_col="Pcs Under Production")
         if not ao_f.empty:
             diff = float((score[FAB_METRICS].sum() - ao_f[FAB_METRICS].sum()).abs().sum())
             if diff < 1:
@@ -1935,7 +1985,7 @@ def _fab_body(sheet_name, cfg, tab):
         tbl = tbl.reset_index()
         tbl = with_total(tbl, "Fabricator", label="ALL FABRICATORS")
         dec = ("TOTAL", *FY_MONTH_SHORT) if metric.startswith("Fabric") else ()
-        table_with_download(tbl, "fabricator_matrix", dec_cols=dec)
+        table_with_download(tbl, "fabricator_matrix", dec_cols=dec, key_col="TOTAL")
 
         fig = px.imshow(mat, text_auto=",.0f", aspect="auto", color_continuous_scale=HEAT_SCALE,
                         labels=dict(x="Month", y="Fabricator", color=""))
@@ -2238,6 +2288,7 @@ def _fabpo_body(sheet_name, cfg, tab):
                      ignore_index=True)
     badge("🗓️ Month Wise Summary")
     table_with_download(mtbl, "fabpo_monthly", pct_cols=("RCVD %",), dec_cols=FPO_DEC,
+                        key_col="Fabric Ordered (mtr)", sort=False,
                         height=min(520, 64 + 38 * len(mtbl)))
     st.markdown("---")
 
@@ -2245,7 +2296,8 @@ def _fabpo_body(sheet_name, cfg, tab):
     badge("🏭 Vendor Scorecard")
     vend = fabpo_group(x, "vendor", "Vendor")
     vv = vend[vend["Vendor"] != "TOTAL"]
-    table_with_download(vend, "fabpo_vendor", pct_cols=FPO_PCT, dec_cols=FPO_DEC, height=420)
+    table_with_download(vend, "fabpo_vendor", pct_cols=FPO_PCT, dec_cols=FPO_DEC, height=420,
+                        key_col="Fabric Ordered (mtr)")
 
     # Received vs Pending: vendors across the width (same layout as the monthly charts)
     o = vv.sort_values("Fabric Ordered (mtr)", ascending=False)
@@ -2281,7 +2333,8 @@ def _fabpo_body(sheet_name, cfg, tab):
             stbl = share[["Vendor", "Fabric Ordered (mtr)"]].copy()
             stbl["Share %"] = stbl["Fabric Ordered (mtr)"] / stbl["Fabric Ordered (mtr)"].sum() * 100
             stbl = with_total(stbl, "Vendor", pct=("Share %", "Fabric Ordered (mtr)", "Fabric Ordered (mtr)"))
-            show_table(stbl, pct_cols=("Share %",), dec_cols=("Fabric Ordered (mtr)",), height=380)
+            show_table(stbl, pct_cols=("Share %",), dec_cols=("Fabric Ordered (mtr)",), height=380,
+                       key_col="Fabric Ordered (mtr)")
 
 
 # -----------------------------------------------------------------------------
@@ -2621,7 +2674,8 @@ def _target_body(sheet_name, cfg):
     c1, c2 = st.columns([1.55, 1], gap="medium")
     with c1:
         table_with_download(shown, "target_monthly", pct_cols=("Achieved %", "Cum. %"), money_cols=money,
-                            rate_cols=("Achieved %", "Cum. %"), rate_fn=target_rate_class, height=560)
+                            rate_cols=("Achieved %", "Cum. %"), rate_fn=target_rate_class, height=560,
+                            key_col="Achieved (New)", sort=False)
         st.caption("Achieved % ka rang: 🟢 ≥100%  🟡 75-99%  🔴 <75%. Jo mahina abhi shuru nahi hua uska % khaali dikhta hai.")
         nd = float(d.loc[(d["month"] == "(NO DATE)") & (d["source"] == "NEW"), "revenue"].sum())
         if nd > 0:
@@ -2700,7 +2754,8 @@ def _target_sections(x, all_months):
     mbody = mrev[mrev["Month"] != "TOTAL"]
     c1, c2 = st.columns([1.3, 1], gap="medium")
     with c1:
-        table_with_download(mrev, "target_month_revenue", money_cols=REV_MONEY, height=560)
+        table_with_download(mrev, "target_month_revenue", money_cols=REV_MONEY, height=560,
+                            key_col="Total Revenue", sort=False)
     with c2:
         fig = go.Figure()
         fig.add_trace(go.Bar(name="New", x=list(mbody["Month"]), y=(mbody["New Revenue"] / 1e5).tolist(),
@@ -2717,7 +2772,8 @@ def _target_sections(x, all_months):
     badge("👩‍🎨 Designer-wise Revenue")
     c1, c2 = st.columns([1.5, 1], gap="medium")
     with c1:
-        table_with_download(des, "target_designer", pct_cols=("Share %",), money_cols=REV_MONEY, height=460)
+        table_with_download(des, "target_designer", pct_cols=("Share %",), money_cols=REV_MONEY, height=460,
+                            key_col="Total Revenue")
     with c2:
         o = des_b.sort_values("Total Revenue")
         fig = go.Figure()
@@ -2736,7 +2792,8 @@ def _target_sections(x, all_months):
     badge("👗 Item-wise Revenue")
     c1, c2 = st.columns([1.5, 1], gap="medium")
     with c1:
-        table_with_download(itm, "target_item", pct_cols=("Share %",), money_cols=REV_MONEY, height=460)
+        table_with_download(itm, "target_item", pct_cols=("Share %",), money_cols=REV_MONEY, height=460,
+                            key_col="Total Revenue")
     with c2:
         donut(itm_b["Item Name"], itm_b["Total Revenue"], "Item Share of Revenue", height=420)
 
@@ -2745,7 +2802,8 @@ def _target_sections(x, all_months):
     badge("🏷️ Order By-wise Revenue")
     c1, c2 = st.columns([1.5, 1], gap="medium")
     with c1:
-        table_with_download(byc, "target_orderby", pct_cols=("Share %",), money_cols=REV_MONEY, height=360)
+        table_with_download(byc, "target_orderby", pct_cols=("Share %",), money_cols=REV_MONEY, height=360,
+                            key_col="Total Revenue")
     with c2:
         donut(byc_b["Order By"], byc_b["Total Revenue"], "Order By Share of Revenue", height=360)
 
@@ -2767,15 +2825,21 @@ def _target_sections(x, all_months):
         g = g.sort_values(["orders", "pcs", "revenue"], ascending=False).head(15).reset_index(drop=True)
         g["last"] = g["last"].dt.strftime("%d/%m/%Y").fillna("")
         rows = []
+        omax = float(g["orders"].max()) if len(g) else 0.0
         for i, r in g.iterrows():
+            w = (float(r["orders"]) / omax * 100) if omax > 0 else 0.0
+            key_td = (f'<td class="key" style="background-image:linear-gradient(90deg,var(--bar) {w:.1f}%,'
+                      f'transparent {w:.1f}%)">{int(r["orders"]):,}</td>')
             img = (f'<img src="{html.escape(r["image"], quote=True)}" loading="lazy" referrerpolicy="no-referrer" '
                    f'style="height:64px;width:64px;object-fit:cover;border-radius:8px;">') if r["image"] else "—"
             rows.append(f"<tr><td>{i + 1}</td><td style='text-align:center'>{img}</td><td>{_esc(r['barcode'])}</td>"
-                        f"<td>{_esc(r['item'])}</td><td>{_esc(r['designer'])}</td><td>{int(r['orders']):,}</td>"
+                        f"<td>{_esc(r['item'])}</td><td>{_esc(r['designer'])}</td>{key_td}"
                         f"<td>{r['pcs']:,.0f}</td><td>{_esc(inr(r['revenue']))}</td><td>{_esc(r['last'])}</td></tr>")
         heads = ["#", "Image", "Barcode", "Item Name", "Designer", "Repeat Orders", "Repeat Pcs", "Repeat Revenue", "Last Repeat Date"]
         _html('<div class="tbl-wrap" style="max-height:640px"><table><thead><tr>'
-              + "".join(f"<th>{h}</th>" for h in heads) + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>")
+              + "".join(f'<th class="key" title="Is column ke hisaab se bada → chhota">{h}<span class="arw">▼</span></th>'
+                        if h == "Repeat Orders" else f"<th>{h}</th>" for h in heads)
+              + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>")
         if not g["image"].astype(bool).any():
             st.caption("Images nahi dikh rahi? Sheet ke IMAGE column me =IMAGE(\"link\") formula ya direct link hona chahiye. "
                        "'Insert → Image in cell' / floating images API se read nahi hoti.")
@@ -2830,7 +2894,8 @@ def _target_quality(d):
                               "Rate (₹/pc)": bad["rate"].values, "Calculated": bad["revenue"].values,
                               "Sheet Total": bad["sheet_total"].values,
                               "Difference": (bad["revenue"] - bad["sheet_total"]).values})
-            show_table(b, money_cols=("Rate (₹/pc)", "Calculated", "Sheet Total", "Difference"), height=360)
+            show_table(b, money_cols=("Rate (₹/pc)", "Calculated", "Sheet Total", "Difference"), height=360,
+                       key_col="Difference", sort_abs=True)
 
 
 # -----------------------------------------------------------------------------
