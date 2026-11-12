@@ -239,6 +239,38 @@ label:has(input[role="switch"]) > span + div { background-color: var(--chip-bg) 
 label[data-selected]:has(input[role="switch"]) > span + div { background-color: var(--accent) !important; border-color: var(--accent); }
 label:has(input[role="switch"]) > span + div > div { background-color: #ffffff !important; }
 [data-testid="stTooltipIcon"] svg, [data-testid="stTooltipHoverTarget"] svg { opacity: 1; color: var(--muted-color) !important; }
+
+/* ---------- month filter (button + panel) ---------- */
+.mf-label { font-size: .8rem; font-weight: 650; color: var(--text-color); line-height: 1.6; margin: 0 0 8px 0;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+[data-testid="stPopover"], [data-testid="stPopover"] > div { width: 100%; }
+[data-testid="stPopoverButton"] { width: 100%; min-height: 40px; justify-content: space-between !important;
+    background-color: var(--panel-bg) !important; color: var(--text-color) !important;
+    border: 1px solid var(--border-color) !important; border-radius: 8px !important; padding: 0 10px !important; }
+[data-testid="stPopoverButton"]:hover, [data-testid="stPopoverButton"]:focus-visible { border-color: var(--accent) !important; }
+[data-testid="stPopoverButton"] > div { width: 100%; display: flex; align-items: center; justify-content: space-between;
+    gap: 6px; min-width: 0; }
+[data-testid="stPopoverButton"] > div > div:first-child { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-start; }
+[data-testid="stPopoverButton"] [data-testid="stMarkdownContainer"], [data-testid="stPopoverButton"] [data-testid="stMarkdownContainer"] p {
+    text-align: left !important; width: 100%; }
+[data-testid="stPopoverButton"] p, [data-testid="stPopoverButton"] div { color: var(--text-color) !important; text-align: left;
+    font-weight: 500; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+[data-testid="stPopoverButton"] svg { color: var(--muted-color) !important; flex-shrink: 0; }
+[data-testid="stPopoverBody"] { background-color: var(--panel-bg) !important; color: var(--text-color) !important;
+    border: 1px solid var(--border-color) !important; border-radius: 12px !important; box-shadow: var(--shadow);
+    min-width: min(340px, 92vw); }
+[data-testid="stPopoverBody"] p, [data-testid="stPopoverBody"] label, [data-testid="stPopoverBody"] span,
+[data-testid="stPopoverBody"] [data-testid="stWidgetLabel"] p { color: var(--text-color); }
+[data-testid="stPopoverBody"] [data-testid="stWidgetLabel"] p { font-weight: 650; font-size: .8rem; }
+[data-testid="stPopoverBody"] [data-testid="stCaptionContainer"],
+[data-testid="stPopoverBody"] [data-testid="stCaptionContainer"] p { color: var(--muted-color) !important; }
+[data-testid="stPopoverBody"] [role="radiogroup"] { gap: 4px 14px; flex-wrap: wrap; }
+[data-testid="stRadioOption"] > div > div:first-child { background-color: var(--panel-bg) !important;
+    border-color: var(--muted-color) !important; }
+[data-testid="stRadioOption"] > div > div:first-child > div { background-color: var(--panel-bg) !important; }
+[data-testid="stRadioOption"][data-selected] > div > div:first-child { background-color: var(--accent) !important;
+    border-color: var(--accent) !important; }
+[data-testid="stRadioOption"][data-selected] > div > div:first-child > div { background-color: #ffffff !important; }
 .stMultiSelect [data-baseweb="tag"] { background-color: var(--chip-bg) !important; border: 1px solid var(--border-color) !important;
     border-radius: 6px !important; padding: 1px 6px !important; margin: 2px !important; max-width: 100%; }
 .stMultiSelect [data-baseweb="tag"] span, .stMultiSelect [data-baseweb="tag"] svg { color: var(--text-color) !important;
@@ -833,7 +865,10 @@ def filter_data(d, f):
     x = d
     for field in ["month", "designer", "client", "fabricator", "status", "category", "order_type"]:
         v = f.get(field, "All")
-        if v != "All":
+        if isinstance(v, (list, tuple)):          # month filter: list of months ([] = all)
+            if v:
+                x = x[x[field].isin(v)]
+        elif v != "All":
             x = x[x[field] == v]
     risk = f.get("risk", "All")
     if risk.startswith("Overdue"):
@@ -844,10 +879,15 @@ def filter_data(d, f):
 
 
 def filter_row(spec, key_prefix):
-    cols = st.columns(len(spec))
+    weights = [1.35 if field == "month" else 1 for field, _, _ in spec]   # month button shows a range text
+    cols = st.columns(weights, vertical_alignment="bottom")
     out = {}
     for c, (field, label, options) in zip(cols, spec):
-        out[field] = c.selectbox(label, options, key=f"{key_prefix}_{field}")
+        if field == "month":
+            out[field] = month_filter(c, label, [o for o in options if o != "All"], f"{key_prefix}_{field}",
+                                      placeholder="All")
+        else:
+            out[field] = c.selectbox(label, options, key=f"{key_prefix}_{field}")
     return out
 
 
@@ -1265,9 +1305,92 @@ def multi(container, label, options, key, placeholder="All"):
         return container.multiselect(label, options, key=key)
 
 
+MONTH_MODES = ["All months", "Range", "Pick months"]
+
+
+def _short_month(m):
+    """'April-26' -> 'Apr-26' (other labels unchanged)."""
+    mm = re.match(r"([A-Za-z]+)-(\d{2})$", str(m))
+    return f"{mm.group(1)[:3]}-{mm.group(2)}" if mm else str(m)
+
+
+def _month_popover(container, text):
+    for kw in (STRETCH, {"use_container_width": True}, {}):
+        try:
+            return container.popover(text, **kw)
+        except TypeError:
+            continue
+    return container.expander(text)
+
+
+def month_filter(container, label, options, key, placeholder="All months"):
+    """Month filter used on every dashboard: All months / Range (From -> To) / Pick months.
+    Returns the list of selected month labels ([] = all months), same as the old multiselect."""
+    options = list(options)
+    rng = sorted([m for m in options if month_sort_key(m)[0] < 9998], key=month_sort_key)   # dated months only
+    mode_key, from_key, to_key = f"{key}_mode", f"{key}_from", f"{key}_to"
+
+    # keep saved state valid (options can change when the sheet changes)
+    if st.session_state.get(mode_key) not in MONTH_MODES:
+        st.session_state[mode_key] = MONTH_MODES[0]
+    if rng:
+        if st.session_state.get(from_key) not in rng:
+            st.session_state[from_key] = rng[0]
+        if st.session_state.get(to_key) not in rng:
+            st.session_state[to_key] = rng[-1]
+    picked = st.session_state.get(key, [])
+    if not isinstance(picked, (list, tuple)):
+        picked = []
+    st.session_state[key] = [v for v in picked if v in options]
+
+    if st.session_state[mode_key] == "Range" and not rng:
+        st.session_state[mode_key] = MONTH_MODES[0]
+    mode = st.session_state[mode_key]
+
+    # current selection (computed first so the button can show it)
+    if mode == "Range":
+        i, j = rng.index(st.session_state[from_key]), rng.index(st.session_state[to_key])
+        lo, hi = min(i, j), max(i, j)
+        selected = rng[lo:hi + 1]
+        text = _short_month(rng[lo]) if lo == hi else f"{_short_month(rng[lo])} → {_short_month(rng[hi])}"
+    elif mode == "Pick months":
+        selected = list(st.session_state[key])
+        if not selected:
+            text = placeholder
+        elif len(selected) <= 2:
+            text = ", ".join(_short_month(m) for m in selected)
+        else:
+            text = f"{len(selected)} months selected"
+    else:
+        selected, text = [], placeholder
+
+    container.markdown(f'<div class="mf-label">{_esc(label)}</div>', unsafe_allow_html=True)
+    with _month_popover(container, f"📅 {text}"):
+        st.radio("Month filter type", MONTH_MODES if rng else [m for m in MONTH_MODES if m != "Range"],
+                 key=mode_key, horizontal=True)
+        if mode == "Range":
+            a, b = st.columns(2)
+            a.selectbox("From", rng, key=from_key, format_func=_short_month)
+            b.selectbox("To", rng, key=to_key, format_func=_short_month)
+            if rng.index(st.session_state[from_key]) > rng.index(st.session_state[to_key]):
+                st.caption("From month 'To' ke baad hai - range ulta maan kar apply kiya gaya.")
+            st.caption(f"{len(selected)} month(s): {_short_month(selected[0])} se {_short_month(selected[-1])} tak")
+        elif mode == "Pick months":
+            try:
+                st.multiselect("Months", options, key=key, placeholder=placeholder, format_func=_short_month)
+            except TypeError:
+                st.multiselect("Months", options, key=key, format_func=_short_month)
+            st.caption("Kuch select na karein = sabhi months.")
+        else:
+            st.caption("Sabhi months shamil hain. Range ya specific months ke liye upar option chunein.")
+    return selected
+
+
 def _reset_filters(defaults):
     for k, v in defaults.items():
         st.session_state[k] = v
+        for suffix in ("_mode", "_from", "_to"):      # month filter extras -> back to "All months"
+            st.session_state.pop(k + suffix, None)
 
 
 def with_total(df, label_col, pct=None, label="TOTAL"):
@@ -1471,7 +1594,7 @@ def _sample_body(sheet_name, cfg, tab):
     badge("🔎 Interactive Filters  (kuch select na karein = ALL)")
     c = st.columns([1.1, 1.2, 1.1, 1.2, 0.75], vertical_alignment="bottom")
     f = {
-        "month": multi(c[0], "Month", FY_MONTH_LABELS, keys["month"], "All months"),
+        "month": month_filter(c[0], "Month", FY_MONTH_LABELS, keys["month"], "All months"),
         "designer": multi(c[1], "Designer", designer_names, keys["designer"], "All designers"),
         "status": multi(c[2], "Status", SAMPLE_STATUSES, keys["status"], "All status"),
         "vendor": multi(c[3], "Vendor", vendor_names, keys["vendor"], "All vendors"),
@@ -1672,7 +1795,7 @@ def _fab_body(sheet_name, cfg, tab):
     badge("🔎 Interactive Filters  (kuch select na karein = ALL)")
     c = st.columns([1.4, 1.3, 1.2, 0.75], vertical_alignment="bottom")
     sel_fab = multi(c[0], "Fabricator", fab_names, keys["fab"], "All fabricators")
-    sel_month = multi(c[1], "Month", FY_MONTH_LABELS, keys["month"], "All months")
+    sel_month = month_filter(c[1], "Month", FY_MONTH_LABELS, keys["month"], "All months")
     metric = c[2].selectbox("Metric (Matrix / Heatmap)", FAB_METRICS, key="fab_metric")
     c[3].button("↺ Reset", key="fab_reset", on_click=_reset_filters,
                 args=({keys["fab"]: [], keys["month"]: [], "fab_metric": default_metric},), **STRETCH)
@@ -2046,7 +2169,7 @@ def _fabpo_body(sheet_name, cfg, tab):
             "designer": "fpo_designer", "item": "fpo_item", "status": "fpo_status"}
     badge("🔎 Interactive Filters  (kuch select na karein = ALL)")
     c = st.columns([1.1, 1.2, 1.0, 1.2, 0.75], vertical_alignment="bottom")
-    f_month = multi(c[0], "Order Month", months, keys["month"], "All months")
+    f_month = month_filter(c[0], "Order Month", months, keys["month"], "All months")
     f_vendor = multi(c[1], "Vendor", opts("vendor"), keys["vendor"], "All vendors")
     f_type = multi(c[2], "Order Type", opts("order_type"), keys["type"], "NEW / REPEAT")
     f_client = multi(c[3], "Client", opts("client"), keys["client"], "All clients")
@@ -2529,7 +2652,7 @@ def _target_body(sheet_name, cfg):
 
     badge("🔎 Interactive Filters  (kuch select na karein = ALL)")
     c = st.columns([1.1, 1.2, 1.3, 1.1, 1.0, 0.75], vertical_alignment="bottom")
-    f_month = multi(c[0], "Order Month", all_months, keys["month"], "All months")
+    f_month = month_filter(c[0], "Order Month", all_months, keys["month"], "All months")
     f_des = multi(c[1], "Designer", opts("designer"), keys["designer"], "All designers")
     f_item = multi(c[2], "Item Name", opts("item"), keys["item"], "All items")
     f_by = multi(c[3], "Order By", opts("order_by"), keys["order_by"], "All")
