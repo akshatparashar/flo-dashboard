@@ -2899,7 +2899,372 @@ def _target_quality(d):
 
 
 # -----------------------------------------------------------------------------
-# 11. MAIN ROUTER
+# 11. MANAGEMENT OVERVIEW  (first tab)
+#     One page for management: Orders / Production / Client / Designer (Master Sheet), Sample, Fabricator stock
+#     and Fabric PO.  Target & Revenue is NOT included (it has its own tab).
+#     Every number re-uses the SAME calculation functions as the individual dashboards, so they always match.
+# -----------------------------------------------------------------------------
+def _cfg_of(kind):
+    return next(c for c in SHEET_REGISTRY.values() if c.get("type") == kind)
+
+
+def _ovw_load(kind):
+    """Loads one source exactly like its own dashboard. Returns (data or None, error text or None)."""
+    cfg = _cfg_of(kind)
+    try:
+        if kind == "tracker":
+            return load_master(cfg), None
+        if kind == "sample_summary":
+            tab = resolve_source_tab(cfg)
+            return (build_samples(fetch_grid(cfg["id"], tab)["values"])[0] if tab else None), None
+        if kind == "overview_fabricators":
+            tab = resolve_source_tab(cfg, name_regex=r"monthwise|monthly\s*summary")
+            if not tab:
+                return None, None
+            _, df = build_fab_data(fetch_grid(cfg["id"], tab, True)["values"], fetch_grid(cfg["id"], tab)["values"])
+            return df, None
+        if kind == "fabric_po":
+            tab = resolve_source_tab(cfg, name_regex=r"^\s*index\s*$")
+            return (build_fabric_po(fetch_grid(cfg["id"], tab)["values"])[0] if tab else None), None
+    except SheetAccessError as e:
+        return None, str(e)
+    return None, None
+
+
+def _ovw_order_stats(g):
+    """Order / production numbers for any slice - same definitions as the Production dashboard KPIs."""
+    k = {lbl: val for lbl, _sheet, val, _kind in production_kpis(g)}
+    return {"Designs": int(k["TOTAL DESIGN"]), "Order Qty": float(g["qty"].sum()),
+            "In Production": float(k["INPRODUCTION PCS (AS)"]), "Received": float(k["RECEIVED PCS (AT)"]),
+            "Pending": float(k["PENDING PCS (AU)"]), "Overdue Pcs": float(k["OVERDUE PCS (AH > 0)"]),
+            "Avg Overdue Days": float(k["AVG OVERDUE DAYS"]), "On-Time %": float(k["ON-TIME DELIVERY %"])}
+
+
+def _ovw_group(x, col, label, stats_fn, cols=None):
+    """One row per group (+ TOTAL row computed on the whole slice, so averages / % are never summed)."""
+    rows = [{label: k, **stats_fn(g)} for k, g in x.groupby(col, sort=False)]
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    num_cols = [c for c in df.columns if c != label]
+    df = df[(df[num_cols].abs().sum(axis=1) > 0)]
+    df = pd.concat([df, pd.DataFrame([{label: "TOTAL", **stats_fn(x)}])], ignore_index=True)
+    return df[[label] + cols] if cols else df
+
+
+def _pcs(v):
+    return f"{fmt(v)} Pcs"
+
+
+def _top(df, label, col):
+    """(name, value) of the biggest row (TOTAL ignored)."""
+    if df is None or df.empty:
+        return None, 0.0
+    b = df[df[label] != "TOTAL"]
+    if b.empty or b[col].max() <= 0:
+        return None, 0.0
+    r = b.loc[b[col].idxmax()]
+    return r[label], float(r[col])
+
+
+def render_overview_dashboard():
+    run_live(_overview_body)
+
+
+def _overview_body():
+    dash_title("📌 Management Overview", chip=f"🕒 Updated {now_label()}")
+    st.caption("Designer, Production, Client, Sample, Fabricator aur Fabric PO dashboards ka ek page summary "
+               "(Target & Revenue apne tab me hai). Har number wahi calculation use karta hai jo us dashboard me hai.")
+
+    # ---------------- filter ----------------
+    badge("🔎 Filter")
+    c = st.columns([1.3, 3.2, 0.75], vertical_alignment="bottom")
+    months = month_filter(c[0], "Month", FY_MONTH_LABELS, "ovw_month", "All months")
+    c[1].caption("Month ka matlab: Orders = Order Date · Samples = Process Date · Fabricator = Stock month · "
+                 "Fabric PO = Order Date")
+    c[2].button("↺ Reset", key="ovw_reset", on_click=_reset_filters, args=({"ovw_month": []},), **STRETCH)
+
+    def by_month(df, col):
+        if df is None or df.empty or not months:
+            return df
+        return df[df[col].isin(months)]
+
+    master, m_err = _ovw_load("tracker")
+    smp, s_err = _ovw_load("sample_summary")
+    fab, f_err = _ovw_load("overview_fabricators")
+    po, p_err = _ovw_load("fabric_po")
+
+    xm = by_month(master, "month")
+    xs = by_month(smp, "month")
+    if fab is not None and not fab.empty:
+        fab_base = fab[~fab["is_all"]] if (~fab["is_all"]).any() else fab[fab["is_all"]]
+        xf = by_month(fab_base, "Month")
+    else:
+        xf = None
+    xp = by_month(po, "month")
+
+    # ======================= numbers (computed first, alerts are shown on top) =======================
+    alerts = []
+
+    # ---- Orders & production (Master Sheet) ----
+    if xm is not None:
+        ok = _ovw_order_stats(xm)
+        dk = {lbl: val for lbl, _s, val, _k in designer_kpis(xm)}
+        stat_cols = ["Designs", "Order Qty", "In Production", "Received", "Pending", "Overdue Pcs",
+                     "Avg Overdue Days", "On-Time %"]
+        short_cols = ["Order Qty", "In Production", "Received", "Pending", "Overdue Pcs"]
+        by_fab = _ovw_group(xm, "fabricator", "Fabricator", _ovw_order_stats, stat_cols)
+        by_cat = _ovw_group(xm, "category", "Category", _ovw_order_stats, short_cols)
+        by_cli = _ovw_group(xm, "client", "Client", _ovw_order_stats, short_cols)
+        n_overdue = int(((xm["production"] > 0) & (xm["delay"] > 0)).sum())
+        if ok["Pending"] > 0:
+            parts = []
+            for lbl, df in (("Fabricator", by_fab), ("Category", by_cat), ("Client", by_cli)):
+                name, val = _top(df, lbl, "Pending")
+                if name is not None:
+                    parts.append(f"{lbl}: {name} ({fmt(val)})")
+            alerts.append(("warning", f"Orders: {_pcs(ok['Pending'])} pending out of {_pcs(ok['In Production'])} "
+                                      f"in production ({safe_div_pct(ok['Pending'], ok['In Production']):.1f}%). "
+                                      f"Sabse zyada pending - " + " · ".join(parts)))
+        if ok["Overdue Pcs"] > 0:
+            alerts.append(("error" if ok["On-Time %"] < 50 else "warning",
+                           f"Overdue: {_pcs(ok['Overdue Pcs'])} across {n_overdue:,} designs, average "
+                           f"{ok['Avg Overdue Days']:.1f} days late. On-time delivery {ok['On-Time %']:.1f}%."))
+        elif ok["In Production"] > 0:
+            alerts.append(("success", "Overdue: koi design delivery date se late nahi hai."))
+
+    # ---- Fabricator stock (Fabricator Report) ----
+    if xf is not None:
+        ft = xf[FAB_METRICS].sum()
+        f_pct = safe_div_pct(ft["RCVD (Pcs)"], ft["Pcs Under Production"])
+        fg = xf.groupby("Fabricator", sort=False)[["Pcs Under Production", "RCVD (Pcs)", "Remaining (Pcs)"]].sum()
+        fg = fg[fg.abs().sum(axis=1) > 0]
+        fg["RCVD %"] = np.where(fg["Pcs Under Production"] > 0,
+                                fg["RCVD (Pcs)"] / fg["Pcs Under Production"].replace(0, np.nan) * 100, 0.0)
+        fg.index.name = "Fabricator"
+        fab_tbl = with_total(fg.reset_index(), "Fabricator", pct=("RCVD %", "RCVD (Pcs)", "Pcs Under Production"))
+        name, val = _top(fab_tbl, "Fabricator", "Remaining (Pcs)")
+        if ft["Remaining (Pcs)"] > 0:
+            alerts.append(("warning", f"Fabricator stock: {_pcs(ft['Remaining (Pcs)'])} remaining "
+                                      f"({f_pct:.1f}% received)." + (f" Most pending: {name} ({fmt(val)})." if name else "")))
+
+    # ---- Fabric PO ----
+    if xp is not None and not xp.empty:
+        ps = fabpo_stats(xp)
+        overdue_po = xp[xp["timing"] == "Overdue (Pending)"]
+        if len(overdue_po):
+            w = overdue_po.loc[overdue_po["delay_days"].idxmax()]
+            alerts.append(("error", f"Fabric PO: {len(overdue_po):,} POs overdue (abhi tak receive nahi hue). "
+                                    f"{fmt(ps['Pending (mtr)'])} mtr fabric pending. Longest: {int(w['delay_days'])} days "
+                                    f"- PO {w['po']} ({w['vendor']})."))
+        else:
+            alerts.append(("success", f"Fabric PO: koi overdue PO nahi. {fmt(ps['Pending (mtr)'])} mtr fabric pending."))
+
+    # ---- Samples ----
+    if xs is not None and not xs.empty:
+        sb = xs.groupby("status")["qty"].sum()
+        s_tot = float(xs["qty"].sum())
+        s_app, s_rej, s_hld, s_prc = (float(sb.get(k, 0.0)) for k in ("Approved", "Rejected", "On Hold", "In Process"))
+        s_ratio = safe_div_pct(s_app, s_tot)
+        alerts.append(("success" if s_ratio >= 50 else "warning",
+                       f"Samples: approval {s_ratio:.1f}% ({fmt(s_app)} of {fmt(s_tot)}), {fmt(s_rej)} rejected, "
+                       f"{fmt(s_hld + s_prc)} on hold / in process."))
+
+    # ======================= render =======================
+    badge("🚨 Needs Attention")
+    for label, err in (("Master Sheet", m_err), ("Sample Summary", s_err), ("Fabricator Report", f_err),
+                       ("Fabric PO", p_err)):
+        if err:
+            notice(f"{label} load nahi ho payi: {err}", "error")
+    if alerts:
+        for kind, text in alerts:
+            notice(text, kind)
+    else:
+        notice("Selected month ke liye koi data nahi hai.")
+
+    # ---------------- Orders & Production ----------------
+    if xm is not None:
+        st.markdown("---")
+        badge("📦 Orders & Production  (Master Sheet)")
+        metrics([("Total Designs", f"{int(dk['TOTAL DESIGNS']):,}"), ("Order Qty", _pcs(ok["Order Qty"])),
+                 ("New / Repeat", f"{fmt(dk['NEW ORDER QTY'])} / {fmt(dk['REPEAT ORDER QTY'])} Pcs"),
+                 ("In Production", _pcs(ok["In Production"])), ("Received", _pcs(ok["Received"])),
+                 ("Pending", _pcs(ok["Pending"])), ("Overdue Pcs", _pcs(ok["Overdue Pcs"])),
+                 ("On-Time Delivery %", f"{ok['On-Time %']:.1f}%"),
+                 ("Avg Overdue Days", f"{ok['Avg Overdue Days']:.1f} Days")])
+
+        badge("🧵 Pending & Overdue by Fabricator")
+        if by_fab.empty:
+            notice("Selected month ke liye order data nahi hai.")
+        else:
+            table_with_download(by_fab, "overview_fabricator_pending", pct_cols=("On-Time %",),
+                                dec_cols=("Avg Overdue Days",), rate_cols=("On-Time %",), key_col="Pending", height=440)
+            st.caption("Overdue Pcs / Avg Overdue Days / On-Time % - Production dashboard wala rule (delay days > 0 = overdue).")
+
+        c1, c2 = st.columns(2, gap="medium")
+        with c1:
+            badge("🧩 Pending by Category")
+            table_with_download(by_cat, "overview_category_pending", key_col="Pending", height=420)
+        with c2:
+            badge("🏢 Pending by Client")
+            table_with_download(by_cli, "overview_client_pending", key_col="Pending", height=420)
+
+        c1, c2 = st.columns(2, gap="medium")
+        with c1:
+            axis = [m for m in month_list(master) if (not months or m in months)]
+            mm = xm.groupby("month")[["received", "pending"]].sum().reindex(axis, fill_value=0)
+            mm = mm[(mm.sum(axis=1) > 0) | mm.index.isin(FY_MONTH_LABELS)]
+            fig = go.Figure()
+            fig.add_trace(go.Bar(name="Received", x=list(mm.index), y=mm["received"], marker_color=COLORS["green"]))
+            fig.add_trace(go.Bar(name="Pending", x=list(mm.index), y=mm["pending"], marker_color=COLORS["red"]))
+            fig.update_layout(barmode="stack")
+            fig.update_yaxes(title="Pcs")
+            chart(fig, "Monthly Orders: Received vs Pending (Pcs, Order month)", 400, ns="ovw")
+        with c2:
+            fb = by_fab[by_fab["Fabricator"] != "TOTAL"].sort_values("Pending") if not by_fab.empty else by_fab
+            if fb.empty:
+                empty_card("Fabricator: Received vs Pending (Pcs)", "Data nahi hai.", ns="ovw")
+            else:
+                fig = go.Figure()
+                fig.add_trace(go.Bar(name="Received", y=list(fb["Fabricator"]), x=fb["Received"], orientation="h",
+                                     marker_color=COLORS["green"]))
+                fig.add_trace(go.Bar(name="Pending", y=list(fb["Fabricator"]), x=fb["Pending"], orientation="h",
+                                     marker_color=COLORS["red"]))
+                fig.update_layout(barmode="stack", legend_traceorder="normal")
+                chart(fig, "Fabricator: Received vs Pending (Pcs)", max(400, 28 * len(fb) + 120), ns="ovw")
+
+    # ---------------- Designer snapshot (orders + samples) ----------------
+    if xm is not None or (xs is not None and not xs.empty):
+        st.markdown("---")
+        badge("👩‍🎨 Designer Snapshot  (Orders + Samples)")
+        parts = []
+        if xm is not None:
+            g = xm.groupby("designer")
+            parts.append(pd.DataFrame({
+                "Order Qty": g["qty"].sum(),
+                "New Pcs": xm[xm["order_type"] == "NEW"].groupby("designer")["qty"].sum(),
+                "Repeat Pcs": xm[xm["order_type"] == "REPEAT"].groupby("designer")["qty"].sum(),
+                "Pending Pcs": g["pending"].sum()}))
+        if xs is not None and not xs.empty:
+            sd = xs.assign(designer=xs["designer"].str.upper().replace({"(BLANK)": "(NOT ASSIGNED)"}))
+            parts.append(pd.DataFrame({
+                "Samples": sd.groupby("designer")["qty"].sum(),
+                "Approved": sd[sd["status"] == "Approved"].groupby("designer")["qty"].sum()}))
+        des = pd.concat(parts, axis=1).fillna(0.0)
+        for col_ in ("Order Qty", "New Pcs", "Repeat Pcs", "Pending Pcs", "Samples", "Approved"):
+            if col_ not in des.columns:
+                des[col_] = 0.0
+        des = des[des.abs().sum(axis=1) > 0]
+        des["Approval %"] = np.where(des["Samples"] > 0, des["Approved"] / des["Samples"].replace(0, np.nan) * 100, 0.0)
+        des.index.name = "Designer"
+        des = des.reset_index()[["Designer", "Order Qty", "New Pcs", "Repeat Pcs", "Pending Pcs", "Samples",
+                                 "Approved", "Approval %"]]
+        des = with_total(des, "Designer", pct=("Approval %", "Approved", "Samples"))
+        table_with_download(des, "overview_designer", pct_cols=("Approval %",), key_col="Order Qty", height=460)
+        st.caption("Order Qty / Pending = Master Sheet · Samples / Approved = Sample sheet (designer naam se joda gaya).")
+
+    # ---------------- Fabricator stock ----------------
+    if xf is not None:
+        st.markdown("---")
+        badge("🏭 Fabricator Stock Position  (Fabricator Report)")
+        metrics([("Fabric Issued", f"{ft['Fabric Issue (mtr)']:,.0f} mtr"),
+                 ("Pcs Under Production", _pcs(ft["Pcs Under Production"])), ("RCVD", _pcs(ft["RCVD (Pcs)"])),
+                 ("Remaining", _pcs(ft["Remaining (Pcs)"])), ("Received %", f"{f_pct:.1f}%"),
+                 ("Monthly Incoming", _pcs(ft["Monthly Incoming (Pcs)"]))])
+        c1, c2 = st.columns([1.15, 1], gap="medium")
+        with c1:
+            table_with_download(fab_tbl, "overview_fabricator_stock", pct_cols=("RCVD %",),
+                                key_col="Remaining (Pcs)", height=440)
+        with c2:
+            o = fab_tbl[fab_tbl["Fabricator"] != "TOTAL"].sort_values("Remaining (Pcs)")
+            if o.empty:
+                empty_card("Fabricator Stock: RCVD vs Remaining (Pcs)", "Data nahi hai.", ns="ovw")
+            else:
+                fig = go.Figure()
+                fig.add_trace(go.Bar(name="RCVD", y=list(o["Fabricator"]), x=o["RCVD (Pcs)"], orientation="h",
+                                     marker_color=COLORS["green"]))
+                fig.add_trace(go.Bar(name="Remaining", y=list(o["Fabricator"]), x=o["Remaining (Pcs)"],
+                                     orientation="h", marker_color=COLORS["red"]))
+                fig.update_layout(barmode="stack", legend_traceorder="normal")
+                chart(fig, "Fabricator Stock: RCVD vs Remaining (Pcs)", max(400, 30 * len(o) + 120), ns="ovw")
+
+    # ---------------- Fabric PO ----------------
+    if xp is not None and not xp.empty:
+        st.markdown("---")
+        badge("🧾 Fabric PO  (Fabric ordering & receiving)")
+        metrics([("Total POs", f"{ps['POs']:,} POs"), ("Fabric Ordered", f"{ps['Fabric Ordered (mtr)']:,.0f} mtr"),
+                 ("Fabric Received", f"{ps['Fabric Rcvd (mtr)']:,.0f} mtr"),
+                 ("Pending Fabric", f"{ps['Pending (mtr)']:,.0f} mtr"), ("Received %", f"{ps['RCVD %']:.1f}%"),
+                 ("Overdue (Not Received)", f"{len(overdue_po):,} POs"), ("Delayed POs", f"{ps['Delayed POs']:,} POs"),
+                 ("On-Time Delivery %", f"{ps['On-Time %']:.1f}%")])
+
+        def _po_stats(g):
+            s = fabpo_stats(g)
+            return {"POs": s["POs"], "Fabric Ordered (mtr)": s["Fabric Ordered (mtr)"],
+                    "Pending (mtr)": s["Pending (mtr)"], "RCVD %": s["RCVD %"],
+                    "Overdue POs": int((g["timing"] == "Overdue (Pending)").sum()), "Delayed POs": s["Delayed POs"],
+                    "Avg Delay (days)": s["Avg Delay (days)"], "On-Time %": s["On-Time %"]}
+        badge("🏭 Vendor: Pending & Delays")
+        vend = _ovw_group(xp, "vendor", "Vendor", _po_stats)
+        table_with_download(vend, "overview_po_vendor", pct_cols=("RCVD %", "On-Time %"),
+                            dec_cols=("Fabric Ordered (mtr)", "Pending (mtr)", "Avg Delay (days)"),
+                            rate_cols=("RCVD %", "On-Time %"), key_col="Pending (mtr)", height=420)
+
+        c1, c2 = st.columns([1.35, 1], gap="medium")
+        with c1:
+            badge("⏰ Overdue POs (abhi tak receive nahi hue)")
+            if overdue_po.empty:
+                notice("Koi overdue PO nahi hai.", "success")
+            else:
+                op = overdue_po.sort_values("delay_days", ascending=False).head(15)
+                op_tbl = pd.DataFrame({"PO No.": op["po"].values, "Vendor": op["vendor"].values,
+                                       "Order Date": _fpo_date(op["order_date"]).values,
+                                       "Due Date": _fpo_date(op["due"]).values,
+                                       "Days Overdue": op["delay_days"].astype(float).values,
+                                       "Pending (mtr)": op["pending"].values, "Status": op["status"].values})
+                table_with_download(op_tbl, "overview_po_overdue", dec_cols=("Pending (mtr)",),
+                                    key_col="Days Overdue", height=440)
+                if len(overdue_po) > 15:
+                    st.caption(f"Sabse purane 15 dikhaye gaye hain (kul {len(overdue_po):,} overdue POs) - "
+                               "poori list Fabric PO tab me.")
+        with c2:
+            tm = xp["timing"].value_counts()
+            colors = fabpo_colors()
+            fig = go.Figure(go.Pie(labels=list(tm.index), values=list(tm.values), hole=0.55, sort=False,
+                                   marker=dict(colors=[colors.get(k, COLORS["slate"]) for k in tm.index]),
+                                   textinfo="percent", textposition="inside", textfont=dict(color="#ffffff")))
+            chart(fig, "PO Delivery Status (POs)", 440, ns="ovw", legend="bottom")
+
+    # ---------------- Samples ----------------
+    if xs is not None and not xs.empty:
+        st.markdown("---")
+        badge("🔬 Samples")
+        metrics([("Total Samples", _pcs(s_tot)), ("Approved", _pcs(s_app)), ("Approval %", f"{s_ratio:.1f}%"),
+                 ("Rejected", _pcs(s_rej)), ("On Hold", _pcs(s_hld)), ("In Process", _pcs(s_prc))])
+        c1, c2 = st.columns([1.15, 1], gap="medium")
+        with c1:
+            badge("🏭 Vendor-wise Samples")
+            vnames = [n for n in xs["vendor"].unique() if not n.startswith("(")]
+            vt = sample_entity_table(xs, "vendor", vnames, "Vendor")
+            vt = vt[["Vendor", "Total", "Approved", "Rejected", "On Hold", "In Process", "Approval %"]]
+            table_with_download(with_total(vt, "Vendor", pct=("Approval %", "Approved", "Total")),
+                                "overview_sample_vendor", pct_cols=("Approval %",), key_col="Total", height=440)
+        with c2:
+            mt = sample_monthly(xs)
+            mt = mt[mt["Total"] > 0]
+            if mt.empty:
+                empty_card("Monthly Sample Status (Pcs)", "Data nahi hai.", ns="ovw")
+            else:
+                long = mt.melt(id_vars="Month", value_vars=SAMPLE_STATUSES, var_name="Status", value_name="Pcs")
+                fig = px.bar(long, x="Month", y="Pcs", color="Status", barmode="stack",
+                             color_discrete_map=sample_colors(),
+                             category_orders={"Month": list(mt["Month"]), "Status": SAMPLE_STATUSES})
+                fig.update_xaxes(title="")
+                chart(fig, "Monthly Sample Status (Pcs)", 440, ns="ovw")
+
+
+# -----------------------------------------------------------------------------
+# 12. MAIN ROUTER
 # -----------------------------------------------------------------------------
 LIVE_OPTIONS = {"Off": 0, "Every 1 min": 60, "Every 2 min": 120, "Every 5 min": 300}
 
@@ -2926,7 +3291,7 @@ def main():
 
     fy = f"{FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}"
     _html(f'<div class="dashboard-hero"><div class="hero-t">📊 Executive Operations &amp; Production Hub {fy}</div>'
-          f'<p>Designer · Production · Client · Sample · Fabricator · Fabric PO · Target &amp; Revenue — live from Google Sheets</p></div>')
+          f'<p>Overview · Designer · Production · Client · Sample · Fabricator · Fabric PO · Target &amp; Revenue — live from Google Sheets</p></div>')
 
     master_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "tracker")
     sample_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "sample_summary")
@@ -2935,8 +3300,8 @@ def main():
     tgt_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "target_revenue")
     master_cfg = SHEET_REGISTRY[master_name]
 
-    t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt = st.tabs([
-        "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
+    t_ovw, t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt = st.tabs([
+        "📌 Overview", "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
         "🔬 Sample Dashboard", "🧵 Fabricator Dashboard", "🧾 Fabric PO Dashboard",
         "🎯 Target & Revenue Dashboard"])
 
@@ -2957,6 +3322,8 @@ def main():
             elif tab is not t_des:
                 notice("Master Sheet ka data load nahi ho paya - Designer Dashboard tab me details dekhein.", "error")
 
+    with t_ovw:
+        _safe(render_overview_dashboard)
     with t_smp:
         _safe(render_sample_summary_dashboard, sample_name, SHEET_REGISTRY[sample_name])
     with t_fab:
