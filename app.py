@@ -56,7 +56,9 @@ SHEET_REGISTRY = {
 }
 
 # Google Sheet data is re-read at most once per this many seconds (live updates)
-LIVE_TTL = 60
+LIVE_TTL = 60          # sheet DATA is re-read from Google at most this often (seconds)
+TAB_TTL = 600          # list of tab names changes rarely -> re-read every 10 min (or "Refresh data now")
+BOOK_TTL = 3600        # an opened sheet handle is reused for 1 hour (saves one Google request per fetch)
 
 # Financial year shown on the dashboards (April 2026 – March 2027)
 FY_START_YEAR = 2026
@@ -773,11 +775,32 @@ def get_client():
     return gspread.authorize(creds)
 
 
+@st.cache_resource(ttl=BOOK_TTL, show_spinner=False)
+def _book_cached(sheet_id):
+    """Opening a sheet costs one Google request - done once per hour per sheet instead of on every fetch."""
+    return get_client().open_by_key(sheet_id)
+
+
 def _open_book(sheet_id):
     try:
-        return get_client().open_by_key(sheet_id)
+        return _book_cached(sheet_id)
     except Exception as e:
         # Raised (not st.stop) so one failing sheet does not blank the other tabs.
+        raise SheetAccessError(str(e)) from e
+
+
+def _api(fn, *args, **kwargs):
+    """Google API call -> SheetAccessError on failure (shown inside its own tab). Also forgets the opened sheets
+    so the next try starts fresh (e.g. sheet re-shared, token expired)."""
+    try:
+        return fn(*args, **kwargs)
+    except SheetAccessError:
+        raise
+    except Exception as e:
+        try:
+            _book_cached.clear()
+        except Exception:
+            pass
         raise SheetAccessError(str(e)) from e
 
 
@@ -785,16 +808,16 @@ def _a1_tab(title):
     return "'" + str(title).replace("'", "''") + "'"
 
 
-@st.cache_data(ttl=LIVE_TTL, show_spinner=False)
+@st.cache_data(ttl=TAB_TTL, show_spinner=False)
 def list_tabs(sheet_id):
-    return [ws.title for ws in _open_book(sheet_id).worksheets()]
+    return [ws.title for ws in _api(_open_book(sheet_id).worksheets)]
 
 
 @st.cache_data(ttl=LIVE_TTL, show_spinner="Google Sheet se live data load ho raha hai...")
 def load_tab_raw(sheet_id, tab_title):
     """Unformatted values: numbers as numbers, dates as serial numbers (no locale/format parsing errors)."""
     book = _open_book(sheet_id)
-    resp = book.values_get(_a1_tab(tab_title), params={
+    resp = _api(book.values_get, _a1_tab(tab_title), params={
         "valueRenderOption": "UNFORMATTED_VALUE",
         "dateTimeRenderOption": "SERIAL_NUMBER",
     })
@@ -1279,9 +1302,9 @@ def _is_number_text(v):
     return bool(re.fullmatch(r"[-+]?(\d[\d,]*\.?\d*|\.\d+)", str(v).strip()))
 
 
-@st.cache_data(ttl=LIVE_TTL, show_spinner=False)
+@st.cache_data(ttl=TAB_TTL, show_spinner=False)
 def list_tabs_meta(sheet_id):
-    return [(ws.title, ws.id) for ws in _open_book(sheet_id).worksheets()]
+    return [(ws.title, ws.id) for ws in _api(_open_book(sheet_id).worksheets)]
 
 
 @st.cache_data(ttl=LIVE_TTL, show_spinner="Google Sheet se live data load ho raha hai...")
@@ -1292,7 +1315,7 @@ def fetch_grid(sheet_id, tab_title, formatted=False):
     book = _open_book(sheet_id)
     params = None if formatted else {"valueRenderOption": "UNFORMATTED_VALUE",
                                      "dateTimeRenderOption": "SERIAL_NUMBER"}
-    resp = book.values_get(_a1_tab(tab_title), params=params)
+    resp = _api(book.values_get, _a1_tab(tab_title), params=params)
     return {"values": resp.get("values", []), "synced": now_label()}
 
 
@@ -2594,8 +2617,9 @@ def _target_body(sheet_name, cfg):
 
     # ---------------- target settings ----------------
     with st.expander("⚙️ Target Settings", expanded=False):
+        st.session_state.setdefault("tgt_annual_cr", float(cfg.get("annual_target_cr", NEW_TARGET_CR)))
         annual_cr = st.number_input("Yearly NEW order target (₹ Cr)", min_value=0.0, step=0.1, format="%.2f",
-                                    value=float(cfg.get("annual_target_cr", NEW_TARGET_CR)), key="tgt_annual_cr")
+                                    key="tgt_annual_cr")
         st.caption("Monthly target = yearly target ÷ 12 (barabar split). Seasonal split chahiye to code me "
                    "NEW_MONTHLY_WEIGHTS badal dein. Target sirf NEW orders par lagta hai, REPEAT alag dikhaya jata hai.")
     annual_target = float(annual_cr) * 1e7
@@ -2989,6 +3013,7 @@ def _overview_body():
             return df
         return df[df[col].isin(months)]
 
+    _prefetch_sources(["tracker", "sample_summary", "overview_fabricators", "fabric_po"])
     master, m_err = _ovw_load("tracker")
     smp, s_err = _ovw_load("sample_summary")
     fab, f_err = _ovw_load("overview_fabricators")
@@ -3264,7 +3289,107 @@ def _overview_body():
 
 
 # -----------------------------------------------------------------------------
-# 12. MAIN ROUTER
+# 12. SPEED HELPERS  (only HOW data is fetched / which tab is drawn - no numbers change)
+# -----------------------------------------------------------------------------
+def _in_parallel(jobs):
+    """Runs the cached Google loaders at the same time. They mostly wait on the network, so 5 requests take
+    about as long as 1. Results land in the normal cache; errors are ignored here because the regular code
+    path right after this shows them in the right tab."""
+    jobs = [j for j in jobs if j]
+    if not jobs:
+        return []
+    if len(jobs) == 1:
+        fn, args = jobs[0]
+        try:
+            return [fn(*args)]
+        except Exception:
+            return [None]
+
+    def run(job):
+        fn, args = job
+        try:
+            return fn(*args)
+        except Exception:
+            return None
+
+    try:
+        import logging
+        from concurrent.futures import ThreadPoolExecutor
+        # worker threads have no Streamlit page context -> silence the harmless "missing ScriptRunContext" log
+        logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").setLevel(logging.ERROR)
+        with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as ex:
+            return list(ex.map(run, jobs))
+    except Exception:
+        return [run(j) for j in jobs]
+
+
+def _source_jobs(kind, tabs_info):
+    """Second step of the prefetch: which data requests a source needs (same tab choice as its dashboard)."""
+    cfg = _cfg_of(kind)
+    sid = cfg["id"]
+    if not tabs_info:
+        return []
+    if kind == "tracker":
+        src = next((t for t in (find_tab(tabs_info, c) for c in cfg.get("source_tabs", [])) if t), None)
+        src = src or next((t for t in tabs_info if "DASHBOARD" not in t.upper()), tabs_info[0])
+        return [(load_tab_raw, (sid, src))]
+    regex = {"overview_fabricators": r"monthwise|monthly\s*summary", "fabric_po": r"^\s*index\s*$"}.get(kind)
+    if kind == "target_revenue":
+        titles = [t for t, _ in tabs_info]
+        out = []
+        for names in (cfg.get("source_tabs", ["NEW"]), cfg.get("repeat_tabs", ["REPEAT"])):
+            t = next((x for x in (find_tab(titles, n) for n in names) if x), None)
+            if t:
+                out.append((fetch_grid, (sid, t)))
+        return out
+    tab = pick_default_tab(tabs_info, cfg.get("source_tabs", []), cfg.get("gid"), regex)
+    if kind == "overview_fabricators":
+        return [(fetch_grid, (sid, tab, True)), (fetch_grid, (sid, tab))]
+    return [(fetch_grid, (sid, tab))]
+
+
+def _prefetch_sources(kinds):
+    """Warms the cache for several sheets at once: tab lists in parallel, then the data tabs in parallel."""
+    try:
+        cfgs = [(k, _cfg_of(k)) for k in kinds]
+        first = _in_parallel([(list_tabs if k == "tracker" else list_tabs_meta, (c["id"],)) for k, c in cfgs])
+        jobs = []
+        for (k, _c), info in zip(cfgs, first):
+            jobs += _source_jobs(k, info)
+        results = _in_parallel(jobs)
+        # Target tab: its IMAGE-column formulas are a 3rd request per tab -> fetch those together as well
+        tgt_id = _cfg_of("target_revenue")["id"] if "target_revenue" in kinds else None
+        img_jobs = []
+        for (fn, args), res in zip(jobs, results):
+            if tgt_id and fn is fetch_grid and args[0] == tgt_id and res and res.get("values"):
+                try:
+                    vals = res["values"]
+                    hr = _tgt_header_row(vals)
+                    cmap = _tgt_col_map(vals[hr if hr is not None else 1])
+                    img_jobs.append((fetch_image_urls, (args[0], args[1], cmap["image"])))
+                except Exception:
+                    pass
+        _in_parallel(img_jobs)
+    except Exception:
+        pass          # prefetch is only a speed-up; the normal path still loads everything
+
+
+def _keep_widget_state():
+    """Tabs are drawn only when open; Streamlit forgets the filters of widgets it did not draw. Re-saving the
+    keys at the start of every run keeps every tab's filters when you switch tabs."""
+    skip_exact = {"global_refresh", "live_choice", "main_tab"}
+    for k in list(st.session_state.keys()):
+        if (not isinstance(k, str) or k in skip_exact or k.startswith(("dl_", "FormSubmitter", "_"))
+                or k.endswith("_reset")):
+            continue
+        try:
+            st.session_state[k] = st.session_state[k]
+        except Exception:
+            pass
+
+
+# -----------------------------------------------------------------------------
+# 13. MAIN ROUTER
 # -----------------------------------------------------------------------------
 LIVE_OPTIONS = {"Off": 0, "Every 1 min": 60, "Every 2 min": 120, "Every 5 min": 300}
 
@@ -3278,6 +3403,7 @@ def _safe(render_fn, *args):
 
 
 def main():
+    _keep_widget_state()
     apply_theme()
     with st.sidebar:
         st.markdown("### ⏱️ Live Updates")
@@ -3300,38 +3426,61 @@ def main():
     tgt_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "target_revenue")
     master_cfg = SHEET_REGISTRY[master_name]
 
-    t_ovw, t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt = st.tabs([
-        "📌 Overview", "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
-        "🔬 Sample Dashboard", "🧵 Fabricator Dashboard", "🧾 Fabric PO Dashboard",
-        "🎯 Target & Revenue Dashboard"])
-
-    # Master Sheet: loaded once, shared by its 3 dashboards
-    master_err, d_all = None, None
+    labels = ["📌 Overview", "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
+              "🔬 Sample Dashboard", "🧵 Fabricator Dashboard", "🧾 Fabric PO Dashboard",
+              "🎯 Target & Revenue Dashboard"]
+    # Only the open tab is built (Streamlit 1.5x+). Older Streamlit: all tabs are built, like before.
     try:
-        with t_des:
-            d_all = load_master(master_cfg)
-    except SheetAccessError as e:
-        master_err = e
-    key = master_cfg["id"][:8]
-    for tab, fn in ((t_des, designer_dashboard), (t_prod, production_dashboard), (t_cli, client_dashboard)):
-        with tab:
-            if master_err is not None:
-                show_access_error(master_err)
-            elif d_all is not None:
-                fn(d_all, key)
-            elif tab is not t_des:
-                notice("Master Sheet ka data load nahi ho paya - Designer Dashboard tab me details dekhein.", "error")
+        tabs = st.tabs(labels, key="main_tab", on_change="rerun")
+        lazy = True
+    except TypeError:
+        tabs = st.tabs(labels)
+        lazy = False
+    t_ovw, t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt = tabs
 
-    with t_ovw:
-        _safe(render_overview_dashboard)
-    with t_smp:
-        _safe(render_sample_summary_dashboard, sample_name, SHEET_REGISTRY[sample_name])
-    with t_fab:
-        _safe(render_fabricator_dashboard, fab_name, SHEET_REGISTRY[fab_name])
-    with t_po:
-        _safe(render_fabric_po_dashboard, po_name, SHEET_REGISTRY[po_name])
-    with t_tgt:
-        _safe(render_target_dashboard, tgt_name, SHEET_REGISTRY[tgt_name])
+    def is_open(t):
+        if not lazy:
+            return True
+        o = getattr(t, "open", None)
+        return True if o is None else bool(o)
+
+    # Master Sheet: loaded once, shared by its 3 dashboards (only when one of them is open)
+    master_tabs = [(t, fn) for t, fn in ((t_des, designer_dashboard), (t_prod, production_dashboard),
+                                         (t_cli, client_dashboard)) if is_open(t)]
+    if master_tabs:
+        first_tab = master_tabs[0][0]
+        master_err, d_all = None, None
+        try:
+            with first_tab:
+                d_all = load_master(master_cfg)
+        except SheetAccessError as e:
+            master_err = e
+        key = master_cfg["id"][:8]
+        for tab, fn in master_tabs:
+            with tab:
+                if master_err is not None:
+                    show_access_error(master_err)
+                elif d_all is not None:
+                    fn(d_all, key)
+                elif tab is not first_tab:
+                    notice("Master Sheet ka data load nahi ho paya - Designer Dashboard tab me details dekhein.", "error")
+
+    if is_open(t_ovw):
+        with t_ovw:
+            _safe(render_overview_dashboard)
+    if is_open(t_smp):
+        with t_smp:
+            _safe(render_sample_summary_dashboard, sample_name, SHEET_REGISTRY[sample_name])
+    if is_open(t_fab):
+        with t_fab:
+            _safe(render_fabricator_dashboard, fab_name, SHEET_REGISTRY[fab_name])
+    if is_open(t_po):
+        with t_po:
+            _safe(render_fabric_po_dashboard, po_name, SHEET_REGISTRY[po_name])
+    if is_open(t_tgt):
+        _prefetch_sources(["target_revenue"])
+        with t_tgt:
+            _safe(render_target_dashboard, tgt_name, SHEET_REGISTRY[tgt_name])
 
 
 if __name__ == "__main__":
