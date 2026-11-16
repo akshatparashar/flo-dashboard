@@ -231,6 +231,9 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
         q.style = "detail"
     t = _TERSE.sub(" ", t)
     t = _DETAIL.sub(" ", t)
+    # "target kitna bacha / baki hai" asks for the remaining target, not pending pcs
+    if re.search(r"\btarget\b", t):
+        t = re.sub(r"\b(bacha|bachi|bache|baki|baaki|left)\b", "remaining", t)
 
     words = raw_tokens(t)
     used = [False] * len(words)

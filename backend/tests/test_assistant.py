@@ -299,3 +299,8 @@ def test_gemini_off_without_key(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setenv("ASSISTANT_GEMINI", "off")
     assert GeminiInterpreter.from_env() is None
+
+
+def test_hinglish_target_left(client):
+    r = ask(client, "target kitna bacha hai")
+    assert r["answer"].startswith("Remaining target")
