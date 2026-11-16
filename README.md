@@ -76,3 +76,37 @@ However, if the dashboard is made public, data displayed in the app may be visib
 The app attempts to match columns by their header names. If a header cannot be matched, fallback column positions are used.
 
 The original Google Apps Script has inconsistent definitions for some production columns across its dashboards. Verify the production, received, pending, and delay columns against the actual sheet before relying on those metrics.
+
+## FLO Assistant (chatbot)
+
+The **🤖 FLO Assistant** tab is a chatbot for dashboard users, powered by Claude. Its code lives in the
+`chatbot/` package, separate from the dashboard code in `app.py`.
+
+### Setup
+
+Add an Anthropic API key to Streamlit Secrets (`.streamlit/secrets.toml` locally — never commit it):
+
+```toml
+ANTHROPIC_API_KEY = "sk-ant-..."
+
+[chatbot]            # all optional
+model = "claude-opus-5-5"
+effort = "low"       # low | medium | high
+website_url = ""     # company website, for the knowledge base
+```
+
+Environment variables work too (`ANTHROPIC_API_KEY`, `FLO_CHATBOT_MODEL`, `FLO_CHATBOT_EFFORT`, `FLO_WEBSITE_URL`).
+Without a key the tab shows a setup notice; the rest of the dashboard is unaffected.
+
+### Website knowledge (RAG)
+
+`chatbot/knowledge/` holds the pipeline: scrape → clean → chunk → store (`data/knowledge_base.json`) → retrieve.
+Cleaning, chunking, storage and retrieval are implemented; the website scraper is pending until the company
+website URL is confirmed. Until knowledge is loaded, the assistant says it has no company information rather
+than guessing.
+
+### Tests
+
+```bash
+python -m unittest discover -s tests -v
+```

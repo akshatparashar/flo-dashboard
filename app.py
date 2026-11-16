@@ -14,6 +14,8 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 
+from chatbot.ui import render_chatbot
+
 # -----------------------------------------------------------------------------
 # 1. PAGE SETUP & CONFIG
 # -----------------------------------------------------------------------------
@@ -3509,7 +3511,7 @@ def _main_body():
 
     labels = ["📌 Overview", "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
               "🔬 Sample Dashboard", "🧵 Fabricator Dashboard", "🧾 Fabric PO Dashboard",
-              "🎯 Target & Revenue Dashboard"]
+              "🎯 Target & Revenue Dashboard", "🤖 FLO Assistant"]
     # Only the open tab is built (Streamlit 1.5x+). Older Streamlit: all tabs are built, like before.
     try:
         tabs = st.tabs(labels, key="main_tab", on_change="rerun")
@@ -3517,7 +3519,7 @@ def _main_body():
     except TypeError:
         tabs = st.tabs(labels)
         lazy = False
-    t_ovw, t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt = tabs
+    t_ovw, t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt, t_bot = tabs
 
     def is_open(t):
         if not lazy:
@@ -3562,6 +3564,9 @@ def _main_body():
         _prefetch_sources(["target_revenue"])
         with t_tgt:
             _safe(render_target_dashboard, tgt_name, SHEET_REGISTRY[tgt_name])
+    if is_open(t_bot):
+        with t_bot:
+            render_chatbot()
 
 
 if __name__ == "__main__":
