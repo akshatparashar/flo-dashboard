@@ -2,7 +2,10 @@
 .streamlit/secrets.toml
 credentials.json
 service-account.json
-*.json
+*service-account*.json
+*credentials*.json
+*-sa-key*.json
+gcp-key*.json
 
 # Python environment
 .venv/
@@ -24,3 +27,13 @@ __pycache__/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.log
+.vercel
+.taste-skill/
+!backend/.env.example
+frontend/test-results/
+frontend/playwright-report/

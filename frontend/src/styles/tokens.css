@@ -1,0 +1,156 @@
+/*
+  FLO tokens. Brand anchors come from the logo: navy ink #001938, navy ground #1c2840, blush #fae8de.
+  Colour budget follows the "framed sheet" style: the chrome is a low-chroma navy tint, the sheet is white, and hue
+  lives on data. Blue = the main data element, navy = the reference series, red = what needs attention.
+*/
+:root {
+  color-scheme: light;
+  --frame: #eef1f6;
+  --sheet: #ffffff;
+  --sheet-edge: #e3e7ee;
+  --raised: #ffffff;
+  --well: #f5f7fa;
+  --rule: #edf0f4;
+  --rule-strong: #dce2ea;
+  --control: #ffffff;
+  --control-edge: #d5dce6;
+  --nav-active: #dfe5ee;
+  --hover: #f3f5f9;
+
+  --ink: #0b1a33;
+  --ink-2: #44546c;
+  --muted: #5f6e84;
+  --faint: #93a0b3;
+  --brand: #001938;
+  --on-brand: #ffffff;
+
+  --accent: #1f5fd1;          /* the one data hue */
+  --accent-strong: #1748a6;
+  --accent-soft: #e6eefc;
+  --series-ref: #0f2f6b;      /* reference / total series (deep navy) */
+  --series-pale: #a8c1ee;     /* third series */
+  --series-grey: #c3ccd8;
+  --neg: #d22f3c;             /* overdue, pending, rejected, errors, live */
+  --neg-soft: #fdebed;
+  --neg-ink: #8f1a24;
+  --pos: #18794a;
+  --pos-soft: #e3f4eb;
+  --pos-ink: #0f5232;
+  --warn: #a35f00;
+  --warn-soft: #fdf1dd;
+  --warn-ink: #6d3f00;
+  --grid: #e8ecf2;
+  --focus: #1f5fd1;
+  --selection: #cfdcf7;
+  --scrim: rgba(11, 26, 51, 0.38);
+
+  --font-ui: "Instrument Sans Variable", "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Bodoni Moda Variable", "Bodoni Moda", "Didot", "Bodoni 72", Georgia, serif;
+
+  --t-xs: 12px;
+  --t-sm: 13px;
+  --t-md: 14px;
+  --t-lg: 16px;
+  --t-kpi: 24px;
+  --t-lead: 36px;
+  --t-h1: 30px;
+
+  --r-sheet: 16px;
+  --r-card: 12px;
+  --r-control: 8px;
+  --r-pill: 999px;
+
+  --sidebar: 236px;
+  --topbar: 52px;
+  --gap: 16px;
+  --pad: 24px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-float: 0 12px 32px -8px rgba(11, 26, 51, 0.22), 0 2px 6px rgba(11, 26, 51, 0.08);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --frame: #111a2b;
+  --sheet: #18233a;
+  --sheet-edge: #243150;
+  --raised: #1e2a45;
+  --well: #1c2842;
+  --rule: #223050;
+  --rule-strong: #2c3b5e;
+  --control: #1c2842;
+  --control-edge: #33426a;
+  --nav-active: #213052;
+  --hover: #1d2a46;
+
+  --ink: #eef1f7;
+  --ink-2: #b9c3d6;
+  --muted: #95a2ba;
+  --faint: #6d7a93;
+  --brand: #fae8de;
+  --on-brand: #1c2840;
+
+  --accent: #6f9dff;
+  --accent-strong: #9dbcff;
+  --accent-soft: #233a68;
+  --series-ref: #dbe5fb;
+  --series-pale: #3f5d99;
+  --series-grey: #4a5674;
+  --neg: #ff6b75;
+  --neg-soft: rgba(255, 107, 117, 0.14);
+  --neg-ink: #ffb3b8;
+  --pos: #4fc98a;
+  --pos-soft: rgba(79, 201, 138, 0.14);
+  --pos-ink: #9ae6bd;
+  --warn: #f2b54d;
+  --warn-soft: rgba(242, 181, 77, 0.14);
+  --warn-ink: #f7d394;
+  --grid: #24314f;
+  --focus: #9dbcff;
+  --selection: #34508c;
+  --scrim: rgba(5, 10, 20, 0.6);
+  --shadow-float: 0 16px 40px -8px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --frame: #111a2b;
+    --sheet: #18233a;
+    --sheet-edge: #243150;
+    --raised: #1e2a45;
+    --well: #1c2842;
+    --rule: #223050;
+    --rule-strong: #2c3b5e;
+    --control: #1c2842;
+    --control-edge: #33426a;
+    --nav-active: #213052;
+    --hover: #1d2a46;
+    --ink: #eef1f7;
+    --ink-2: #b9c3d6;
+    --muted: #95a2ba;
+    --faint: #6d7a93;
+    --brand: #fae8de;
+    --on-brand: #1c2840;
+    --accent: #6f9dff;
+    --accent-strong: #9dbcff;
+    --accent-soft: #233a68;
+    --series-ref: #dbe5fb;
+    --series-pale: #3f5d99;
+    --series-grey: #4a5674;
+    --neg: #ff6b75;
+    --neg-soft: rgba(255, 107, 117, 0.14);
+    --neg-ink: #ffb3b8;
+    --pos: #4fc98a;
+    --pos-soft: rgba(79, 201, 138, 0.14);
+    --pos-ink: #9ae6bd;
+    --warn: #f2b54d;
+    --warn-soft: rgba(242, 181, 77, 0.14);
+    --warn-ink: #f7d394;
+    --grid: #24314f;
+    --focus: #9dbcff;
+    --selection: #34508c;
+    --scrim: rgba(5, 10, 20, 0.6);
+    --shadow-float: 0 16px 40px -8px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+}
