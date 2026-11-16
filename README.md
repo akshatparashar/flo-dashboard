@@ -16,7 +16,7 @@
 ![Tests](https://img.shields.io/badge/tests-140%20passing-18794a)
 ![Sheets access](https://img.shields.io/badge/Google%20Sheets-read--only-0b1a33)
 
-[Screens](#screens) · [Dashboards](#the-eight-dashboards) · [Architecture](#how-it-works) · [Quick start](#quick-start) · [Configuration](#configuration) · [API](#api-reference) · [Testing](#testing) · [Design](#design-system) · [Roadmap](#roadmap)
+[Screens](#screens) · [Dashboards](#the-eight-dashboards) · [Architecture](#how-it-works) · [Quick start](#quick-start) · [Configuration](#configuration) · [API](#api-reference) · [Testing](#testing) · [Deploy](#deploy-to-vercel) · [Phone app](#phone-app) · [Design](#design-system) · [Roadmap](#roadmap)
 
 </div>
 
@@ -146,8 +146,8 @@ flowchart LR
 
     A & B & C & D & E --> S --> K --> P --> X
     X -- "JSON over /api" --> Q --> U
-    X -. "same endpoints" .-> AI[AI assistant<br/><i>separate branch</i>]
-    X -. "same endpoints" .-> RN[Phone app<br/><i>planned</i>]
+    X -. "same endpoints" .-> AI[FLO Assistant<br/><i>POST /api/chat</i>]
+    X -. "same endpoints" .-> RN[Phone app<br/><i>mobile/ · React Native</i>]
 ```
 
 1. **Read** — `sources/google.py` calls the Sheets API v4 with unformatted values (numbers stay numbers, dates arrive
@@ -376,6 +376,37 @@ cd frontend; npx playwright test                     # starts both servers if th
 The parity tests are why the original app is kept in `legacy/`. Delete that folder only after the old dashboard is
 retired.
 
+## Deploy to Vercel
+
+The repo deploys as **one Vercel project** with two services (`vercel.json`): the Vite build serves the pages and
+every `/api/*` request goes to the FastAPI app (Python 3.12). `.vercelignore` keeps `.env`, key files, virtual
+environments, tests and `legacy/` out of the upload.
+
+1. Import the GitHub repo in Vercel (**Add New → Project**). Leave the root directory as the repo root; Vercel reads
+   `vercel.json` and builds both services.
+2. **Settings → Environment Variables** (Production and Preview):
+
+   | Variable | Value |
+   |---|---|
+   | `DATA_SOURCE` | `google` |
+   | `GOOGLE_SERVICE_ACCOUNT_JSON` | the whole service-account key as one line of JSON |
+   | `DASHBOARD_PASSCODE` | the team passcode |
+   | `TOKEN_SECRET` | a long random value (if left out, one is derived from the service-account key) |
+   | `GEMINI_API_KEY` | optional — helps FLO Assistant with questions its rules can't place |
+
+3. Deploy, then open `https://<project>.vercel.app/api/status` (after signing in on the site): every sheet should
+   report `"ok": true`.
+
+The same build was checked locally with `vercel build`. No extra CORS setting is needed: the web app calls `/api` on
+its own domain, and the phone app is not a browser.
+
+## Phone app
+
+`mobile/` is the dashboard as an Android / iPhone app (React Native, Expo SDK 58) on the same API: the eight
+dashboards with month chips and filters, tables and charts made for a phone screen, FLO Assistant behind the robot
+button on every screen, light and dark mode, and sign-in with the same passcode. See
+[`mobile/README.md`](mobile/README.md) to run it with Expo Go or build an installable app with EAS.
+
 ## Design system
 
 The look is taken from the FLO logo: its navy, its blush, its Didone letters and its open bracket.
@@ -405,9 +436,10 @@ Principles:
 - [x] Responsive web dashboard: eight views, filters, light and dark, intro, live data flow
 - [x] Passcode sign-in
 - [x] Connected and verified against the live Google Sheets
-- [ ] Deploy to Vercel on a live domain
-- [ ] AI assistant that answers from the dashboard (separate branch — see [`docs/CHATBOT.md`](docs/CHATBOT.md))
-- [ ] React Native app for iOS and Android on the same API
+- [x] Vercel deployment config (web + API as one project) — deploy from the Vercel dashboard
+- [x] FLO Assistant that answers from the dashboard (see [`docs/CHATBOT.md`](docs/CHATBOT.md))
+- [x] React Native app for iOS and Android on the same API (`mobile/`)
+- [ ] Publish the phone app (EAS build → APK / TestFlight)
 - [ ] Retire the Streamlit dashboard and remove `legacy/`
 
 ## Working on this project

@@ -22,7 +22,11 @@ dashboard's numbers and pages, in English or Hinglish, and quotes exactly the fi
 
 - A figure: "total PO count", "Rekha ka pending kitna hai", "fabric received in April", "this month revenue".
 - Rankings: "top designer", "top 3 vendors by pending fabric", "sabse zyada pending kis fabricator ke paas hai".
-- Month by month: "revenue month wise". Comparisons: "compare Rekha vs Anamika revenue", "April vs May revenue".
+- Month by month: "revenue month wise", "monthly target". Comparisons: "compare Rekha vs Anamika revenue",
+  "April vs May revenue", and two measures side by side: "new vs repeat revenue", "pending vs received in April".
+- Every row of a kind: "on-time rate of vendors", "har designer ka revenue", "category wise pending".
+- Best / worst without a measure: "worst vendor", "best fabricator" rank by on-time rate (ties are all named).
+- One month of a yearly figure: "this month target", "target for November".
 - One PO: "status of FPO/2648", "po 2648".
 - Counts and lists: "how many designers", "list vendors".
 - The dashboard itself: "what does the Fabric PO page show", "where can I see delayed POs", "how do I download".

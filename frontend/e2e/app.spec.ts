@@ -40,7 +40,8 @@ for (const p of PAGES) {
   test(`${p.h1} loads with data and no errors`, async ({ page }) => {
     const problems = watch(page);
     await page.goto(`${p.path}?nointro`);
-    await expect(page.getByRole("heading", { level: 1, name: p.h1 })).toBeVisible();
+    // the first read of the real sheets on a cold server can take ~15 s
+    await expect(page.getByRole("heading", { level: 1, name: p.h1 })).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(".kpi-value").first()).not.toHaveText("");
     await expect(page.locator(".skel")).toHaveCount(0);
     await page.waitForLoadState("networkidle");
@@ -58,11 +59,14 @@ test("numbers on screen match the API exactly", async ({ page, request }) => {
   await expect(total).toContainText(Math.round(want).toLocaleString("en-US"));
 });
 
-test("month filter updates the URL and the numbers, reset clears it", async ({ page, isMobile }) => {
+test("month filter updates the URL and the numbers, reset clears it", async ({ page, isMobile, request }) => {
   test.skip(isMobile, "popover flow is covered on desktop");
   await page.goto("/production?nointro");
   const value = page.locator(".kpi").filter({ has: page.locator(".kpi-label", { hasText: /^In production$/ }) }).locator(".kpi-value");
-  await expect(value).not.toHaveText("0");
+  // wait for the count-up animation to land on the API's figure before reading it
+  const api = await (await request.get(`${API}/api/production`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })).json();
+  const all = Math.round(api.kpis.find((k: { id: string }) => k.id === "production").value).toLocaleString("en-US");
+  await expect(value).toContainText(all);
   const before = await value.textContent();
   await page.getByRole("toolbar", { name: "Filters" }).getByRole("button", { name: /^Month/ }).click();
   await page.getByRole("button", { name: "Pick months" }).click();
@@ -91,7 +95,7 @@ test("phone menu opens and navigates", async ({ page, isMobile }) => {
   test.skip(!isMobile, "phone only");
   await page.goto("/?nointro");
   await page.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("link", { name: "Samples" }).click();
+  await page.getByRole("link", { name: "Samples", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Samples" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open menu" })).toBeVisible();
 });
