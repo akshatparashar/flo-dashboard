@@ -19,10 +19,12 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from .assistant import Assistant
+from .assistant.gemini import GeminiInterpreter
 from .config import SHEET_REGISTRY, get_settings
-from .core import FY_LABEL, FY_MONTH_LABELS, now_ist
+from .core import FY_LABEL, FY_MONTH_LABELS, MONTHNO_TO_LABEL, now_ist
 from .dashboards import fabric_po as fpo
 from .dashboards import fabricator as fab
 from .dashboards import master as mst
@@ -273,6 +275,36 @@ def context(month: Multi = []):
             out["sections"]["target"] = {k["label"]: (k["value"], k["unit"]) for k in t["tracker"]["kpis"]}
     out["filters"] = {"month": months or "all"}
     return _envelope(out, *ds.values())
+
+
+# ------------------------------------------------------------------------------------------------ assistant
+_ASSISTANT_PAGES = {"overview": overview, "designer": designer, "client": client, "production": production,
+                    "samples": samples, "fabricator": fabricator, "fabric-po": fabric_po, "target": target}
+
+
+def _assistant_fetch(page: str, filters: dict) -> dict:
+    """The assistant reads the dashboard only through the same read-only functions the pages call."""
+    kwargs = dict(filters)
+    if page == "target":
+        kwargs.setdefault("annual_target_cr", SHEET_REGISTRY["target_revenue"]["annual_target_cr"])
+    return _ASSISTANT_PAGES[page](**kwargs)
+
+
+@lru_cache(maxsize=1)
+def get_assistant() -> Assistant:
+    return Assistant(_assistant_fetch, today_month=lambda: MONTHNO_TO_LABEL.get(now_ist().month),
+                     interpreter=GeminiInterpreter.from_env())
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=500)
+    context: dict | None = None
+
+
+@app.post("/api/chat", dependencies=[Depends(require_auth)])
+def chat(body: ChatIn):
+    """FLO Assistant: answers a question from the dashboard's own numbers (read-only)."""
+    return get_assistant().answer(body.message, body.context)
 
 
 # ------------------------------------------------------------------------------------------------ static (optional)

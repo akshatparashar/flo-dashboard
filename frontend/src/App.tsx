@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState, type FormEvent } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { api, getToken, setToken } from "./api/client";
 import { useHealth, useStatus } from "./api/hooks";
+import { Assistant } from "./components/assistant/Assistant";
 import { Wordmark } from "./components/Brand";
 import { Preloader } from "./components/Preloader";
 import { Shell } from "./components/shell/Shell";
@@ -88,7 +89,8 @@ function Dashboard() {
           </Routes>
         </Suspense>
       </Shell>
-      {loading && <Preloader status={status.data ?? (status.error ? ({ sources: {} } as never) : undefined)} onDone={finish} />}
+      <Assistant />
+      {loading &&<Preloader status={status.data ?? (status.error ? ({ sources: {} } as never) : undefined)} onDone={finish} />}
     </>
   );
 }
