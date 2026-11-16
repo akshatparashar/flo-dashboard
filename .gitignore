@@ -37,3 +37,9 @@ frontend/dist/
 !backend/.env.example
 frontend/test-results/
 frontend/playwright-report/
+
+# graphify: keep graph.json, graph.html, GRAPH_REPORT.md; ignore caches and temp files
+graphify-out/cache/
+graphify-out/.graphify_*
+graphify-out/.spec_path
+graphify-out/cost.json

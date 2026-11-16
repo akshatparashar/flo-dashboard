@@ -444,6 +444,11 @@ Principles:
 
 ## Working on this project
 
+- **Start here**: [`CHECKPOINT.md`](CHECKPOINT.md) — current status of every part, what is verified, and the next
+  steps. Update it at the end of each work session.
+- **Code map**: `graphify-out/` holds a knowledge graph of the repo (code, docs and how they connect).
+  Open `graphify-out/graph.html` in a browser, read `graphify-out/GRAPH_REPORT.md`, or ask it questions with
+  `graphify query "how does the chatbot pick a figure?"`. Refresh it after changes with `/graphify . --update`.
 - **Branches**: keep `main` deployable; work on feature branches and open a pull request.
 - **Run the tests** before pushing: backend `pytest`, frontend `npm run typecheck && npm test`.
 - **Changing a calculation?** Change it in `backend/app/dashboards/`. The parity tests will fail on purpose — that
