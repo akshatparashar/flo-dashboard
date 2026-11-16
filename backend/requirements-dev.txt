@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest>=8
+httpx>=0.27
+# Only for tests/test_parity.py, which runs the original Streamlit app headless to compare numbers.
+streamlit>=1.38
+plotly>=5.20
+gspread>=6.1
