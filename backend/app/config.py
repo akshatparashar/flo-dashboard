@@ -4,6 +4,7 @@ Everything that changes between environments comes from environment variables (s
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass, field
@@ -92,6 +93,20 @@ def _load_dotenv() -> None:
             os.environ.setdefault(key.strip(), value)
 
 
+_PUBLIC_SECRETS = {"", "dev-only-secret", "change-me"}
+
+
+def _token_secret(sa: dict | None) -> str:
+    """TOKEN_SECRET, or — if it was left empty or at the example value — one derived from the service account's private
+    key, so a forgotten setting never leaves sign-in tokens signed with a publicly known secret."""
+    secret = os.getenv("TOKEN_SECRET", "").strip()
+    if secret not in _PUBLIC_SECRETS:
+        return secret
+    if sa and sa.get("private_key"):
+        return hashlib.sha256(("flo-token:" + sa["private_key"]).encode()).hexdigest()
+    return "dev-only-secret"
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     _load_dotenv()
@@ -107,7 +122,7 @@ def get_settings() -> Settings:
         tab_ttl=int(os.getenv("TAB_TTL_SECONDS", "600")),
         refresh_cooldown=int(os.getenv("REFRESH_COOLDOWN_SECONDS", "15")),
         passcode=os.getenv("DASHBOARD_PASSCODE") or None,
-        token_secret=os.getenv("TOKEN_SECRET", "dev-only-secret"),
+        token_secret=_token_secret(sa),
         token_hours=int(os.getenv("TOKEN_HOURS", str(24 * 14))),
         cors_origins=origins,
     )

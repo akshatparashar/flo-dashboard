@@ -17,8 +17,8 @@ from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from . import fmt
-from .pages import (DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS, ROW_TYPES,
-                    TYPE_NAMES)
+from .pages import (DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
+                    QUALITY, ROW_TYPES, TYPE_NAMES)
 from .text import (BOTTOM, CONTEXT_WORDS, GENERIC_NAME_WORDS, HOWMANY, MARKERS, MONTH_ALIASES, STOP, TOP, TREND, WORDS,
                    label_tokens, name_key, norm, raw_tokens, similar, tokens)
 
@@ -148,7 +148,8 @@ class Vocabulary:
             if e.type != "po" and len(first) >= 4 and first not in GENERIC_NAME_WORDS:
                 self.by_first.setdefault(first, []).append(e)
         self.common = set(STOP) | set(WORDS) | set(MONTH_ALIASES) | {
-            w for lab in self.labels for w in raw_tokens(lab)} | {"page", "dashboard", "tab", "detail", "word"}
+            w for lab in self.labels for w in raw_tokens(lab)} | {"page", "dashboard", "tab", "detail", "word"} | \
+            set(DIMENSION_WORDS) | set(DIMENSION_PLURALS)
 
     def _add(self, etype, value, page):
         key = name_key(value)
@@ -211,6 +212,10 @@ _HOWTO = re.compile(r"\b(how (do|does|can|to|is)|kaise|where is the|can i|is the
 _FOLLOW = re.compile(r"^\s*(and|what about|how about|aur|or|same for|also|uska|unka|iska|for)\b")
 _PRONOUN = re.compile(r"\b(her|his|their|its|she|he|they|uska|unka|iska|inka|same)\b")
 _PO_NO = re.compile(r"\b(?:fpo\s*/?\s*)?(\d{3,6})\b")
+_PLURAL_DIMS = "|".join(DIMENSION_PLURALS)
+_EACH = re.compile(rf"\b(?:of|for|by|across|among) (?:all |each |every |the |all the )?(?:{_PLURAL_DIMS})\b|"
+                   rf"\b(?:each|every|har|sabhi|sab|all) (?:{_PLURAL_DIMS}|{'|'.join(DIMENSION_WORDS)})\b")
+_QUALITY = re.compile(r"\b(best|worst|reliable|unreliable)\b")
 
 
 def _month_index(word: str) -> int | None:
@@ -347,6 +352,10 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     if (re.search(r"\bfabric\b", t) and re.search(r"\b(po|pos|purchase|ordered|order)\b", t) or
             re.search(r"\b(po|pos|fpo|purchase orders?)\b", t)) and "fabric-po" not in q.pages:
         q.pages.append("fabric-po")
+    # "fabric pending / received / ordered" is the Fabric PO sheet; fabric *issued* to fabricators is not
+    if re.search(r"\b(fabric|kapda|cloth)\b", t) and not re.search(r"\b(issue|issued|fabricators?|karigar|stock)\b", t) \
+            and "fabric-po" not in q.pages:
+        q.pages.append("fabric-po")
 
     # intent --------------------------------------------------------------------
     same_type = {}
@@ -369,6 +378,9 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
                    t) and q.dims:
         q.intent = "rank"
         q.n = max(q.n, 10)
+    elif _EACH.search(t) and q.dims and q.dims[0] != "po" and q.metric_toks and not q.entities:
+        q.intent = "rank"
+        q.n = max(q.n, 10)
     elif q.markers & {TOP, BOTTOM}:
         q.intent = "rank"
     elif q.dims and q.dims[0] != "po" and not q.metric_toks and not q.entities and not q.months and (
@@ -377,16 +389,21 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     elif q.dims and re.search(r"\b(which|kaun|kon|konsa|kaunsa|who)\b", t) and q.dims[0] not in {
             e.type for e in q.entities}:
         q.intent = "rank"
+    # "best vendor" / "worst fabricator" with no measure: rank by on-time rate, not by size
+    if q.intent == "rank" and q.dims and q.dims[0] in QUALITY and not q.metric_toks and _QUALITY.search(t):
+        q.toks += tokens(QUALITY[q.dims[0]])
     return q
 
 
 # ------------------------------------------------------------------------------------------------ scoring
-def mscore(label: str, q: Query, unit: str = "") -> float:
+def mscore(label: str, q: Query, unit: str = "", fmt_: str | None = None) -> float:
     lt = label_tokens(label)
     if not lt:
         return 0.0
     if unit:
         lt = lt | (label_tokens(unit) & {"po"})
+    added = {"rate"} - lt if fmt_ == "pct" else set()   # "On-time delivery" is a rate even without the word
+    lt = lt | added
     qt = set(q.toks)
     matched = lt & qt
     if not matched or not (matched - MARKERS):
@@ -400,8 +417,25 @@ def mscore(label: str, q: Query, unit: str = "") -> float:
     weight = sum(w(t) for t in matched)
     if not (matched - MARKERS - set(DIMENSION_WORDS)) and q.metric_toks:
         weight *= 0.5                          # only "top"/"designer" matched while a real metric was asked
-    extra = [w for w in lt - matched if w not in SOFT]
-    return weight + 0.5 * len(matched) / len(lt) - 0.2 * len(extra)
+    extra = [w for w in lt - matched - added if w not in SOFT]
+    penalty = 0.2 * len(extra)
+    # "New order qty" is only part of "total orders"; "(new)" in brackets is just a note, as in "Achieved (new)"
+    if "new" in lt and "new" not in qt and not re.search(r"\(new", label, re.I):
+        penalty += 0.3
+    # "Total revenue (new + repeat)" is neither "new revenue" nor "repeat revenue" alone
+    if re.search(r"\bnew\s*\+\s*repeat\b", label, re.I) and len({"new", "repeat"} & qt) == 1:
+        penalty += 0.5
+    return weight + 0.5 * len(matched) / len(lt - (added - matched)) - penalty
+
+
+def col_unit(label: str, data: dict) -> tuple[str, str]:
+    """A column's display label and unit; 'Pending' borrows 'pcs' from the page's own 'Pending' KPI."""
+    label, unit = fmt.unit_of(label)
+    if not unit:
+        want = label_tokens(label)
+        unit = next((k.get("unit") or "" for k in kpi_list(data)
+                     if want and k.get("unit") and label_tokens(k["label"]) == want), "")
+    return label, unit
 
 
 @dataclass
@@ -530,7 +564,7 @@ class Assistant:
                     data = None
                 if data:
                     for k in kpi_list(data):
-                        s = mscore(k["label"], q, k.get("unit") or "")
+                        s = mscore(k["label"], q, k.get("unit") or "", k.get("format"))
                         if s <= 0:
                             continue
                         if q.intent == "rank" and not (label_tokens(k["label"]) & {TOP, BOTTOM}):
@@ -545,8 +579,9 @@ class Assistant:
                 tf = self._filters(page, q, skip_type=etype)
                 if tf is None and etype != "month":
                     continue
+                month_cell = etype == "month" and len(q.months) == 1 and q.intent in ("value", "explain")                     and not rank_dim
                 if etype == "month":
-                    if q.intent not in ("trend",) and not (rank_dim == "month"):
+                    if q.intent not in ("trend",) and not (rank_dim == "month") and not month_cell:
                         continue
                     tf = self._filters(page, replace(q, months=[]))
                     if tf is None:
@@ -561,12 +596,18 @@ class Assistant:
                     cols = table["columns"]
                     key_col = table.get("key_col")
                     for ci, c in enumerate(cols[1:], start=1):
-                        s = mscore(c["label"], q)
+                        s = mscore(c["label"], q, fmt_=c.get("format"))
                         if s <= 0 and not q.metric_toks and c["key"] == key_col:
                             s = 0.5 + (0.3 if HOME_PAGE.get(etype) == page else 0.0)
                         if s <= 0:
                             continue
-                        label, unit = fmt.unit_of(c["label"])
+                        label, unit = col_unit(c["label"], data)
+                        if month_cell:
+                            r = next((r for r in table["rows"] if r and r[0] == q.months[0]), None)
+                            if r is not None and isinstance(r[ci], (int, float)) and not isinstance(r[ci], bool):
+                                out.append(Candidate(s + bonus + 0.05, "mcell", page, label, c.get("format"), unit,
+                                                     r[ci], row=str(r[0]), payload=data))
+                            continue
                         if etype == rank_dim or (etype == "month" and q.intent == "trend"):
                             rows = [(r[0], r[ci]) for r in table["rows"]
                                     if r and isinstance(r[ci], (int, float)) and not SPECIAL_ROW.match(str(r[0]))]
@@ -595,6 +636,10 @@ class Assistant:
             if res:
                 return res
             q.intent = "value"
+        if q.intent == "value" and _COMPARE.search(norm(q.text)):
+            res = self._compare_metrics(q, snap, vocab)
+            if res:
+                return res
         if q.intent == "explain" and not q.metric_toks:
             page = next(iter(q.pages), None)
             if page:
@@ -657,8 +702,9 @@ class Assistant:
         lines = [sentence]
         same = label_tokens(best.label) & set(q.toks)
         for alt in cands[1:4]:
-            if alt.score >= best.score - 0.15 and alt.kind in ("kpi", "cell") and alt.text() != val and \
-                    alt.label != best.label and label_tokens(alt.label) & set(q.toks) == same:
+            if alt.score >= best.score - 0.15 and alt.kind in ("kpi", "cell", "mcell") and alt.text() != val and \
+                    alt.label != best.label and label_tokens(alt.label) & set(q.toks) == same and \
+                    not (label_tokens(alt.label) - set(q.toks) - SOFT):
                 lines.append(f"Also, {alt.label} is **{alt.text()}** ({PAGES[alt.page].label} page).")
                 break
         if q.style == "detail":
@@ -669,7 +715,7 @@ class Assistant:
 
     def _breakdown(self, c: Candidate, q: Query) -> list[str]:
         """For "in detail": the same figure split by designer / vendor / fabricator / category / month."""
-        if not c.payload:
+        if not c.payload or c.kind == "mcell":
             return []
         best = None
         lt = label_tokens(c.label) - SOFT
@@ -711,7 +757,12 @@ class Assistant:
         scope = q.scope()
         word = "lowest" if low else "highest"
         name, v = rows[0]
-        if q.style == "terse":
+        tied = [nm for nm, val in rows if val == v]
+        if n == 1 and len(tied) > 1 and q.style != "terse":
+            names = ", ".join(f"**{x}**" for x in tied[:8]) + (f" and {len(tied) - 8} more" if len(tied) > 8 else "")
+            text = (f"{len(tied)} {PLURALS.get(what, what + 's')} share the {word} {c.label}"
+                    f"{(' ' + scope) if scope else ''} (**{fmt.value(v, c.fmt, c.unit)}**): {names}.")
+        elif q.style == "terse":
             text = f"**{name}**"
         elif n == 1:
             text = (f"**{name}** is the {what} with the {word} {c.label}{(' ' + scope) if scope else ''}: "
@@ -731,7 +782,12 @@ class Assistant:
         scope = q.scope()
         head = f"{c.label} month by month{(' ' + scope) if scope else ''}:"
         lines = [head] + [f"• {m}: **{fmt.value(v, c.fmt, c.unit)}**" for m, v in rows]
-        if q.style == "terse":
+        if len({v for _, v in rows}) == 1:
+            v = fmt.value(rows[0][1], c.fmt, c.unit)
+            span = rows[0][0] if len(rows) == 1 else f"{rows[0][0]} to {rows[-1][0]}"
+            lines = [f"**{v}**"] if q.style == "terse" else [
+                f"{c.label}{(' ' + scope) if scope else ''} is **{v}** every month ({span})."]
+        elif q.style == "terse":
             lines = [", ".join(f"{m}: {fmt.value(v, c.fmt, c.unit)}" for m, v in rows)]
         else:
             peak = max(rows, key=lambda x: x[1])
@@ -762,7 +818,7 @@ class Assistant:
                 name = item.display
             if first is not None:
                 sub.pages = list(dict.fromkeys([first.page] + sub.pages))
-            cands = [c for c in self._candidates(sub, snap) if c.kind in ("kpi", "cell")]
+            cands = [c for c in self._candidates(sub, snap) if c.kind in ("kpi", "cell", "mcell")]
             if first is not None:
                 cands = [c for c in cands if c.label == first.label and c.page == first.page] or cands
             if not cands or cands[0].score < THRESHOLD:
@@ -783,6 +839,44 @@ class Assistant:
         if q.style == "terse":
             lines = [" · ".join(f"{name}: {c.text()}" for name, c in results)]
         return self._reply("\n".join(lines), first.page, self._ctx(q, first, "compare"), intent="compare")
+
+    def _compare_metrics(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
+        """Two measures side by side: "new vs repeat revenue" -> New revenue and Repeat revenue."""
+        t = _TERSE.sub(" ", _DETAIL.sub(" ", norm(q.text)))
+        t = re.sub(r"^\s*(compare|comparison( of)?|difference( between)?|between)\s+", "", t)
+        parts = [p.split() for p in re.split(r"\b(?:vs\.?|versus|and|aur|or|compared to|against|with)\b", t)]
+        parts = [p for p in parts if p]
+        if len(parts) != 2:
+            return None
+        left, right = parts
+        if len(left) == 1 and len(right) > 1:          # "new vs repeat revenue": the shared word is at the end
+            left = left + right[1:]
+        elif len(right) == 1 and len(left) > 1:        # "revenue new vs repeat": the shared word is at the start
+            right = left[:-1] + right
+        results = []
+        for words in (left, right):
+            sub = parse(" ".join(words), vocab, self.today_month())
+            sub.entities, sub.months, sub.intent = list(q.entities), list(q.months), "value"
+            sub.pages = list(dict.fromkeys(q.pages + sub.pages))
+            cands = [c for c in self._candidates(sub, snap) if c.kind in ("kpi", "cell", "mcell")]
+            if not sub.metric_toks or not cands or cands[0].score < THRESHOLD:
+                return None
+            results.append(cands[0])
+        a, b = results
+        if a.label == b.label or (a.fmt == "pct") != (b.fmt == "pct") or (a.unit != b.unit and a.fmt != "inr"):
+            return None
+        scope = q.scope()
+        if q.style == "terse":
+            text = f"{a.label}: **{a.text()}** · {b.label}: **{b.text()}**"
+        else:
+            lines = [f"{a.label} vs {b.label}{(' ' + scope) if scope else ''}:",
+                     f"• {a.label}: **{a.text()}**", f"• {b.label}: **{b.text()}**"]
+            if isinstance(a.value, (int, float)) and isinstance(b.value, (int, float)) and a.value != b.value:
+                hi, lo = (a, b) if a.value > b.value else (b, a)
+                lines.append(f"**{hi.label}** is higher by **{fmt.diff(hi.value, lo.value, hi.fmt, hi.unit)}**.")
+            text = "\n".join(lines)
+        ctx = self._ctx(q, a, "compare")
+        return self._reply(text, a.page, ctx, intent="compare")
 
     def _record(self, q: Query, snap: Snapshot) -> dict | None:
         e = next(e for e in q.entities if e.type == "po")

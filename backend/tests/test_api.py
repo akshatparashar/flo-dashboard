@@ -188,3 +188,24 @@ def test_rupee_formatting():
     assert inr_short(50.2e7) == "₹50.20 Cr"
     assert inr_short(329000) == "₹3.29 L"
     assert inr_short(4500) == "₹4,500"
+
+
+def test_column_title_typed_in_a_cell_is_blank():
+    from app.dashboards.fabric_po import build_fabric_po
+    header = ["S.NO", "VENDOR NAME", "PO NO.", "ORDER DATE", "DELIVERY DATE", "RCVD DATE", "DELAY DAYS", "ORDER TYPE",
+              "CLIENT NAME", "DESIGNER NAME", "COLLECTION NAME", "STATUS", "ACTUAL ORDER QTY.",
+              "TOTAL MTR OF FABRIC ORDERED", "TOTAL MTR OF FABRIC RCVD", "PENDING"]
+    row = [1, "RV", "RV 1", "01/05/2026", "", "", "", "NEW", "CLIENT NAME", "DESIGNER NAME", "", "PENDING", 10, 100, 0,
+           100]
+    d, _ = build_fabric_po([header, row])
+    assert d.loc[0, "client"] == "(BLANK)" and d.loc[0, "designer"] == "(BLANK)"
+    assert d.loc[0, "status"] == "PENDING"        # a real status that happens to match a number column's title
+
+
+def test_token_secret_never_falls_back_to_a_public_value(monkeypatch):
+    from app.config import _token_secret
+    monkeypatch.setenv("TOKEN_SECRET", "change-me")
+    derived = _token_secret({"private_key": "-----BEGIN PRIVATE KEY-----abc"})
+    assert derived not in ("change-me", "dev-only-secret") and len(derived) == 64
+    monkeypatch.setenv("TOKEN_SECRET", "a-long-random-value")
+    assert _token_secret({"private_key": "x"}) == "a-long-random-value"

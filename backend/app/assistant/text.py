@@ -19,6 +19,8 @@ PHRASES = [
     ("har mahine", TREND), ("mahine wise", TREND), ("every month", TREND), ("each month", TREND),
     ("month by month", TREND),
     ("order by", "client"), ("ordered by", "client"),
+    ("total orders", "order qty"), ("total order", "order qty"), ("order quantity", "order qty"),
+    ("kitne order", "order qty"), ("kitna order", "order qty"),
 ]
 
 # Single words -> canonical word.
@@ -29,7 +31,7 @@ WORDS = {
     "lowest": BOTTOM, "minimum": BOTTOM, "min": BOTTOM, "least": BOTTOM, "worst": BOTTOM, "bottom": BOTTOM,
     "smallest": BOTTOM, "fewest": BOTTOM,
     "kitna": HOWMANY, "kitne": HOWMANY, "kitni": HOWMANY, "count": HOWMANY,
-    "trend": TREND,
+    "trend": TREND, "monthly": TREND,
     # metrics
     "pos": "po", "po's": "po", "fpo": "po",
     "pcs": "qty", "pc": "qty", "piece": "qty", "pieces": "qty", "qty": "qty", "quantity": "qty", "volume": "qty",

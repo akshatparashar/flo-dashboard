@@ -117,6 +117,61 @@ def test_po_record_lookup(client):
     assert r["intent"] == "record" and po in r["answer"]
 
 
+def test_compare_two_measures(client):
+    r = ask(client, "new vs repeat revenue")
+    assert r["intent"] == "compare"
+    k = {k["label"]: k for k in client.get("/api/target").json()["filtered"]["kpis"]}
+    assert fmt.value(k["New order revenue"]["value"], "inr") in bold(r["answer"])
+    assert "new + repeat" not in r["answer"]
+    r = ask(client, "pending vs received in april")
+    assert r["intent"] == "compare" and "April-26" in r["answer"]
+    assert kpi(client, "/api/production", "Pending", month="April-26") in bold(r["answer"])
+
+
+def test_total_orders_is_all_orders_not_new_only(client):
+    r = ask(client, "total orders")
+    assert not r["answer"].startswith("New")
+    ov = client.get("/api/overview").json()["sections"]["orders"]["kpis"]
+    want = next(k for k in ov if k["label"] == "Order qty")
+    assert fmt.value(want["value"], "int", "pcs") in bold(r["answer"])
+
+
+def test_one_month_of_a_yearly_figure(client):
+    t = client.get("/api/target").json()["tracker"]["table"]
+    ci = next(i for i, c in enumerate(t["columns"]) if c["label"] == "Target")
+    row = next(r for r in t["rows"] if r[0] == "November-26")
+    r = ask(client, "this month target")
+    assert "November-26" in r["answer"] and fmt.value(row[ci], "inr") in bold(r["answer"])
+    assert "every month" in ask(client, "monthly target")["answer"]
+
+
+def test_best_and_worst_vendor_rank_by_on_time_rate(client):
+    r = ask(client, "worst vendor")
+    assert r["intent"] == "rank" and "On-Time %" in r["answer"]
+    r = ask(client, "on time rate of vendors")
+    assert r["intent"] == "rank" and r["page"] == "/fabric-po" and r["answer"].count("%") >= 3
+
+
+def test_every_row_of_a_kind(client):
+    r = ask(client, "har designer ka revenue")
+    assert r["intent"] == "rank" and r["answer"].count("₹") >= 5
+
+
+def test_fabric_words_mean_fabric_po(client):
+    r = ask(client, "fabric pending month wise")
+    assert r["page"] == "/fabric-po" and "mtr" in r["answer"]
+
+
+def test_table_units_follow_the_page(client):
+    r = ask(client, "category wise pending")
+    assert r["intent"] == "rank" and r["answer"].count("pcs") >= 3
+
+
+def test_dimension_word_is_not_a_name(client):
+    r = ask(client, "best client")
+    assert r["intent"] == "rank" and r["understood"]
+
+
 # ------------------------------------------------------------------------------------------------ answer style
 def test_one_word_and_detail(client):
     short = ask(client, "approval rate in one word")

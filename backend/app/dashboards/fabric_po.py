@@ -101,9 +101,12 @@ def build_fabric_po(values, today=None):
     keep = (~bad_vendor) & (sno_ok | (po_txt != ""))     # drops the helper date row, blanks and TOTAL rows
 
     d = pd.DataFrame({"vendor": vendor_txt.str.upper(), "po": po_txt})
-    for f in ("order_type", "client", "designer", "collection", "status", "item"):
+    # a cell holding a column title ("DESIGNER NAME" typed into a row) is a placeholder, not a name
+    text_fields = ("order_type", "client", "designer", "collection", "status", "item")
+    titles = {norm_key(header[cmap[f]]) for f in text_fields if cmap[f] < len(header)} - {""}
+    for f in text_fields:
         t = clean_text(col(f)).str.upper()
-        d[f] = t.where(t != "", "(BLANK)")
+        d[f] = t.where((t != "") & ~t.map(norm_key).isin(titles), "(BLANK)")
     d["order_date"] = parse_dates(col("order_date"))
     d["delivery_date"] = parse_dates(col("delivery_date"))
     for f in ("qty", "ordered", "rcvd", "pending", "total_pc"):

@@ -64,6 +64,15 @@ ROW_TYPES = {"designer": "designer", "vendor": "vendor", "fabricator": "fabricat
 DIMENSION_WORDS = {"designer": "designer", "vendor": "vendor", "client": "client", "fabricator": "fabricator",
                    "month": "month", "category": "category", "po": "po"}
 
+# Plural words that ask about every row of a kind ("on-time rate of vendors", "har designer ka revenue").
+DIMENSION_PLURALS = {"designers": "designer", "vendors": "vendor", "suppliers": "vendor", "mills": "vendor",
+                     "clients": "client", "customers": "client", "parties": "client", "buyers": "client",
+                     "fabricators": "fabricator", "karigars": "fabricator", "categories": "category",
+                     "items": "category", "products": "category"}
+
+# "Best" / "worst" with no measure named: what makes a vendor or fabricator good (higher is better).
+QUALITY = {"vendor": "on-time rate", "fabricator": "on-time rate"}
+
 TYPE_NAMES = {"designer": "designer", "vendor": "vendor", "client": "client", "fabricator": "fabricator",
               "category": "category", "month": "month", "po": "PO"}
 PLURALS = {"category": "categories", "PO": "POs"}
