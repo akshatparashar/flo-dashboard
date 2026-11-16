@@ -13,7 +13,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-read--only%20API-1f5fd1?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-1f5fd1?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-1f5fd1?logo=typescript&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-139%20passing-18794a)
+![Tests](https://img.shields.io/badge/tests-140%20passing-18794a)
 ![Sheets access](https://img.shields.io/badge/Google%20Sheets-read--only-0b1a33)
 
 [Screens](#screens) · [Dashboards](#the-eight-dashboards) · [Architecture](#how-it-works) · [Quick start](#quick-start) · [Configuration](#configuration) · [API](#api-reference) · [Testing](#testing) · [Design](#design-system) · [Roadmap](#roadmap)
@@ -82,7 +82,7 @@ the test suite runs it side by side with the new API on the same sheet data, com
 | **Resilient** | If Google stops answering, the last good copy stays on screen and the light turns from *Live* to *Delayed*. One failing sheet never blanks the others. |
 | **Fast for everyone** | One Google read per sheet per minute no matter how many people are watching; parsed results are cached by data version. |
 | **Shareable views** | Every filter lives in the page address — bookmark it, send it on WhatsApp, press Back. |
-| **Phone and PC** | A real phone layout with its own navigation, not a shrunken desktop. Light and dark mode follow the device. |
+| **Phone and PC** | A real phone layout with its own navigation, not a shrunken desktop. On a PC the sidebar folds into an icon rail (button in the top bar, or press <kbd>[</kbd>) for a full-width view. Light and dark mode follow the device. |
 | **Private** | Optional team passcode; signed tokens; no data reaches the browser before sign-in. |
 | **Export** | Every table downloads as a CSV that opens cleanly in Excel. |
 | **Ready for AI** | The same endpoints are designed to be the tools of an AI assistant ([`docs/CHATBOT.md`](docs/CHATBOT.md)). |
@@ -365,7 +365,7 @@ Send `Authorization: Bearer <token>` when a passcode is set.
 | **Filters** (9) | `pytest tests/test_api_filters.py` | Every filter of every endpoint reaches its calculation over HTTP |
 | **API** (25) | `pytest tests/test_api.py` | Routes, sign-in and rate limit, refresh cooldown, one read per minute, stale-if-error, messy-cell parsing |
 | **Frontend unit** (14) | `npm test` | Rupee and number formatting, CSV escaping, URL filters, live-sync pulses, table behaviour |
-| **Browser** (30 + 4 device-specific) | `npx playwright test` | Every page in Chrome on desktop and phone, no console errors or failed calls, on-screen numbers equal the API, filters, sign-in, theme, intro, CSV export |
+| **Browser** (31 + device-specific) | `npx playwright test` | Every page in Chrome on desktop and phone, no console errors or failed calls, on-screen numbers equal the API, filters, sign-in, theme, intro, sidebar rail, CSV export |
 
 ```powershell
 cd backend;  .venv\Scripts\python -m pytest          # 95 tests

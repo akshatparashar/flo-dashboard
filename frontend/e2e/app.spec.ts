@@ -138,3 +138,22 @@ test("sign-in rejects a wrong passcode and accepts the right one", async ({ page
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
 });
+
+test("desktop sidebar folds into an icon rail and remembers it", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop only; phones use the drawer");
+  await page.goto("/production?nointro");
+  const sidebar = page.locator(".sidebar");
+  await expect(page.getByRole("link", { name: "Fabric PO" })).toBeVisible();
+  const wide = (await sidebar.boundingBox())!.width;
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeLessThan(80);
+  expect(wide).toBeGreaterThan(200);
+  // icons still navigate, and keep their accessible names
+  await page.getByRole("link", { name: "Fabric PO" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Fabric PO" })).toBeVisible();
+  await page.reload();
+  await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeLessThan(80);
+  await page.keyboard.press("[");
+  await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeGreaterThan(200);
+  await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
+});

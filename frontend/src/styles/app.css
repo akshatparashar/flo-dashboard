@@ -81,6 +81,7 @@ table,
    16px corners, 1px edge, no shadow. Inside: 24px padding, 12-col grid with 16px gutters. */
 .app {
   display: grid;
+  transition: grid-template-columns 320ms var(--ease-out);
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
   grid-template-rows: var(--topbar) minmax(0, 1fr);
   height: 100dvh;
@@ -211,6 +212,55 @@ table,
 }
 .topbar .menu-btn {
   display: none;
+}
+.topbar .rail-btn {
+  margin-left: -10px;
+}
+
+/* desktop: sidebar folded into an icon rail (68px) */
+@media (min-width: 1025px) {
+  .app.nav-rail {
+    --sidebar: 68px;
+  }
+  .nav-rail .sidebar {
+    padding: 18px 10px 14px;
+    overflow-x: hidden;
+  }
+  .nav-rail .brand {
+    justify-content: center;
+    padding: 2px 0 0;
+  }
+  .nav-rail .brand-scope,
+  .nav-rail .sidebar-foot {
+    display: none;
+  }
+  .nav-rail .nav-group {
+    font-size: 0;
+    padding: 0;
+    height: 1px;
+    margin: 12px 8px;
+    background: var(--rule-strong);
+  }
+  .nav-rail .nav > div:first-child .nav-group {
+    display: none;
+  }
+  .nav-rail .nav a {
+    justify-content: center;
+    padding: 0;
+    height: 40px;
+  }
+  .nav-rail .nav a svg {
+    width: 18px;
+    height: 18px;
+  }
+  .nav-rail .nav a .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
 }
 
 /* ============================================================================ controls */
@@ -1486,6 +1536,9 @@ a.alert:hover {
   }
   .topbar .menu-btn {
     display: inline-flex;
+  }
+  .topbar .rail-btn {
+    display: none;
   }
   .topbar {
     padding: 0 10px 0 6px;

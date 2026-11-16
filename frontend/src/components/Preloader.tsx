@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { StatusData } from "../api/types";
 import { ART, BRACKET, Wordmark } from "./Brand";
 import { prefersReducedMotion } from "./charts/common";
+import { navCollapsed } from "./shell/Shell";
 
 const SOURCE_ORDER = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue"];
 const SOURCE_NAMES: Record<string, string> = {
@@ -26,7 +27,7 @@ function logoBox(vw: number, vh: number) {
 
 function sheetBox(vw: number, vh: number) {
   if (vw <= 1024) return { l: -2, t: 52, r: vw + 2, b: vh + 2 };
-  return { l: 236, t: 52, r: vw - 8, b: vh - 8 };
+  return { l: navCollapsed() ? 68 : 236, t: 52, r: vw - 8, b: vh - 8 };
 }
 
 function pathOf(p: Pt[]) {

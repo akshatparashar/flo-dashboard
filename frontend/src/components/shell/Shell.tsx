@@ -1,4 +1,4 @@
-import { Building2, Factory, LayoutDashboard, Menu, Moon, Package, Palette, RefreshCw, Scissors, Shirt, Sun, Target, X } from "lucide-react";
+import { Building2, Factory, LayoutDashboard, Menu, Moon, Package, Palette, PanelLeftClose, PanelLeftOpen, RefreshCw, Scissors, Shirt, Sun, Target, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useFetchingReporter, useRefreshAll } from "../../api/hooks";
@@ -27,10 +27,42 @@ export function pageLabel(path: string) {
   return "Overview";
 }
 
+const NAV_KEY = "flo-nav";
+
+/** Desktop: the sidebar can fold into an icon rail. Remembered per device. */
+export function navCollapsed(): boolean {
+  try {
+    return localStorage.getItem(NAV_KEY) === "rail";
+  } catch {
+    return false;
+  }
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   useFetchingReporter();
   const { resolved, toggle } = useTheme();
   const [open, setOpen] = useState(false);
+  const [rail, setRail] = useState(navCollapsed);
+  const toggleRail = () =>
+    setRail((r) => {
+      try {
+        localStorage.setItem(NAV_KEY, r ? "full" : "rail");
+      } catch {
+        /* ignore */
+      }
+      return !r;
+    });
+  useEffect(() => {
+    // "[" folds or unfolds the sidebar, unless the person is typing
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.key !== "[" || e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return;
+      e.preventDefault();
+      toggleRail();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [spinning, setSpinning] = useState(false);
   const loc = useLocation();
   const live = useLive();
@@ -47,10 +79,10 @@ export function Shell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className={`app${open ? " nav-open" : ""}`}>
+    <div className={`app${open ? " nav-open" : ""}${rail ? " nav-rail" : ""}`}>
       <aside className="sidebar" aria-label="Main navigation">
         <NavLink to="/" className="brand" aria-label="FLO Operations home">
-          <Wordmark variant="letters" height={22} />
+          <Wordmark variant="letters" height={rail ? 15 : 22} />
           <span className="brand-scope">
             Operations
             <br />
@@ -62,9 +94,9 @@ export function Shell({ children }: { children: ReactNode }) {
             <div key={g.group} style={{ display: "contents" }}>
               <div className="nav-group">{g.group}</div>
               {g.items.map((it) => (
-                <NavLink key={it.to} to={{ pathname: it.to }} end={it.to === "/"}>
+                <NavLink key={it.to} to={{ pathname: it.to }} end={it.to === "/"} title={rail ? it.label : undefined}>
                   <it.icon aria-hidden="true" />
-                  {it.label}
+                  <span className="label">{it.label}</span>
                 </NavLink>
               ))}
             </div>
@@ -80,6 +112,9 @@ export function Shell({ children }: { children: ReactNode }) {
       <header className="topbar">
         <button className="btn ghost icon menu-btn" onClick={() => setOpen(!open)} aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open}>
           {open ? <X /> : <Menu />}
+        </button>
+        <button className="btn ghost icon rail-btn" onClick={toggleRail} aria-label={rail ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!rail} title={`${rail ? "Expand" : "Collapse"} sidebar  [`}>
+          {rail ? <PanelLeftOpen /> : <PanelLeftClose />}
         </button>
         <div className="crumb">
           <span className="scope">FLO · </span>
