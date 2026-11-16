@@ -1,7 +1,10 @@
+import base64
 import html
 import re
+import time
 import warnings
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -243,6 +246,23 @@ label:has(input[role="switch"]) > span + div { background-color: var(--chip-bg) 
 label[data-selected]:has(input[role="switch"]) > span + div { background-color: var(--accent) !important; border-color: var(--accent); }
 label:has(input[role="switch"]) > span + div > div { background-color: #ffffff !important; }
 [data-testid="stTooltipIcon"] svg, [data-testid="stTooltipHoverTarget"] svg { opacity: 1; color: var(--muted-color) !important; }
+
+/* ---------- FLO splash (logo while data loads) ---------- */
+.flo-splash { position: fixed; inset: 0; z-index: 1000000; background: var(--app-bg); display: flex;
+              flex-direction: column; align-items: center; justify-content: center; gap: 22px; padding: 24px;
+              opacity: 1 !important; }
+.flo-splash img { max-width: min(240px, 55vw); max-height: 150px; object-fit: contain;
+                  animation: flo-pulse 1.8s ease-in-out infinite; }
+.flo-splash .word { font-size: clamp(2.6rem, 9vw, 4rem); font-weight: 900; letter-spacing: .14em; color: var(--text-color);
+                    animation: flo-pulse 1.8s ease-in-out infinite; line-height: 1; }
+.flo-splash .bar { width: min(260px, 64vw); height: 4px; border-radius: 4px; background: var(--chip-bg);
+                   overflow: hidden; position: relative; }
+.flo-splash .bar::after { content: ""; position: absolute; top: 0; left: -40%; width: 40%; height: 100%;
+                          background: var(--accent); border-radius: 4px; animation: flo-slide 1.1s ease-in-out infinite; }
+[data-testid="stElementContainer"]:has(.flo-splash), [data-testid="stMarkdown"]:has(.flo-splash) { opacity: 1 !important; }
+.flo-splash .msg { color: var(--muted-color); font-size: .9rem; text-align: center; line-height: 1.5; }
+@keyframes flo-slide { to { left: 100%; } }
+@keyframes flo-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .78; transform: scale(.97); } }
 
 /* ---------- month filter (button + panel) ---------- */
 .mf-label { font-size: .8rem; font-weight: 650; color: var(--text-color); line-height: 1.6; margin: 0 0 8px 0;
@@ -3389,7 +3409,56 @@ def _keep_widget_state():
 
 
 # -----------------------------------------------------------------------------
-# 13. MAIN ROUTER
+# 13. FLO SPLASH SCREEN  (logo while the first data loads)
+# -----------------------------------------------------------------------------
+# Put the logo next to app.py:  assets/flo_logo.png  (or .svg / .jpg / .webp). No file -> "FLO" text is shown.
+SPLASH_LOGO_FILES = ["assets/flo_logo.png", "assets/flo_logo.svg", "assets/flo_logo.jpg", "assets/flo_logo.jpeg",
+                     "assets/flo_logo.webp", "flo_logo.png", "flo_logo.svg", "flo_logo.jpg", "flo_logo.webp"]
+SPLASH_MIN_SECONDS = 1.2          # logo stays at least this long (so it does not just flash)
+SPLASH_MESSAGE = "Dashboard taiyaar ho raha hai… Google Sheets se live data aa raha hai"
+_MIME = {".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+@st.cache_resource(show_spinner=False)
+def _splash_logo_src():
+    """Logo file as an inline data URI (read once per server start). None if no logo file is present."""
+    base = Path(__file__).resolve().parent
+    for rel in SPLASH_LOGO_FILES:
+        f = base / rel
+        if f.is_file():
+            try:
+                data = base64.b64encode(f.read_bytes()).decode()
+                return f"data:{_MIME.get(f.suffix.lower(), 'image/png')};base64,{data}"
+            except Exception:
+                continue
+    return None
+
+
+def _show_splash():
+    """Full-screen FLO logo on the first load of a session (and after 'Refresh data now').
+    Returns (placeholder, start_time) or (None, None) when no splash is needed."""
+    if st.session_state.get("_splash_done"):
+        return None, None
+    src = _splash_logo_src()
+    logo = f'<img src="{src}" alt="FLO">' if src else '<div class="word">FLO</div>'
+    ph = st.empty()
+    ph.markdown(f'<div class="flo-splash">{logo}<div class="bar"></div><div class="msg">{_esc(SPLASH_MESSAGE)}</div></div>',
+                unsafe_allow_html=True)
+    return ph, time.time()
+
+
+def _hide_splash(ph, t0):
+    if ph is None:
+        return
+    wait = SPLASH_MIN_SECONDS - (time.time() - t0)
+    if wait > 0:
+        time.sleep(wait)
+    ph.empty()
+    st.session_state["_splash_done"] = True
+
+
+# -----------------------------------------------------------------------------
+# 14. MAIN ROUTER
 # -----------------------------------------------------------------------------
 LIVE_OPTIONS = {"Off": 0, "Every 1 min": 60, "Every 2 min": 120, "Every 5 min": 300}
 
@@ -3405,6 +3474,17 @@ def _safe(render_fn, *args):
 def main():
     _keep_widget_state()
     apply_theme()
+    splash, t0 = _show_splash()
+    try:
+        if splash is not None:
+            # behind the logo: all 5 sheets at the same time, so every tab opens without waiting afterwards
+            _prefetch_sources(["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue"])
+        _main_body()
+    finally:
+        _hide_splash(splash, t0)       # always removed, even if something fails
+
+
+def _main_body():
     with st.sidebar:
         st.markdown("### ⏱️ Live Updates")
         choice = st.selectbox("Auto-refresh (Sample, Fabricator, Fabric PO & Target)", list(LIVE_OPTIONS.keys()), index=2, key="live_choice",
@@ -3413,6 +3493,7 @@ def main():
         st.session_state["live_secs"] = LIVE_OPTIONS[choice]
         if st.button("🔄 Refresh data now", key="global_refresh", **STRETCH):
             st.cache_data.clear()
+            st.session_state.pop("_splash_done", None)     # show the FLO logo while fresh data loads
             st.rerun()
 
     fy = f"{FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}"
