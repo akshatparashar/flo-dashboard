@@ -63,7 +63,7 @@ export default function FabricPO() {
                 <Split items={d.charts.timing} unit="POs" />
               </Panel>
               <Panel title="Overdue POs, not yet received" sub={d.overdue_total > 15 ? `Oldest 15 of ${d.overdue_total}` : `${d.overdue_total} POs`} flush>
-                {d.overdue_total ? <DataTable table={d.tables.overdue} titleCaseFirst={false} /> : <T style={{ padding: 16 }}>No PO is overdue.</T>}
+                {d.overdue_total ? <DataTable table={d.tables.overdue} name="fabric_po_overdue" titleCaseFirst={false} /> : <T style={{ padding: 16 }}>No PO is overdue.</T>}
               </Panel>
             </Section>
             <Section title="Month by month" sub="By order date, in mtr">
@@ -71,12 +71,12 @@ export default function FabricPO() {
                 <Bars data={d.charts.monthly} unit="mtr" />
               </Panel>
               <Panel title="Month-wise summary" flush>
-                <DataTable table={d.tables.monthly} maxRows={13} titleCaseFirst={false} />
+                <DataTable table={d.tables.monthly} name="fabric_po_monthly" maxRows={13} titleCaseFirst={false} />
               </Panel>
             </Section>
             <Section title="Vendors" sub="Who delivers, who is late">
               <Panel title="Vendor scorecard" flush>
-                <DataTable table={d.tables.vendors} />
+                <DataTable table={d.tables.vendors} name="fabric_po_vendors" />
               </Panel>
               <Panel title="Share of fabric ordered" sub="mtr">
                 <BarList items={d.charts.vendor_share} unit="mtr" />
@@ -84,7 +84,7 @@ export default function FabricPO() {
             </Section>
             <Section title="All POs" sub="Every PO for the selected filters; tap a column to sort">
               <Panel flush>
-                <DataTable table={d.tables.pos} maxRows={15} titleCaseFirst={false} />
+                <DataTable table={d.tables.pos} name="fabric_po_pos" maxRows={15} titleCaseFirst={false} />
               </Panel>
             </Section>
           </>

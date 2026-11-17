@@ -81,8 +81,9 @@ Full guide: [`mobile/README.md`](mobile/README.md) and [`mobile/AGENTS.md`](mobi
   response changes, update both.
 - It is read-only: it can never change a sheet. The sign-in token lives in the phone's secure storage.
 
-**Known gaps (good first tasks):** no editor for the yearly target (server default ₹50.2 Cr is used; the website has
-one); no CSV export; not yet tested on a real Android or iPhone.
+**Done 17 Nov:** yearly-target editor on the Target tab (kept on the phone) and a *CSV* link under every table (opens
+the share sheet with a `.csv` file; same file as the website). **Still open:** not yet tested on a real Android or
+iPhone.
 
 ## Known issues
 

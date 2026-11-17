@@ -43,3 +43,12 @@ test("server address and query string", () => {
   assert.equal(toQuery({ month: ["April-26", "May-26"], risk: "", designer: [] }), "?month=April-26&month=May-26");
   assert.equal(toQuery({ q: "A & B" }), "?q=A%20%26%20B");
 });
+
+test("CSV export matches the website's file", async () => {
+  const { toCsv } = await import("../src/lib/csv.ts");
+  const table = {
+    columns: [{ label: "Vendor" }, { label: "Value, ₹" }, { label: "Note" }],
+    rows: [["SHREE FAB", 1234.567, "=SUM(A1)"], ["A \"B\"", -5, null]],
+  };
+  assert.equal(toCsv(table), 'Vendor,"Value, ₹",Note\r\nSHREE FAB,1234.57,\'=SUM(A1)\r\n"A ""B""",-5,');
+});

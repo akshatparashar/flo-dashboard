@@ -91,10 +91,10 @@ export default function Overview() {
                   <StackedList data={s.orders.charts.fabricators} unit="pcs" sortBy="Pending" />
                 </Panel>
                 <Panel title="Pending and overdue by fabricator" flush>
-                  <DataTable table={s.orders.tables.fabricators} maxRows={8} />
+                  <DataTable table={s.orders.tables.fabricators} name="overview_orders_fabricators" maxRows={8} />
                 </Panel>
                 <Panel title="Pending by client" flush>
-                  <DataTable table={s.orders.tables.clients} maxRows={8} />
+                  <DataTable table={s.orders.tables.clients} name="overview_orders_clients" maxRows={8} />
                 </Panel>
               </Section>
             )}
@@ -107,7 +107,7 @@ export default function Overview() {
                 </Panel>
                 <Panel title="Overdue POs, not yet received" sub={s.po.overdue_total > 15 ? `Oldest 15 of ${s.po.overdue_total}` : `${s.po.overdue_total} POs`} flush>
                   {s.po.overdue_total ? (
-                    <DataTable table={s.po.tables.overdue} maxRows={8} titleCaseFirst={false} />
+                    <DataTable table={s.po.tables.overdue} name="overview_po_overdue" maxRows={8} titleCaseFirst={false} />
                   ) : (
                     <T style={{ padding: 16 }}>No PO is overdue.</T>
                   )}
@@ -119,7 +119,7 @@ export default function Overview() {
               <Section title="Fabricator stock" sub="Fabricator report" action={<Open to="/fabricators" label="Fabricators" />}>
                 <KpiGrid kpis={s.stock.kpis} lead={["remaining"]} />
                 <Panel title="Stock by fabricator" flush>
-                  <DataTable table={s.stock.table} />
+                  <DataTable table={s.stock.table} name="overview_stock" />
                 </Panel>
               </Section>
             )}
@@ -136,7 +136,7 @@ export default function Overview() {
             {s.designers && (
               <Section title="Designers" sub="Orders with samples" action={<Open to="/designers" label="Designers" />}>
                 <Panel flush>
-                  <DataTable table={s.designers.table} maxRows={10} />
+                  <DataTable table={s.designers.table} name="overview_designers" maxRows={10} />
                 </Panel>
               </Section>
             )}

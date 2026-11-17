@@ -50,7 +50,7 @@ export default function Designers() {
               <StackedList data={d.charts.new_vs_repeat} unit="pcs" max={12} />
             </Panel>
             <Panel title="Designer table" flush>
-              <DataTable table={d.tables.designers} maxRows={12} />
+              <DataTable table={d.tables.designers} name="designers_designers" maxRows={12} />
             </Panel>
           </Section>
           <Section title="Month by month" sub="Pcs ordered">
@@ -60,7 +60,7 @@ export default function Designers() {
           </Section>
           <Section title="Categories" sub="Pcs per designer and category">
             <Panel flush>
-              <DataTable table={d.tables.categories} maxRows={12} />
+              <DataTable table={d.tables.categories} name="designers_categories" maxRows={12} />
             </Panel>
           </Section>
         </>

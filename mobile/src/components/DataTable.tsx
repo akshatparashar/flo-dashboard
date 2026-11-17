@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { fmtCell, isNum, titleCase } from "../lib/format";
+import { shareCsv } from "../lib/shareCsv";
 import { font, useTheme } from "../lib/theme";
 import type { Cell, Column, TableData } from "../lib/types";
 import { T } from "./ui";
@@ -16,7 +17,7 @@ function width(col: Column, rows: Cell[][], ci: number): number {
   return Math.min(Math.max(longest + 24, 72), 190);
 }
 
-export function DataTable({ table, maxRows = 10, titleCaseFirst = true }: { table: TableData; maxRows?: number; titleCaseFirst?: boolean }) {
+export function DataTable({ table, name, maxRows = 10, titleCaseFirst = true }: { table: TableData; name?: string; maxRows?: number; titleCaseFirst?: boolean }) {
   const c = useTheme();
   const [sort, setSort] = useState<{ col: number; dir: 1 | -1 } | null>(null);
   const [all, setAll] = useState(false);
@@ -143,6 +144,11 @@ export function DataTable({ table, maxRows = 10, titleCaseFirst = true }: { tabl
         {(hidden > 0 || (all && body.length > maxRows)) && (
           <Pressable onPress={() => setAll((x) => !x)} hitSlop={8} accessibilityRole="button">
             <Text style={{ fontFamily: font.uiBold, fontSize: 13, color: c.accent }}>{all ? "Show fewer" : `Show all ${body.length}`}</Text>
+          </Pressable>
+        )}
+        {name && (
+          <Pressable onPress={() => shareCsv(name, table).catch(() => undefined)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Share ${name} as CSV`}>
+            <Text style={{ fontFamily: font.uiBold, fontSize: 13, color: c.accent }}>CSV</Text>
           </Pressable>
         )}
       </View>

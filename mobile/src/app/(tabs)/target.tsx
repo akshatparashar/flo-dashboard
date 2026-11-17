@@ -1,5 +1,6 @@
 /* Target & revenue: are we on track for the yearly new-order target, and where does revenue come from? */
-import { Image, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Image, StyleSheet, Text, TextInput, View } from "react-native";
 import { BarList, Bars, StackedList, TargetBar } from "../../components/charts";
 import { DataTable } from "../../components/DataTable";
 import { FilterButton, MonthChips, useFilters } from "../../components/Filters";
@@ -7,6 +8,7 @@ import { Em, Screen } from "../../components/Screen";
 import { Empty, KpiGrid, Notices, Panel, Section, T } from "../../components/ui";
 import { inr, inrShort, titleCase } from "../../lib/format";
 import { useDashboard } from "../../lib/query";
+import { getItem, setItem } from "../../lib/storage";
 import { font, useTheme } from "../../lib/theme";
 import type { RepeatDesign, TargetData } from "../../lib/types";
 
@@ -17,6 +19,57 @@ const GROUPS = [
   { key: "item", label: "Item" },
   { key: "order_by", label: "Ordered by" },
 ];
+
+const TARGET_KEY = "flo.target_cr";
+
+/** Yearly new-order target in crore, kept on this phone. null = the server's default. */
+function useTargetCr(): [number | null, (v: number | null) => void] {
+  const [cr, setCr] = useState<number | null>(null);
+  useEffect(() => {
+    getItem(TARGET_KEY).then((v) => {
+      const n = v === null ? NaN : Number(v);
+      if (Number.isFinite(n) && n >= 0) setCr(n);
+    });
+  }, []);
+  const set = (v: number | null) => {
+    setCr(v);
+    setItem(TARGET_KEY, v === null ? null : String(v));
+  };
+  return [cr, set];
+}
+
+function TargetInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const c = useTheme();
+  const [text, setText] = useState(String(value));
+  const [shown, setShown] = useState(value);
+  if (shown !== value) {
+    // the server answered with a new target: show it
+    setShown(value);
+    setText(String(value));
+  }
+  const commit = () => {
+    const v = parseFloat(text.replace(/,/g, ""));
+    if (Number.isFinite(v) && v >= 0 && v <= 100000) onChange(Math.round(v * 100) / 100);
+    else setText(String(value));
+  };
+  return (
+    <View style={[st.target, { borderColor: c.ruleStrong }]}>
+      <T v="small">₹</T>
+      <TextInput
+        value={text}
+        onChangeText={setText}
+        onBlur={commit}
+        onSubmitEditing={commit}
+        keyboardType="decimal-pad"
+        returnKeyType="done"
+        selectTextOnFocus
+        accessibilityLabel="Yearly new-order target in crore"
+        style={{ width: 64, paddingVertical: 6, textAlign: "right", fontFamily: font.uiBold, fontSize: 15, color: c.ink }}
+      />
+      <T v="small">Cr</T>
+    </View>
+  );
+}
 
 function RepeatRow({ r }: { r: RepeatDesign }) {
   const c = useTheme();
@@ -47,7 +100,8 @@ function RepeatRow({ r }: { r: RepeatDesign }) {
 
 export default function Target() {
   const f = useFilters(KEYS);
-  const q = useDashboard<TargetData>("/target", f.values);
+  const [cr, setCr] = useTargetCr();
+  const q = useDashboard<TargetData>("/target", cr === null ? f.values : { ...f.values, annual_target_cr: cr });
   return (
     <Screen
       title="Target & revenue"
@@ -80,7 +134,11 @@ export default function Target() {
         return (
           <>
             <Notices items={d.notices} />
-            <Section title="New-order target" sub={`${d.meta.fy} · yearly target ₹${d.annual_target_cr} Cr, split equally by month`}>
+            <Section title="New-order target" sub={`${d.meta.fy} · yearly target, split equally by month`}>
+              <View style={st.targetRow}>
+                <T v="small" style={{ flex: 1 }}>Yearly new-order target (tap to change)</T>
+                <TargetInput value={d.annual_target_cr} onChange={setCr} />
+              </View>
               <Panel title="Year so far">
                 <TargetBar achieved={t.gauge.achieved} target={t.gauge.target} scheduled={t.schedule.scheduled} />
               </Panel>
@@ -90,7 +148,7 @@ export default function Target() {
               </Panel>
               <Notices items={t.notices} />
               <Panel title="Target vs achieved by month" sub="Achieved %: green 100%+, amber 75–99%, red under 75%" flush>
-                <DataTable table={t.table} maxRows={13} titleCaseFirst={false} />
+                <DataTable table={t.table} name="target_monthly_target" maxRows={13} titleCaseFirst={false} />
               </Panel>
             </Section>
 
@@ -110,7 +168,7 @@ export default function Target() {
                     <StackedList data={fl.charts.designers} unit="inr" />
                   </Panel>
                   <Panel title="Designer revenue" flush>
-                    <DataTable table={fl.tables.designers} />
+                    <DataTable table={fl.tables.designers} name="target_designers" />
                   </Panel>
                   <Panel title="By item">
                     <BarList items={fl.charts.items} unit="inr" />
@@ -119,7 +177,7 @@ export default function Target() {
                     <BarList items={fl.charts.order_by} unit="inr" />
                   </Panel>
                   <Panel title="Revenue by month" flush>
-                    <DataTable table={fl.tables.monthly} maxRows={13} titleCaseFirst={false} />
+                    <DataTable table={fl.tables.monthly} name="target_monthly" maxRows={13} titleCaseFirst={false} />
                   </Panel>
                   <Panel title="Designs that sell again" sub="Top 15 by number of repeat orders" flush>
                     {fl.top_repeat.length ? (
@@ -141,4 +199,6 @@ export default function Target() {
 const st = StyleSheet.create({
   repeat: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
   thumb: { width: 48, height: 48, borderRadius: 10 },
+  targetRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  target: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, alignSelf: "flex-start" },
 });

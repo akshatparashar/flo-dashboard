@@ -64,7 +64,7 @@ export default function Fabricators() {
                 <Bars data={d.charts.monthly} unit="pcs" />
               </Panel>
               <Panel title="Monthly position of stock" flush>
-                <DataTable table={d.tables.monthly} maxRows={13} titleCaseFirst={false} />
+                <DataTable table={d.tables.monthly} name="fabricators_monthly" maxRows={13} titleCaseFirst={false} />
               </Panel>
             </Section>
             <Section title="By fabricator" sub="Who holds the stock">
@@ -75,13 +75,13 @@ export default function Fabricators() {
                 <BarList items={d.charts.received_pct} unit="pct" max={12} />
               </Panel>
               <Panel title="Fabricator scorecard" flush>
-                <DataTable table={d.tables.scorecard} maxRows={12} />
+                <DataTable table={d.tables.scorecard} name="fabricators_scorecard" maxRows={12} />
               </Panel>
             </Section>
             {d.matrix && (
               <Section title="Matrix" sub={`${d.metric} per fabricator and month`}>
                 <Panel flush>
-                  <DataTable table={d.matrix.table} maxRows={12} />
+                  <DataTable table={d.matrix.table} name="fabricators_matrix" maxRows={12} />
                 </Panel>
               </Section>
             )}

@@ -61,7 +61,7 @@ export default function Clients() {
               <BarList items={d.charts.monthly_share} unit="pcs" max={12} />
             </Panel>
             <Panel title="Fulfilment by month" flush>
-              <DataTable table={d.tables.monthly} maxRows={13} titleCaseFirst={false} />
+              <DataTable table={d.tables.monthly} name="clients_monthly" maxRows={13} titleCaseFirst={false} />
             </Panel>
           </Section>
           <Section title="Categories" sub="Pcs by category and month">
@@ -69,7 +69,7 @@ export default function Clients() {
               <Bars data={d.charts.category_by_month} unit="pcs" stacked />
             </Panel>
             <Panel title="Category table" flush>
-              <DataTable table={d.tables.categories} maxRows={13} titleCaseFirst={false} />
+              <DataTable table={d.tables.categories} name="clients_categories" maxRows={13} titleCaseFirst={false} />
             </Panel>
           </Section>
         </>

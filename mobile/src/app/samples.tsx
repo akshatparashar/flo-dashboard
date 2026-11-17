@@ -61,7 +61,7 @@ export default function Samples() {
                 <Bars data={d.charts.monthly_status} unit="pcs" stacked />
               </Panel>
               <Panel title="Monthly table" flush>
-                <DataTable table={d.tables.monthly} maxRows={13} titleCaseFirst={false} />
+                <DataTable table={d.tables.monthly} name="samples_monthly" maxRows={13} titleCaseFirst={false} />
               </Panel>
             </Section>
             <Section title="Designers" sub="Samples per designer">
@@ -69,7 +69,7 @@ export default function Samples() {
                 <StackedList data={d.charts.designers} unit="pcs" max={12} />
               </Panel>
               <Panel title="Designer table" flush>
-                <DataTable table={d.tables.designers} maxRows={12} />
+                <DataTable table={d.tables.designers} name="samples_designers" maxRows={12} />
               </Panel>
             </Section>
             <Section title="Vendors" sub="Samples per sampling vendor">
@@ -77,7 +77,7 @@ export default function Samples() {
                 <StackedList data={d.charts.vendors} unit="pcs" max={12} />
               </Panel>
               <Panel title="Vendor table" flush>
-                <DataTable table={d.tables.vendors} maxRows={12} />
+                <DataTable table={d.tables.vendors} name="samples_vendors" maxRows={12} />
               </Panel>
             </Section>
           </>

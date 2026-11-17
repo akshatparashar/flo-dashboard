@@ -57,7 +57,7 @@ export default function Production() {
               <StackedList data={{ ...d.charts.by_category, series: d.charts.by_category.series.filter((s) => s.name !== "In production") }} unit="pcs" sortBy="Pending" />
             </Panel>
             <Panel title="Category table" flush>
-              <DataTable table={d.tables.categories} />
+              <DataTable table={d.tables.categories} name="production_categories" />
             </Panel>
           </Section>
           <Section title="Pending with fabricators" sub="Who holds the most pending pcs">
@@ -65,7 +65,7 @@ export default function Production() {
               <BarList items={d.charts.pending_share} unit="pcs" tone="neg" />
             </Panel>
             <Panel title="Pending share" flush>
-              <DataTable table={d.tables.fabricators} />
+              <DataTable table={d.tables.fabricators} name="production_fabricators" />
             </Panel>
           </Section>
           <Section title="Month by month" sub="By order month">
@@ -73,7 +73,7 @@ export default function Production() {
               <Bars data={d.charts.monthly} unit="pcs" />
             </Panel>
             <Panel title="Monthly table" flush>
-              <DataTable table={d.tables.monthly} maxRows={13} titleCaseFirst={false} />
+              <DataTable table={d.tables.monthly} name="production_monthly" maxRows={13} titleCaseFirst={false} />
             </Panel>
           </Section>
         </>
