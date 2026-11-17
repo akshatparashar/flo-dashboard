@@ -4,7 +4,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, type Href } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance } from "react-native";
+import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RichText } from "../components/RichText";
 import { Robot } from "../components/Robot";
@@ -27,6 +27,22 @@ const nextId = () => memory.next++;
 /** Web paths in answers -> app screens (they are the same names). */
 const ROUTES = new Set(["/", "/production", "/fabric-po", "/target", "/designers", "/clients", "/samples", "/fabricators"]);
 
+/** Android draws edge to edge, so the window no longer shrinks for the keyboard: track its height ourselves.
+    React Native reports it without the navigation bar, which insets.bottom already covers. */
+function useAndroidKeyboard(): number {
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const show = Keyboard.addListener("keyboardDidShow", (e) => setH(e.endCoordinates.height));
+    const hide = Keyboard.addListener("keyboardDidHide", () => setH(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return h;
+}
+
 export default function Assistant() {
   const c = useTheme();
   const insets = useSafeAreaInsets();
@@ -34,12 +50,13 @@ export default function Assistant() {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const listRef = useRef<ScrollViewInstance>(null);
+  const keyboard = useAndroidKeyboard();
 
   useEffect(() => {
     remember({ msgs });
     const t = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
     return () => clearTimeout(t);
-  }, [msgs, busy]);
+  }, [msgs, busy, keyboard]);
 
   const push = (m: Omit<Msg, "id">) => setMsgs((s) => [...s, { ...m, id: nextId() }]);
 
@@ -145,7 +162,7 @@ export default function Assistant() {
         )}
       </ScrollView>
 
-      <View style={[st.input, { borderColor: c.rule, backgroundColor: c.sheet, paddingBottom: 10 + (Platform.OS === "ios" ? insets.bottom : Math.max(insets.bottom, 0)) }]}>
+      <View style={[st.input, { borderColor: c.rule, backgroundColor: c.sheet, paddingBottom: 10 + insets.bottom + keyboard }]}>
         <TextInput
           value={draft}
           onChangeText={setDraft}
