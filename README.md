@@ -13,7 +13,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-read--only%20API-1f5fd1?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-1f5fd1?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-1f5fd1?logo=typescript&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-140%20passing-18794a)
+![Tests](https://img.shields.io/badge/tests-150%20passing-18794a)
 ![Sheets access](https://img.shields.io/badge/Google%20Sheets-read--only-0b1a33)
 
 [Screens](#screens) · [Dashboards](#the-eight-dashboards) · [Architecture](#how-it-works) · [Quick start](#quick-start) · [Configuration](#configuration) · [API](#api-reference) · [Testing](#testing) · [Deploy](#deploy-to-vercel) · [Phone app](#phone-app) · [Design](#design-system) · [Roadmap](#roadmap)
@@ -21,6 +21,11 @@
 </div>
 
 ---
+
+> [!NOTE]
+> **Picking this up to deploy it or to build the phone app?** Start with [`CHECKPOINT.md`](CHECKPOINT.md): current
+> status, a step-by-step deploy checklist and the phone-app hand-over. Short versions are in
+> [Deploy to Vercel](#deploy-to-vercel) and [Phone app](#phone-app) below.
 
 ## Why this exists
 
@@ -272,9 +277,12 @@ All settings live in `backend/.env` (copy `backend/.env.example`). The file is g
 | `TAB_TTL_SECONDS` | `600` | How often the list of tabs is re-read |
 | `REFRESH_COOLDOWN_SECONDS` | `15` | Minimum gap between two "read now" requests |
 | `DASHBOARD_PASSCODE` | — | When set, the dashboard asks for this passcode |
-| `TOKEN_SECRET` | `dev-only-secret` | Signs sign-in tokens. **Set a long random value in production** |
+| `TOKEN_SECRET` | derived from the service-account key (else `dev-only-secret`) | Signs sign-in tokens. **Set a long random value in production** |
 | `TOKEN_HOURS` | `336` | How long a sign-in lasts (14 days) |
 | `CORS_ORIGINS` | — | Extra browser origins allowed to call the API (comma separated) |
+| `GEMINI_API_KEY` | — | Optional. Lets FLO Assistant ask a small Gemini model what a question means when its rules can't tell. The model sees the question and the dashboard's labels, never any figures |
+| `GEMINI_MODEL` | `gemini-flash-lite-latest` | Gemini model used for that fallback |
+| `ASSISTANT_GEMINI` | `on` | `off` turns the Gemini fallback off even when a key is set |
 
 Sheet IDs and tab names are in [`backend/app/config.py`](backend/app/config.py) (`SHEET_REGISTRY`). Each entry lists
 the data tab names to try in order, with fallbacks, exactly as the original app did.
@@ -286,7 +294,13 @@ the data tab names to try in order, with fallbacks, exactly as the original app 
 2. **Share each of the five sheets** with the service account's `client_email` as **Viewer**.
 3. In `backend/.env` set `DATA_SOURCE=google` and either `GOOGLE_SERVICE_ACCOUNT_FILE` or
    `GOOGLE_SERVICE_ACCOUNT_JSON`.
-4. Restart the API and check `GET /api/status` — every source should report `"ok": true`.
+4. Restart the API and check `GET /api/status` — every source should report `"ok": true`, and
+   `GET /api/health` should say `"source": "google"`.
+
+> [!IMPORTANT]
+> Comparing numbers with the sheets or the old Streamlit app? Make sure the header does **not** show *Demo data*.
+> In demo mode every figure is sample data. On 17 Nov 2026 the old app and this API were compared on the live
+> sheets and every headline figure on all eight pages matched.
 
 > [!CAUTION]
 > Never commit `.env` or a key file, and never paste a key into a chat, an issue or a commit message. If a key is
@@ -321,6 +335,7 @@ Every dashboard is one `GET`. Filters are query parameters; repeat a parameter t
 | `GET /api/health` | — public; whether a passcode is required |
 | `POST /api/refresh` | — read the sheets again now (rate-limited) |
 | `POST /api/auth/login` | `{ "passcode": "…" }` → `{ "token": "…" }` |
+| `POST /api/chat` | `{ "message": "…", "context": {…} }` → FLO Assistant's answer; send back the returned `context` for follow-up questions ([`docs/CHATBOT.md`](docs/CHATBOT.md)) |
 
 Send `Authorization: Bearer <token>` when a passcode is set.
 
@@ -363,15 +378,22 @@ Send `Authorization: Bearer <token>` when a passcode is set.
 | **Parity** (61) | `pytest tests/test_parity.py` | Runs the original Streamlit dashboards headless and the new API on the same grids; every table cell and KPI must match, across many filter combinations |
 | **Parity on real sheets** | `PARITY_SOURCE=google pytest tests/test_parity.py` | The same comparison on a frozen snapshot of the live Google Sheets |
 | **Filters** (9) | `pytest tests/test_api_filters.py` | Every filter of every endpoint reaches its calculation over HTTP |
-| **API** (25) | `pytest tests/test_api.py` | Routes, sign-in and rate limit, refresh cooldown, one read per minute, stale-if-error, messy-cell parsing |
-| **Frontend unit** (14) | `npm test` | Rupee and number formatting, CSV escaping, URL filters, live-sync pulses, table behaviour |
+| **API** (27) | `pytest tests/test_api.py` | Routes, sign-in and rate limit, refresh cooldown, one read per minute, stale-if-error, messy-cell parsing |
+| **Assistant** (31) | `pytest tests/test_assistant.py` | FLO Assistant quotes the dashboard's own figures, English + Hinglish, follow-ups, read-only, sign-in, sheet-down message, Gemini fallback |
+| **Frontend unit** (19) | `npm test` | Rupee and number formatting, CSV escaping, URL filters, live-sync pulses, table behaviour, chat widget |
+| **Phone app** (3) | `cd mobile && npm test` | Number formatting and API helpers (plus `npm run typecheck`, `npm run lint`, `npx expo-doctor`) |
 | **Browser** (31 + device-specific) | `npx playwright test` | Every page in Chrome on desktop and phone, no console errors or failed calls, on-screen numbers equal the API, filters, sign-in, theme, intro, sidebar rail, CSV export |
 
 ```powershell
-cd backend;  .venv\Scripts\python -m pytest          # 95 tests
+cd backend;  .venv\Scripts\python -m pytest          # 128 tests
 cd frontend; npm run typecheck; npm test; npm run build
 cd frontend; npx playwright test                     # starts both servers if they aren't running
 ```
+
+> [!NOTE]
+> On the real sheets, 6 Fabric PO parity cases currently fail **by design**: the API shows the placeholder text
+> "CLIENT NAME" (PO RV 1316) and "DESIGNER NAME" (PO SVV 12) as *(BLANK)*, the old app showed them as names. No
+> totals change. Fixing those two rows in the sheet makes them pass. Details in [`CHECKPOINT.md`](CHECKPOINT.md).
 
 The parity tests are why the original app is kept in `legacy/`. Delete that folder only after the old dashboard is
 retired.
@@ -382,6 +404,8 @@ The repo deploys as **one Vercel project** with two services (`vercel.json`): th
 every `/api/*` request goes to the FastAPI app (Python 3.12). `.vercelignore` keeps `.env`, key files, virtual
 environments, tests and `legacy/` out of the upload.
 
+0. **Use fresh keys.** Create a new service-account key (Google Cloud → *IAM → Service accounts → Keys*) and, if
+   used, a new Gemini key, and delete any key that has been shared in a chat or email.
 1. Import the GitHub repo in Vercel (**Add New → Project**). Leave the root directory as the repo root; Vercel reads
    `vercel.json` and builds both services.
 2. **Settings → Environment Variables** (Production and Preview):
@@ -390,12 +414,19 @@ environments, tests and `legacy/` out of the upload.
    |---|---|
    | `DATA_SOURCE` | `google` |
    | `GOOGLE_SERVICE_ACCOUNT_JSON` | the whole service-account key as one line of JSON |
-   | `DASHBOARD_PASSCODE` | the team passcode |
+   | `DASHBOARD_PASSCODE` | the team passcode — **required**: without it anyone with the link sees all the data |
    | `TOKEN_SECRET` | a long random value (if left out, one is derived from the service-account key) |
    | `GEMINI_API_KEY` | optional — helps FLO Assistant with questions its rules can't place |
 
-3. Deploy, then open `https://<project>.vercel.app/api/status` (after signing in on the site): every sheet should
-   report `"ok": true`.
+3. Deploy, then check:
+   - the site asks for the passcode;
+   - the header shows **no** *Demo data* badge;
+   - `https://<project>.vercel.app/api/status` (after signing in) reports `"ok": true` for every sheet;
+   - a couple of headline numbers match the sheets, and FLO Assistant answers "total PO count" with the same figure.
+4. Give the phone developer the Vercel address and the passcode (never the Google key).
+
+The first request after an idle period reads all five sheets and takes about 12–15 s; after that, data is cached
+for 60 s.
 
 The same build was checked locally with `vercel build`. No extra CORS setting is needed: the web app calls `/api` on
 its own domain, and the phone app is not a browser.
@@ -406,6 +437,18 @@ its own domain, and the phone app is not a browser.
 dashboards with month chips and filters, tables and charts made for a phone screen, FLO Assistant behind the robot
 button on every screen, light and dark mode, and sign-in with the same passcode. See
 [`mobile/README.md`](mobile/README.md) to run it with Expo Go or build an installable app with EAS.
+
+**Hand-over for the mobile developer** (needs the deployed address and passcode from [Deploy to Vercel](#deploy-to-vercel)):
+
+1. `cd mobile && npm install && npx expo start`, scan the QR code with Expo Go, sign in with the Vercel address and
+   passcode, and check every tab on a **real phone** (not done yet).
+2. Put the Vercel address in `mobile/eas.json` → `EXPO_PUBLIC_API_URL` for **both** the `preview` and `production`
+   profiles.
+3. `npx eas-cli@latest build --profile preview --platform android` gives an installable APK link; use the
+   `production` profile for TestFlight / the App Store.
+
+The app only calls the API; it never calculates figures itself. Its response types in `mobile/src/lib/types.ts` are a
+copy of `frontend/src/api/types.ts`, so change both if a response changes. Open items: target editor, CSV export.
 
 ## Design system
 
@@ -439,6 +482,8 @@ Principles:
 - [x] Vercel deployment config (web + API as one project) — deploy from the Vercel dashboard
 - [x] FLO Assistant that answers from the dashboard (see [`docs/CHATBOT.md`](docs/CHATBOT.md))
 - [x] React Native app for iOS and Android on the same API (`mobile/`)
+- [ ] Deploy on Vercel with the real sheets and a passcode (checklist in [`CHECKPOINT.md`](CHECKPOINT.md))
+- [ ] Test the phone app on a real Android phone and iPhone
 - [ ] Publish the phone app (EAS build → APK / TestFlight)
 - [ ] Retire the Streamlit dashboard and remove `legacy/`
 
@@ -467,6 +512,7 @@ Principles:
 | Light shows *Delayed* | Google did not answer the last read; the last good copy is shown and it retries within a minute |
 | Light shows *Offline* | The browser cannot reach the API; check that `uvicorn` is running |
 | A page asks for a passcode | `DASHBOARD_PASSCODE` is set — use the team passcode |
+| Numbers differ from the old Streamlit app | Check for the *Demo data* badge first: demo mode shows sample figures. With the real sheets the two match |
 | A number looks wrong | Compare with the sheet; the *Data check* section on *Target & revenue* lists rows whose amounts disagree with the sheet |
 
 ---

@@ -1,62 +1,134 @@
 # Checkpoint — where the project stands
 
-_Last updated: 2026-11-17. Read this first when picking the work up again._
+_Last updated: 2026-11-17. Read this first when picking the work up._
+
+**Two jobs are left, in this order:** deploy the website + API to Vercel ([Part A](#part-a--deploy-the-dashboard-on-vercel)),
+then finish and ship the phone app ([Part B](#part-b--the-phone-app)). The phone app needs the deployed address
+from Part A.
 
 ## Status at a glance
 
 | Part | State | Verified how |
 |---|---|---|
-| **API** (`backend/`, FastAPI) | Working on the real Google Sheets | 128 pytest tests pass (incl. parity with the old Streamlit app) |
-| **Website** (`frontend/`, React + Vite) | Working | 31 Playwright tests pass on real data; 19 unit tests; typecheck clean |
-| **FLO Assistant** (chatbot, `POST /api/chat`) | Working in English + Hinglish | Tested on real data: figures, rankings, comparisons, month ranges, follow-ups, PO lookup |
-| **Vercel config** (`vercel.json`) | Ready, **not deployed** | Full `vercel build` succeeded locally; `/api/*` → Python, rest → website |
-| **Phone app** (`mobile/`, Expo SDK 58) | Working, **not yet tried on a real phone** | Driven end to end in a phone-size browser (light + dark); Android + iOS bundles compile; typecheck, lint, tests, expo-doctor clean |
+| **API** (`backend/`, FastAPI) | Working on the real Google Sheets | 128 pytest tests pass on demo data |
+| **Numbers vs the old Streamlit app** | Identical on the real sheets | Old app and new `/api` compared end to end on the live sheets (17 Nov): all 98 headline figures on all 8 pages match |
+| **Website** (`frontend/`, React + Vite) | Working | 31 Playwright tests; 19 unit tests; typecheck and build clean |
+| **FLO Assistant** (chatbot, `POST /api/chat`) | Working in English + Hinglish | Tested on real data; optional Gemini fallback tested with a real key |
+| **Vercel config** (`vercel.json`) | Ready, **not deployed** | Full `vercel build` succeeded locally |
+| **Phone app** (`mobile/`, Expo SDK 58) | Working, **not yet tried on a real phone** | Typecheck, tests and expo-doctor clean; Android + iOS bundles compile |
 
-Everything is committed and pushed to `origin/main` (github.com/akshatparashar/flo-dashboard).
+> [!IMPORTANT]
+> **Why the new dashboard can look "wrong":** without a Google key the API serves built-in **demo data** (the top
+> bar shows a *Demo data* badge, and e.g. Total POs reads 170 instead of the real figure). That is not a calculation
+> bug. Check `GET /api/health` → `"source": "google"` before comparing numbers with the sheets.
 
-## Next steps (in order)
+## Part A — Deploy the dashboard on Vercel
 
-1. **Deploy on Vercel** — import the repo, set env vars, deploy (README → *Deploy to Vercel*):
-   `DATA_SOURCE=google`, `GOOGLE_SERVICE_ACCOUNT_JSON` (one line), `DASHBOARD_PASSCODE`, `TOKEN_SECRET`
-   (optional `GEMINI_API_KEY`). Then check `https://<project>.vercel.app/api/status`.
-2. **Try the phone app on a real phone** — `cd mobile && npm install && npx expo start`, scan with Expo Go.
-3. **Build the app for the owner** — put the Vercel URL in `mobile/eas.json` (`EXPO_PUBLIC_API_URL`, both
-   profiles), then `npx eas-cli@latest build --profile preview --platform android` → APK link.
-4. **Sheet cleanup (team)** — Fabric PO sheet rows **SVV 12** and **RV 1316** have "DESIGNER NAME" / "CLIENT NAME"
-   typed in as values. The dashboard treats them as blank; fix them at the source.
+**Who:** whoever owns the Vercel account. **Needs:** access to this GitHub repo, a Google service-account key with
+Viewer access to the five sheets, a team passcode. Full steps: README → [Deploy to Vercel](README.md#deploy-to-vercel).
 
-## Known gaps / ideas
+1. **Make fresh keys first.** The current Google service-account key and Gemini key have been shared in chats.
+   - Google Cloud Console → *IAM → Service accounts* → `streamlit-dashboard-master@…` → *Keys* → **Add key (JSON)**,
+     then **delete the old key** (`7b269e58…`).
+   - Gemini (optional): Google AI Studio → *API keys* → create a new key, delete the old one.
+2. **Vercel → Add New → Project →** import `akshatparashar/flo-dashboard`, root = repo root (Vercel reads `vercel.json`).
+3. **Settings → Environment Variables** (Production and Preview):
 
-- Phone app has no editor for the yearly target (uses the server default ₹50.2 Cr); the website has one.
-- Phone app has no CSV export (the website does).
-- First request after a cold start reads all five sheets (~12–15 s); later requests are cached for 60 s.
-- Chatbot is rule based; `GEMINI_API_KEY` adds an optional fallback that only maps a question to dashboard
-  labels (never sees figures).
+   | Variable | Value | Required? |
+   |---|---|---|
+   | `DATA_SOURCE` | `google` | yes |
+   | `GOOGLE_SERVICE_ACCOUNT_JSON` | the new key file as **one line** of JSON | yes |
+   | `DASHBOARD_PASSCODE` | a long team passcode | **yes** — without it the site is public: orders, clients and revenue |
+   | `TOKEN_SECRET` | a long random string (e.g. `openssl rand -hex 32`) | recommended |
+   | `GEMINI_API_KEY` | the new Gemini key | optional (chatbot fallback) |
+
+4. **Deploy**, then check:
+   - [ ] The site asks for the passcode.
+   - [ ] No *Demo data* badge in the top bar.
+   - [ ] `https://<project>.vercel.app/api/status` (after signing in) shows `"ok": true` for all five sheets.
+   - [ ] Overview → Fabric PO → *Total POs* equals the number of POs in the Fabric PO sheet's INDEX tab.
+   - [ ] Robot button → "total PO count" answers with the same number.
+5. **Send the phone developer** the Vercel address and the passcode (not the Google key — the app never needs it).
+
+Expect the first page after an idle period to take **~12–15 s** (all five sheets are read on a cold start). After
+that, data is cached for 60 s.
+
+## Part B — The phone app
+
+**Who:** the mobile developer. **Needs:** the Vercel address and passcode from Part A, Node.js 22+, Expo Go on a
+phone, an Expo account (for builds), an Apple developer account (only for iPhone store builds).
+Full guide: [`mobile/README.md`](mobile/README.md) and [`mobile/AGENTS.md`](mobile/AGENTS.md).
+
+1. **Run it on a real phone** (not done yet):
+   ```bash
+   cd mobile && npm install && npx expo start      # scan the QR code with Expo Go
+   ```
+   On the sign-in screen enter the Vercel address and the passcode. Check every tab in light and dark mode.
+2. **Point builds at the live API:** in `mobile/eas.json` set `EXPO_PUBLIC_API_URL` to the Vercel address in
+   **both** `build.preview.env` and `build.production.env` (they are empty now).
+3. **Build:**
+   ```bash
+   npx eas-cli@latest login
+   npx eas-cli@latest build --profile preview --platform android    # .apk link for the owner
+   npx eas-cli@latest build --profile production --platform ios     # TestFlight / App Store
+   ```
+4. App id is `com.floindia.operations` (`mobile/app.json`); change it before the first store upload if needed.
+
+**Rules for the phone app**
+- It reads the **same API** as the website; never calculate figures on the phone. The API is documented at
+  `/api/docs` on the deployed site and in README → [API reference](README.md#api-reference).
+- Response types are copied by hand in `mobile/src/lib/types.ts` (from `frontend/src/api/types.ts`). If an API
+  response changes, update both.
+- It is read-only: it can never change a sheet. The sign-in token lives in the phone's secure storage.
+
+**Known gaps (good first tasks):** no editor for the yearly target (server default ₹50.2 Cr is used; the website has
+one); no CSV export; not yet tested on a real Android or iPhone.
+
+## Known issues
+
+- **6 real-sheet parity tests fail on purpose** — `PARITY_SOURCE=google pytest tests/test_parity.py` →
+  `test_fabric_po_dashboard[0–5]`. The new API shows the placeholder text "CLIENT NAME" (PO **RV 1316**) and
+  "DESIGNER NAME" (PO **SVV 12**) as *(BLANK)*; the old app showed them as names. No totals change. Fix: type the
+  real client / designer into those two rows of the Fabric PO sheet (or teach the parity test the new rule).
+  The demo-data test run (128 tests) is unaffected.
+- **Sign-in is one shared passcode**, not personal logins. The 10-tries-a-minute lock is per server instance, so on
+  Vercel keep the passcode long.
+- **Chatbot** is rule based; `GEMINI_API_KEY` adds a fallback that only maps a question to dashboard labels (it
+  never sees figures). Ambiguous wording ("supplier") can pick fabricators instead of fabric vendors.
 - `legacy/` (old Streamlit app) is kept only for the parity tests; remove once the old dashboard is retired.
 
 ## How to run everything locally
 
 ```bash
-# API on the real sheets (reads backend/.env)
-cd backend && .venv/Scripts/python -m uvicorn app.main:app --port 8000
+# API on the real sheets (reads backend/.env — see README → Configuration)
+cd backend
+.venv/Scripts/python -m uvicorn app.main:app --port 8000      # Windows
+.venv/bin/python -m uvicorn app.main:app --port 8000          # macOS / Linux
 # Website
-cd frontend && npx vite --port 5173                        # http://localhost:5173
+cd frontend && npx vite --port 5173                           # http://localhost:5173
 # Phone app in the browser (needs CORS for 8081 on the API: CORS_ORIGINS=http://localhost:8081)
 cd mobile && EXPO_PUBLIC_API_URL=http://localhost:8000 npx expo start --web --port 8081
 ```
 
-Demo data instead of the sheets: start the API with `DATA_SOURCE=demo`.
+Demo data instead of the sheets: start the API with `DATA_SOURCE=demo`. Keep key files **outside** the repo and
+point `GOOGLE_SERVICE_ACCOUNT_FILE` at them.
 
 ## Checks before every push
 
 ```bash
-cd backend  && .venv/Scripts/python -m pytest
+cd backend  && python -m pytest                                 # 128 tests (demo data)
 cd frontend && npm run typecheck && npm test && npx playwright test
 cd mobile   && npm run typecheck && npm run lint && npm test && npx expo-doctor
+# after changing a calculation, also on the real sheets:
+cd backend  && PARITY_SOURCE=google python -m pytest tests/test_parity.py
 ```
 
-## Recent history (this round of work)
+## Recent history
 
+- **17 Nov — real-sheet check:** the old Streamlit app (`legacy/streamlit_app.py`, identical to the
+  `design355/sample-production-dashboard` app) and the new API were run on the same live sheets: all headline
+  figures match. Reports of "wrong numbers" were the demo-data mode. This file and the README were updated as a
+  hand-over for deployment and the phone app.
 - Chatbot: fixed wrong answers found on real data — measure-vs-measure compare ("new vs repeat revenue"),
   "total orders", one month of a yearly figure ("this month target"), best/worst vendor by on-time rate with ties,
   "… of vendors" / "har designer ka …" lists, fabric questions → Fabric PO, table units, "client"/"vendor" never
