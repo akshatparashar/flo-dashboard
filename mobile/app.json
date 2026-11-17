@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "FLO Operations",
-    "slug": "flo-operations",
+    "slug": "flo",
     "scheme": "flo",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -46,6 +46,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "owner": "flo-ais-team",
+    "extra": {
+      "eas": {
+        "projectId": "67bb1637-0fa4-4b4b-ac48-983ab39a9965"
+      }
     }
   }
 }
