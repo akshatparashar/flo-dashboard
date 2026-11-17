@@ -2,9 +2,8 @@
 
 _Last updated: 2026-11-17. Read this first when picking the work up._
 
-**Two jobs are left, in this order:** deploy the website + API to Vercel ([Part A](#part-a--deploy-the-dashboard-on-vercel)),
-then finish and ship the phone app ([Part B](#part-b--the-phone-app)). The phone app needs the deployed address
-from Part A.
+**Live at https://flo-dashboardd.vercel.app** (deployed 17 Nov on a personal Vercel account, not the floworker team).
+**One job is left:** try the phone app on a real phone and build it for the owner ([Part B](#part-b--the-phone-app)).
 
 ## Status at a glance
 
@@ -14,15 +13,19 @@ from Part A.
 | **Numbers vs the old Streamlit app** | Identical on the real sheets | Old app and new `/api` compared end to end on the live sheets (17 Nov): all 98 headline figures on all 8 pages match |
 | **Website** (`frontend/`, React + Vite) | Working | 31 Playwright tests; 19 unit tests; typecheck and build clean |
 | **FLO Assistant** (chatbot, `POST /api/chat`) | Working in English + Hinglish | Tested on real data; optional Gemini fallback tested with a real key |
-| **Vercel config** (`vercel.json`) | Ready, **not deployed** | Full `vercel build` succeeded locally |
-| **Phone app** (`mobile/`, Expo SDK 58) | Working, **not yet tried on a real phone** | Typecheck, tests and expo-doctor clean; Android + iOS bundles compile |
+| **Live site** (Vercel) | **Deployed** — https://flo-dashboardd.vercel.app | 17 Nov: passcode required, `source: google`, all 5 sheets `ok`, all 8 pages answer, chatbot "total PO count" = 514 = *Total POs* |
+| **Phone app** (`mobile/`, Expo SDK 58) | Working, **not yet tried on a real phone** | Typecheck, tests and expo-doctor clean; Android + iOS bundles compile; builds point at the live site (`eas.json`) |
 
 > [!IMPORTANT]
 > **Why the new dashboard can look "wrong":** without a Google key the API serves built-in **demo data** (the top
 > bar shows a *Demo data* badge, and e.g. Total POs reads 170 instead of the real figure). That is not a calculation
 > bug. Check `GET /api/health` → `"source": "google"` before comparing numbers with the sheets.
 
-## Part A — Deploy the dashboard on Vercel
+## Part A — Deploy the dashboard on Vercel ✅ done 17 Nov
+
+Kept for redeploys. Env vars were imported from a local, git-ignored `.env.vercel` (built from `backend/.env`).
+**Still to do:** the Google key in use is the old shared one (`7b269e58…`) — make a new key, replace
+`GOOGLE_SERVICE_ACCOUNT_JSON` in Vercel, redeploy, then delete the old key. A longer `DASHBOARD_PASSCODE` is advised.
 
 **Who:** whoever owns the Vercel account. **Needs:** access to this GitHub repo, a Google service-account key with
 Viewer access to the five sheets, a team passcode. Full steps: README → [Deploy to Vercel](README.md#deploy-to-vercel).
@@ -63,9 +66,9 @@ Full guide: [`mobile/README.md`](mobile/README.md) and [`mobile/AGENTS.md`](mobi
    ```bash
    cd mobile && npm install && npx expo start      # scan the QR code with Expo Go
    ```
-   On the sign-in screen enter the Vercel address and the passcode. Check every tab in light and dark mode.
-2. **Point builds at the live API:** in `mobile/eas.json` set `EXPO_PUBLIC_API_URL` to the Vercel address in
-   **both** `build.preview.env` and `build.production.env` (they are empty now).
+   On the sign-in screen enter `flo-dashboardd.vercel.app` and the passcode. Check every tab in light and dark mode.
+2. ✅ **Builds point at the live API:** `mobile/eas.json` has `EXPO_PUBLIC_API_URL=https://flo-dashboardd.vercel.app`
+   in both profiles, so the built app only asks for the passcode.
 3. **Build:**
    ```bash
    npx eas-cli@latest login

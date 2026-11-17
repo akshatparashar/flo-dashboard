@@ -26,15 +26,15 @@ npx expo start          # scan the QR code with the Expo Go app (Android) or the
 
 On the sign-in screen, enter the dashboard address and the team passcode (the same one as the web dashboard).
 
-- Against the deployed site: the address is the Vercel URL, e.g. `flo-dashboard.vercel.app`.
+- Against the deployed site: the address is the Vercel URL, `flo-dashboardd.vercel.app`.
 - Against a local API: start the backend with `uvicorn app.main:app --host 0.0.0.0 --port 8000` and use your PC's
   Wi-Fi address, e.g. `http://192.168.1.20:8000`.
 
 ## Build an installable app for the owner (EAS)
 
-1. Deploy the dashboard to Vercel first (see the main README) and note its URL.
-2. Put that URL in `eas.json` → `build.preview.env.EXPO_PUBLIC_API_URL` and `build.production.env.EXPO_PUBLIC_API_URL`
-   (e.g. `"https://flo-dashboard.vercel.app"`). The sign-in screen then only asks for the passcode. Left empty, it
+1. The dashboard is live at `https://flo-dashboardd.vercel.app`.
+2. That URL is already in `eas.json` → `build.preview.env.EXPO_PUBLIC_API_URL` and `build.production.env.EXPO_PUBLIC_API_URL`
+   (change it there if the site moves). The sign-in screen then only asks for the passcode. Left empty, it
    also asks for the address.
 3. Build:
 

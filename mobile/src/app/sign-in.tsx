@@ -52,7 +52,7 @@ export default function SignIn() {
               <TextInput
                 value={server}
                 onChangeText={setServer}
-                placeholder="flo-dashboard.vercel.app"
+                placeholder="flo-dashboardd.vercel.app"
                 placeholderTextColor={c.faint}
                 autoCapitalize="none"
                 autoCorrect={false}

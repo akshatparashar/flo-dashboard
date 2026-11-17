@@ -400,6 +400,8 @@ retired.
 
 ## Deploy to Vercel
 
+**Live:** https://flo-dashboardd.vercel.app (personal Vercel account).
+
 The repo deploys as **one Vercel project** with two services (`vercel.json`): the Vite build serves the pages and
 every `/api/*` request goes to the FastAPI app (Python 3.12). `.vercelignore` keeps `.env`, key files, virtual
 environments, tests and `legacy/` out of the upload.
