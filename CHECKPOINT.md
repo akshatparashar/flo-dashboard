@@ -3,7 +3,9 @@
 _Last updated: 2026-11-17. Read this first when picking the work up._
 
 **Live at https://flo-dashboardd.vercel.app** (deployed 17 Nov on a personal Vercel account, not the floworker team).
-**One job is left:** try the phone app on a real phone and build it for the owner ([Part B](#part-b--the-phone-app)).
+**Phone app:** first Android build (preview APK, 17 Nov) — Expo project `flo-ais-team/flo`,
+https://expo.dev/accounts/flo-ais-team/projects/flo/builds/cfb7cb1a-d9c8-475f-b385-097f39fdadc8 (signing key kept by EAS).
+**Left:** check that APK on a real phone, then hand it to the owner ([Part B](#part-b--the-phone-app)).
 
 ## Status at a glance
 
