@@ -14,6 +14,21 @@ _Last updated: 2026-11-17. Read this first when picking the work up again._
 
 Everything is committed and pushed to `origin/main` (github.com/akshatparashar/flo-dashboard).
 
+### In progress: branch `feature/flo-future` (not merged; the owner tests and merges it)
+
+New **FLO Future** page (`/flo-future`, API `GET /api/flo-future`) for the monthly "FLO_Future Nov 2026" sheet
+(`1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw`, shared with the dashboard's service account): what each designer
+promised (Samples tab), outsource projects, visits & meetings, a follow-up list (overdue → due in 3 days → no
+status), designer / team / vendor scorecards, pending pcs by due date and status, and *Sheet checks* for data
+problems. Overview gets a FLO Future alert; the chatbot answers its figures and lists items ("which samples are
+overdue"). Checked on the real November rows: 310 promised / 40 done / 270 pending / 2 overdue, the same as the
+sheet's own Designer Summary.
+
+- Ignored on purpose: "FLO Future – Nov 2026 Promised Actions (Clean)", an earlier copy whose Designer Summary tab is
+  `#REF!`. Only the live sheet is read.
+- Next month: share the new copy with the service account and set `FLO_FUTURE_SHEET_ID` (no code change).
+- Not done yet: a FLO Future screen in the phone app (`mobile/`).
+
 ## Next steps (in order)
 
 1. **Deploy on Vercel** — import the repo, set env vars, deploy (README → *Deploy to Vercel*):

@@ -33,6 +33,20 @@ dashboard's numbers and pages, in English or Hinglish, and quotes exactly the fi
 - Answer style: add "in one word" for just the number, or "in detail" for a breakdown.
 - Follow-ups keep the subject: "total samples" → "and for May?".
 
+### FLO Future (this month's promises)
+
+The FLO Future page is one more page the assistant reads, so its figures work like any other: "kitne samples pending
+hai flo future me", "Keerti ka completion rate", "Team A pending samples", "outsource pending", "how many meetings
+done", "which designer has most pending promises". A few things are specific to it:
+
+- Words: *promise / promised / vaada / commitment*, *outsource*, *visits / meetings*, *not updated*, *due soon /
+  this week / is hafte*. "Team A" / "Team B" / "Team C" work as names and as a ranking ("har team ka pending").
+- Pending, overdue, due or done **samples** go to FLO Future (the Samples page only has approval figures).
+- "Which / kaun se / list" + overdue, due, not updated or pending names the **items** themselves, worst first, with
+  designer, pcs and how late: "which samples are overdue", "kaun se items is hafte due hai",
+  "Charu ke kaun se samples pending hai", "list overdue promises for Team B".
+- Answers say which month's sheet they come from ("… (November 2026 promises)"), not "all months so far".
+
 ## Files
 
 | Part | Where |

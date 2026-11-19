@@ -6,13 +6,14 @@ import { ART, BRACKET, Wordmark } from "./Brand";
 import { prefersReducedMotion } from "./charts/common";
 import { navCollapsed } from "./shell/Shell";
 
-const SOURCE_ORDER = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue"];
+const SOURCE_ORDER = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future"];
 const SOURCE_NAMES: Record<string, string> = {
   tracker: "Master sheet",
   sample_summary: "Samples",
   overview_fabricators: "Fabricators",
   fabric_po: "Fabric PO",
   target_revenue: "Target",
+  flo_future: "FLO Future",
 };
 const MIN_MS = 1700;
 const MAX_MS = 9000;

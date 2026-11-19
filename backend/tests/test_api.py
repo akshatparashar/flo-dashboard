@@ -25,7 +25,7 @@ def make_client(monkeypatch, source=None, **overrides):
 
 
 ROUTES = ["/api/overview", "/api/designer", "/api/client", "/api/production", "/api/samples", "/api/fabricator",
-          "/api/fabric-po", "/api/target", "/api/context", "/api/status"]
+          "/api/fabric-po", "/api/target", "/api/flo-future", "/api/context", "/api/status"]
 
 
 @pytest.mark.parametrize("path", ROUTES)
@@ -155,7 +155,7 @@ def test_error_without_cache_is_503(monkeypatch):
     assert r.status_code == 503
     assert "503" in r.json()["detail"]
     ov = client.get("/api/overview").json()     # overview still loads and lists the failures
-    assert len(ov["errors"]) == 4
+    assert len(ov["errors"]) == 5                # four original sheets + FLO Future
 
 
 def test_unknown_metric_falls_back(monkeypatch):

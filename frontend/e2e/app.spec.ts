@@ -26,6 +26,7 @@ const PAGES = [
   { path: "/fabricators", h1: "Fabricators", api: "/api/fabricator" },
   { path: "/fabric-po", h1: "Fabric PO", api: "/api/fabric-po" },
   { path: "/target", h1: "Target & revenue", api: "/api/target" },
+  { path: "/flo-future", h1: "FLO Future", api: "/api/flo-future" },
 ];
 
 function watch(page: Page) {
@@ -160,4 +161,23 @@ test("desktop sidebar folds into an icon rail and remembers it", async ({ page, 
   await page.keyboard.press("[");
   await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeGreaterThan(200);
   await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
+});
+
+test("FLO Future: follow-up list, and a team filter narrows the promised pcs", async ({ page, isMobile, request }) => {
+  test.skip(isMobile, "filter menus are covered on desktop");
+  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+  const all = await (await request.get(`${API}/api/flo-future`, { headers })).json();
+  test.skip(!!all.empty, "the FLO Future sheet has no rows");
+  const promised = (b: { kpis: { id: string; value: number }[] }) => b.kpis.find((k) => k.id === "promised")!.value;
+  await page.goto("/flo-future?nointro");
+  await expect(page.getByRole("heading", { level: 1, name: "FLO Future" })).toBeVisible();
+  if (all.attention.length) await expect(page.getByRole("list", { name: "Promised items that need attention" })).toBeVisible();
+  const team = all.options.team[0];
+  const one = await (await request.get(`${API}/api/flo-future?team=${encodeURIComponent(team)}`, { headers })).json();
+  await page.getByRole("toolbar", { name: "Filters" }).getByRole("button", { name: /^Team/ }).click();
+  await page.getByRole("option", { name: team }).click();
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/[?&]team=/);
+  await expect(page.locator(".kpi").first()).toContainText(promised(one).toLocaleString("en-US"));
+  expect(promised(one)).toBeLessThanOrEqual(promised(all));
 });

@@ -260,3 +260,58 @@ export interface Health {
   ttl: number;
   auth_required: boolean;
 }
+
+export interface PromiseItem {
+  level: "error" | "warning" | "info";
+  reason: string;
+  item: string;
+  designer: string;
+  team: string;
+  vendor: string;
+  kind: "Sample" | "Outsource";
+  status: string;
+  pending: number;
+  qty: number;
+  due: string | null;
+  days_left: number | null;
+}
+
+export interface FloFutureData extends Envelope {
+  empty?: boolean;
+  period: string;
+  today?: string;
+  options: Options;
+  notices: Notice[];
+  checks?: Notice[];
+  kpis: Kpi[];
+  summary?: {
+    done_pct: number;
+    completed: number;
+    qty: number;
+    pending: number;
+    items: number;
+    overdue: number;
+    due_soon: number;
+    not_updated: number;
+    outsource: { items: number; qty: number; pending: number; overdue: number };
+    visits: { planned: number; done: number; missed: number; upcoming: number; unplanned: number };
+  };
+  pace?: { due_by_today: number; completed: number } | null;
+  attention?: PromiseItem[];
+  tables?: {
+    designers: TableData;
+    teams: TableData;
+    vendors: TableData;
+    outsource_vendors: TableData;
+    status: TableData;
+    items: TableData;
+    outsource: TableData;
+    visits: TableData;
+  };
+  charts?: {
+    designers: SeriesChart;
+    stage_share: Slice[];
+    status: Slice[];
+    timeline: SeriesChart & { today_index: number; no_date: number };
+  };
+}

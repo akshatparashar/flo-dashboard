@@ -10,6 +10,7 @@ from ..core import FY_MONTH_LABELS, fmt, safe_div_pct
 from ..tables import RATE_APPROVAL, kpi, notice, table, with_total
 from . import fabric_po as fpo
 from . import fabricator as fab
+from . import flo_future as ffu
 from . import master as mst
 from . import samples as smp
 
@@ -67,6 +68,7 @@ def overview_dashboard(sources, months):
     smp_p, s_err = sources["sample_summary"]
     fab_p, f_err = sources["overview_fabricators"]
     po_p, p_err = sources["fabric_po"]
+    ff_p, ff_err = sources.get("flo_future", (None, None))
     smp_d = smp_p["d"] if smp_p else None
     fab_d = fab_p["df"] if fab_p else None
     po_d = po_p["d"] if po_p else None
@@ -82,7 +84,7 @@ def overview_dashboard(sources, months):
 
     alerts, errors, sections = [], [], {}
     for label, err in (("Master Sheet", m_err), ("Sample Summary", s_err), ("Fabricator Report", f_err),
-                       ("Fabric PO", p_err)):
+                       ("Fabric PO", p_err), ("FLO Future", ff_err)):
         if err:
             errors.append(notice(f"{label} could not be loaded: {err}", "error"))
 
@@ -244,6 +246,11 @@ def overview_dashboard(sources, months):
             "chart": {"categories": list(mt["Month"]), "series": [
                 {"name": s_, "values": [float(v) for v in mt[s_]]} for s_ in smp.SAMPLE_STATUSES]},
         }
+
+    # ---- FLO Future (this month's promises; the month filter does not apply) ----
+    ff_alert = ffu.overview_alert(ff_p) if ff_p else None
+    if ff_alert:
+        alerts.append(ff_alert)
 
     # ---- Designer snapshot (orders + samples) ----
     if xm is not None or (xs is not None and not xs.empty):

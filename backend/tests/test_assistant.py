@@ -304,3 +304,41 @@ def test_gemini_off_without_key(monkeypatch):
 def test_hinglish_target_left(client):
     r = ask(client, "target kitna bacha hai")
     assert r["answer"].startswith("Remaining target")
+
+
+# ------------------------------------------------------------------------------------------------ FLO Future
+def test_flo_future_overdue_count(client):
+    r = ask(client, "how many promised samples are overdue")
+    assert r["page"] == "/flo-future"
+    assert kpi(client, "/api/flo-future", "Overdue promises") in r["answer"]
+
+
+def test_flo_future_pending_hinglish_and_team(client):
+    r = ask(client, "kitne samples pending hai flo future me")
+    assert r["page"] == "/flo-future" and kpi(client, "/api/flo-future", "Pending samples") in r["answer"]
+    team = client.get("/api/flo-future").json()["options"]["team"][0]
+    r = ask(client, f"{team} pending samples")
+    assert kpi(client, "/api/flo-future", "Pending samples", team=team) in r["answer"]
+
+
+def test_flo_future_rank_by_pending_not_promised(client):
+    body = client.get("/api/flo-future").json()
+    t = body["tables"]["designers"]
+    ci = [c["label"] for c in t["columns"]].index("Pending (Pcs)")
+    best = max((r for r in t["rows"] if r[0] != "TOTAL"), key=lambda r: r[ci])
+    r = ask(client, "which designer has most pending promises")
+    assert r["intent"] == "rank" and best[0].upper() in r["answer"].upper() and "Pending" in r["answer"]
+
+
+def test_flo_future_lists_overdue_items(client):
+    body = client.get("/api/flo-future").json()
+    late = [a for a in body["attention"] if a["level"] == "error"]
+    r = ask(client, "which samples are overdue")
+    assert r["intent"] == "items" and r["page"] == "/flo-future"
+    assert bold(r["answer"])[0] == str(len(late))
+    assert late[0]["item"] in r["answer"]
+
+
+def test_flo_future_does_not_take_over_production(client):
+    assert ask(client, "how many pending pcs")["page"] == "/production"
+    assert ask(client, "total samples")["page"] == "/samples"

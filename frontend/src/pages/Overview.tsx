@@ -14,8 +14,8 @@ import { useFilters } from "../lib/filters";
 import { PageHead, PageState } from "./common";
 
 const KEYS = ["month"];
-const AREA_LINK: Record<string, string> = { orders: "/production", overdue: "/production?risk=Overdue", stock: "/fabricators", po: "/fabric-po", samples: "/samples" };
-const AREA_NAME: Record<string, string> = { orders: "Production", overdue: "Delivery", stock: "Fabricator stock", po: "Fabric PO", samples: "Samples", none: "Data" };
+const AREA_LINK: Record<string, string> = { orders: "/production", overdue: "/production?risk=Overdue", stock: "/fabricators", po: "/fabric-po", samples: "/samples", promises: "/flo-future" };
+const AREA_NAME: Record<string, string> = { orders: "Production", overdue: "Delivery", stock: "Fabricator stock", po: "Fabric PO", samples: "Samples", promises: "FLO Future", none: "Data" };
 const SEVERITY: Record<string, number> = { error: 0, warning: 1, info: 2, success: 3 };
 
 function AlertCard({ a }: { a: Alert }) {

@@ -27,6 +27,7 @@ from .config import SHEET_REGISTRY, get_settings
 from .core import FY_LABEL, FY_MONTH_LABELS, MONTHNO_TO_LABEL, now_ist
 from .dashboards import fabric_po as fpo
 from .dashboards import fabricator as fab
+from .dashboards import flo_future as ffu
 from .dashboards import master as mst
 from .dashboards import overview as ovw
 from .dashboards import samples as smp
@@ -174,7 +175,7 @@ def refresh():
 
 @app.get("/api/overview", dependencies=[Depends(require_auth)])
 def overview(month: Multi = []):
-    ds = get_store().datasets(["tracker", "sample_summary", "overview_fabricators", "fabric_po"])
+    ds = get_store().datasets(["tracker", "sample_summary", "overview_fabricators", "fabric_po", "flo_future"])
     sources = {k: (v.data, v.error if v.data is None else None) for k, v in ds.items()}
     return _envelope(ovw.overview_dashboard(sources, _clean(month)), *ds.values())
 
@@ -256,13 +257,24 @@ def target(month: Multi = [], designer: Multi = [], item: Multi = [],
     return _envelope(tgt.target_dashboard(_need(ds), f, annual_target_cr), ds)
 
 
+@app.get("/api/flo-future", dependencies=[Depends(require_auth)])
+def flo_future(team: Multi = [], designer: Multi = [], vendor: Multi = [], status: Multi = [],
+               season: Multi = [], month: Multi = []):
+    """FLO Future: what each designer promised for the month (samples, outsource projects, visits & meetings)."""
+    ds = get_store().dataset("flo_future")
+    f = {"team": _clean(team), "designer": _clean(designer), "vendor": _clean(vendor), "status": _clean(status),
+         "season": _clean(season), "month": _clean(month)}
+    return _envelope(ffu.flo_future_dashboard(_need(ds), f), ds)
+
+
 @app.get("/api/context", dependencies=[Depends(require_auth)])
 def context(month: Multi = []):
     """Compact, text-friendly snapshot of every dashboard for the AI assistant (no tables, no chart series)."""
     store = get_store()
     ds = store.datasets(KINDS)
     months = _clean(month)
-    sources = {k: (v.data, v.error if v.data is None else None) for k, v in ds.items() if k != "target_revenue"}
+    sources = {k: (v.data, v.error if v.data is None else None) for k, v in ds.items()
+               if k not in ("target_revenue", "flo_future")}
     ov = ovw.overview_dashboard(sources, months)
     out = {"alerts": [{"kind": a["kind"], "text": a["text"]} for a in ov["alerts"]],
            "errors": [e["text"] for e in ov["errors"]], "sections": {}}
@@ -273,13 +285,18 @@ def context(month: Multi = []):
         t = tgt.target_dashboard(ds["target_revenue"].data, {"month": months})
         if "tracker" in t:
             out["sections"]["target"] = {k["label"]: (k["value"], k["unit"]) for k in t["tracker"]["kpis"]}
+    if ds["flo_future"].data is not None:
+        ff = ffu.flo_future_dashboard(ds["flo_future"].data, {})
+        if not ff.get("empty"):
+            out["sections"]["flo_future"] = {k["label"]: (k["value"], k["unit"]) for k in ff["kpis"]}
     out["filters"] = {"month": months or "all"}
     return _envelope(out, *ds.values())
 
 
 # ------------------------------------------------------------------------------------------------ assistant
 _ASSISTANT_PAGES = {"overview": overview, "designer": designer, "client": client, "production": production,
-                    "samples": samples, "fabricator": fabricator, "fabric-po": fabric_po, "target": target}
+                    "samples": samples, "fabricator": fabricator, "fabric-po": fabric_po, "target": target,
+                    "flo-future": flo_future}
 
 
 def _assistant_fetch(page: str, filters: dict) -> dict:

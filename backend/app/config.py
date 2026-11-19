@@ -45,7 +45,26 @@ SHEET_REGISTRY: dict[str, dict] = {
         "repeat_tabs": ["REPEAT"],  # REPEAT orders -> revenue only
         "annual_target_cr": 50.2,  # yearly NEW target in crore
     },
+    "flo_future": {
+        "name": "FLO Future",
+        # The monthly "FLO_Future <Mon YYYY>" sheet. A new month's copy is picked up by setting FLO_FUTURE_SHEET_ID
+        # (no code change); share it with the service account as Viewer first.
+        "id": "1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw",
+        "id_env": "FLO_FUTURE_SHEET_ID",
+        "samples_tabs": ["Samples", "Sample", "Samples Promised"],
+        "outsource_tabs": ["Outsource Projects", "Outsource", "Outsourced Projects"],
+        "visits_tabs": ["Visits & Meetings", "Visits and Meetings", "Visits", "Meetings"],
+    },
 }
+
+
+def sheet_id(kind: str) -> str:
+    """The Google Sheet id for a source; a source with "id_env" can be pointed at another sheet from the env."""
+    cfg = SHEET_REGISTRY[kind]
+    override = os.getenv(cfg.get("id_env", ""), "").strip() if cfg.get("id_env") else ""
+    if override and get_settings().data_source == "google":
+        return override
+    return cfg["id"]
 
 
 @dataclass(frozen=True)

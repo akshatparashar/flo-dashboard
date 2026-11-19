@@ -216,6 +216,15 @@ _PLURAL_DIMS = "|".join(DIMENSION_PLURALS)
 _EACH = re.compile(rf"\b(?:of|for|by|across|among) (?:all |each |every |the |all the )?(?:{_PLURAL_DIMS})\b|"
                    rf"\b(?:each|every|har|sabhi|sab|all) (?:{_PLURAL_DIMS}|{'|'.join(DIMENSION_WORDS)})\b")
 _QUALITY = re.compile(r"\b(best|worst|reliable|unreliable)\b")
+_PROMISED = set(tokens("promised"))
+_PROMISE_MEASURES = set(tokens("pending overdue completed due notupdated unplanned rate"))
+# "which samples are overdue" / "kaun se items due hai": a list of promised items, not one figure
+_WHICH = re.compile(r"\b(which|what are|kaun|kon|konse|kaunse|konsa|kaunsa|list|kya kya|show|dikhao|names?)\b")
+_ITEM_MODES = [("overdue", r"\b(overdue|late|delay(ed)?|der)\b"),
+               ("notupdated", r"\b(not updated|update nahi|no status)\b"),
+               ("due", r"\b(due|this week|is hafte|next 7 days|aane wale|upcoming)\b"),
+               ("pending", r"\b(pending|baki|baaki|bache|open)\b")]
+_DAYS = re.compile(r"^in (\d+) days$|^due (today|tomorrow)$", re.I)
 
 
 def _month_index(word: str) -> int | None:
@@ -355,6 +364,15 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     if (re.search(r"\bfabric\b", t) and re.search(r"\b(po|pos|purchase|ordered|order)\b", t) or
             re.search(r"\b(po|pos|fpo|purchase orders?)\b", t)) and "fabric-po" not in q.pages:
         q.pages.append("fabric-po")
+    # Pending / overdue / due / done *samples* are this month's promises (the Samples page has no such figures)
+    if re.search(r"\bsamples?\b", t) and re.search(r"\b(pending|baki|baaki|bache|bacha|overdue|late|due|promis\w*|"
+                                                   r"vaada|vada|wada|completed?|done|not updated)\b", t) \
+            and "flo-future" not in q.pages:
+        q.pages.append("flo-future")
+    # "pending promises": "promise" only names the page; the measure is the other word
+    if "flo-future" in q.pages and set(q.toks) & _PROMISE_MEASURES and set(q.toks) & _PROMISED and \
+            not re.search(r"\b(promised (samples?|qty|pcs|quantity)|kitne .*promise|promise kiy)", t):
+        q.toks = [x for x in q.toks if x not in _PROMISED]
     # "fabric pending / received / ordered" is the Fabric PO sheet; fabric *issued* to fabricators is not
     if re.search(r"\b(fabric|kapda|cloth)\b", t) and not re.search(r"\b(issue|issued|fabricators?|karigar|stock)\b", t) \
             and "fabric-po" not in q.pages:
@@ -647,6 +665,9 @@ class Assistant:
             page = next(iter(q.pages), None)
             if page:
                 return self._page_about(page, snap)
+        items = self._promise_items(q, snap)
+        if items:
+            return items
         features = self._feature(q)
         if features and (_HOWTO.search(norm(q.text)) or not q.metric_toks):
             return self._reply(features, intent="help")
@@ -700,7 +721,10 @@ class Assistant:
         else:
             scope = q.scope()
             sentence = f"{best.label}{(' ' + scope) if scope else ''} is **{val}**."
-        if not q.months and best.kind == "kpi" and not best.label.lower().startswith(("top", "most")):
+        if best.page == "flo-future":
+            period = (best.payload or {}).get("period")
+            sentence = sentence[:-1] + (f" ({period} promises)." if period else " (this month's promises).")
+        elif not q.months and best.kind == "kpi" and not best.label.lower().startswith(("top", "most")):
             sentence = sentence[:-1] + " (all months so far)."
         lines = [sentence]
         same = label_tokens(best.label) & set(q.toks)
@@ -906,6 +930,60 @@ class Assistant:
                     return self._reply(f"**{timing or r[0]}**", page, {"page": page}, intent="record")
                 return self._reply(f"**{r[0]}**\n" + "\n".join(parts), page, {"page": page}, intent="record")
         return None
+
+    def _promise_items(self, q: Query, snap: Snapshot) -> dict | None:
+        """FLO Future: names the promised items that are overdue / due soon / not updated / pending."""
+        t = norm(q.text)
+        if "flo-future" not in PAGES or not _WHICH.search(t):
+            return None
+        if "flo-future" not in q.pages and not re.search(r"\b(samples?|collections?|items?|projects?|promis\w*)\b", t):
+            return None
+        named = {e.type for e in q.entities}
+        if any(d not in named and d != "category" for d in q.dims):      # "which designer has most overdue" ranks
+            return None
+        mode = next((m for m, pat in _ITEM_MODES if re.search(pat, t)), None)
+        f = self._filters("flo-future", replace(q, months=[]))
+        if not mode or f is None:
+            return None
+        try:
+            data = snap.get("flo-future", f)
+        except DataUnavailable as err:
+            return self._reply(f"I can't read the FLO Future sheet right now ({err}).", "flo-future", understood=False)
+        found = []
+        for tname, kind in (("items", ""), ("outsource", " (outsource)")):
+            tbl = (data.get("tables") or {}).get(tname) or {}
+            cols = [c["label"] for c in tbl.get("columns") or []]
+            if not {"When", "Designer", "Pending (Pcs)", "Status"} <= set(cols):
+                continue
+            ix = {c: i for i, c in enumerate(cols)}
+            for r in tbl["rows"]:
+                when, pend, status = str(r[ix["When"]] or ""), r[ix["Pending (Pcs)"]] or 0, r[ix["Status"]]
+                m = _DAYS.match(when)
+                soon = (int(m.group(1)) if m.group(1) else (0 if m.group(2).lower() == "today" else 1)) if m else None
+                ok = {"overdue": when.endswith("late"), "due": soon is not None and soon <= 7,
+                      "notupdated": status == "Not Updated" and pend > 0, "pending": pend > 0}[mode]
+                if ok:
+                    found.append((str(r[0]) + kind, r[ix["Designer"]], pend, when))
+        what = {"overdue": "overdue", "due": "due in the next 7 days", "notupdated": "still marked Not Updated",
+                "pending": "still pending"}[mode]
+        scope = q.scope()
+        scope = f" {scope}" if scope else ""
+        ctx = {"page": "flo-future", "metric": None, "intent": "items",
+               "entities": [e.ref() for e in q.entities], "months": []}
+        if not found:
+            return self._reply(f"No promised items are {what}{scope}.", "flo-future", ctx, intent="items")
+        pcs = sum(x[2] for x in found)
+        if q.style == "terse":
+            return self._reply(f"**{len(found)}**", "flo-future", ctx, intent="items")
+        cap = 25 if q.style == "detail" else 10
+        lines = [f"**{len(found)}** promised item{'s' if len(found) != 1 else ''} {what}{scope} "
+                 f"({fmt.fmt_int(pcs)} pcs):"]
+        one = sum(e.type == "designer" for e in q.entities) == 1
+        for name, who, pend, when in found[:cap]:
+            lines.append(f"• **{name}**: {'' if one else who + ', '}{fmt.fmt_int(pend)} pcs, {when.lower()}")
+        if len(found) > cap:
+            lines.append(f"• … and {len(found) - cap} more on the FLO Future page.")
+        return self._reply("\n".join(lines), "flo-future", ctx, intent="items")
 
     def _list(self, q: Query, vocab: Vocabulary) -> dict:
         dim = q.dims[0]
