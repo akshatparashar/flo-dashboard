@@ -1,68 +1,78 @@
-import { useState } from "react";
 import { useDashboard } from "../api/hooks";
-import type { FloFutureData, Kpi, PromiseItem } from "../api/types";
+import type { FloFutureData } from "../api/types";
 import { Bars } from "../components/charts/Bars";
-import { Legend, colorFor } from "../components/charts/common";
+import { Legend } from "../components/charts/common";
 import { HBars } from "../components/charts/HBars";
-import { BarList, Progress, Split } from "../components/charts/Lists";
+import { BarList, Split } from "../components/charts/Lists";
 import { DataTable } from "../components/DataTable";
+import { FollowUp } from "../components/FollowUp";
 import { FilterBar, MultiSelect } from "../components/Filters";
 import { Empty, KpiStrip, Notices, Panel, Section } from "../components/ui";
 import { useFilters } from "../lib/filters";
 import { fmtInt } from "../lib/format";
 import { PageHead, PageState } from "./common";
 
-const KEYS = ["team", "designer", "vendor", "status", "season", "month"];
-const STAGE_COLORS: Record<string, string> = {
-  Complete: "var(--accent)",
-  "In work": "var(--series-ref)",
-  "Not started": "var(--series-pale)",
-  "Not updated": "var(--neg)",
+/* Same filters, KPIs, tables and colour meanings as the original Streamlit "FLO Future" tab; every number comes
+   from GET /api/flo-future (backend/app/dashboards/flo_future.py). */
+const KEYS = ["designer", "team", "status", "due"];
+export const DUE_COLORS: Record<string, string> = {
+  Overdue: "var(--neg)",
+  "Due Today": "var(--warn)",
+  "Due in 1-3 Days": "color-mix(in srgb, var(--warn) 62%, var(--sheet))",
+  "Due in 4-7 Days": "var(--series-pale)",
+  "Due Later (> 7 Days)": "var(--series-ref)",
+  "No Due Date": "var(--series-grey)",
+  Completed: "var(--accent)",
 };
-const TIMELINE_COLORS: Record<string, string> = { Overdue: "var(--neg)", Pending: "var(--series-ref)" };
-const SAMPLE_KPIS = ["promised", "completed", "pending", "done_pct", "overdue", "due_soon", "not_updated", "top"];
-const OUT_KPIS = ["out_promised", "out_pending"];
-const VISIT_KPIS = ["visits_done", "unplanned"];
-const ATTENTION_SHOWN = 8;
-
-const pick = (kpis: Kpi[], ids: string[]) => ids.map((id) => kpis.find((k) => k.id === id)).filter((k): k is Kpi => !!k);
+const DESIGNER_COLORS: Record<string, string> = {
+  Completed: "var(--accent)",
+  "Pending · Overdue": "var(--neg)",
+  "Pending · Due in 0-3 Days": "var(--warn)",
+  "Pending · Due later / No date": "var(--series-pale)",
+};
+const VISIT_COLORS: Record<string, string> = {
+  Required: "var(--series-grey)",
+  Done: "var(--accent)",
+  "Missed / Not Marked": "var(--neg)",
+  Upcoming: "var(--series-ref)",
+};
 const plural = (n: number, word: string) => `${fmtInt(n)} ${word}${n === 1 ? "" : "s"}`;
 
-/** Promises that need someone to act: overdue first, then due in the next days, then no status / no date. */
-function Attention({ items }: { items: PromiseItem[] }) {
-  const [all, setAll] = useState(false);
-  if (!items.length) return <div className="state">Nothing needs attention: no promise is late, due in the next 3 days or missing a status.</div>;
-  const shown = all ? items : items.slice(0, ATTENTION_SHOWN);
+function Visits({ d }: { d: FloFutureData }) {
+  const v = d.visits;
+  if (!v.chart.categories.length) return null;
+  const flagged = v.chart.categories.map((c, i) => [c, v.chart.flags[i]]).filter(([, f]) => f);
   return (
-    <>
-      <ul className="attn" aria-label="Promised items that need attention">
-        {shown.map((a, i) => (
-          <li key={`${a.designer}-${a.item}-${i}`} className={`attn-row ${a.level}`}>
-            <i aria-hidden="true" />
-            <div className="attn-main">
-              <b>{a.item}</b>
-              {a.kind === "Outsource" && <span className="attn-kind">Outsource</span>}
-              <span className="attn-who">
-                {a.designer}
-                {a.team && !a.team.startsWith("(") ? ` · ${a.team}` : ""}
-                {a.vendor ? ` · ${a.vendor}` : ""} · {a.status}
-              </span>
-            </div>
-            <div className="attn-side">
-              <span className="attn-reason">{a.reason}</span>
-              <span className="attn-pcs num">
-                {fmtInt(a.pending)} pcs pending{a.due ? ` · due ${a.due}` : ""}
-              </span>
-            </div>
-          </li>
-        ))}
-      </ul>
-      {items.length > ATTENTION_SHOWN && (
-        <button className="btn ghost attn-more" onClick={() => setAll(!all)} aria-expanded={all}>
-          {all ? "Show fewer" : `Show all ${items.length}`}
-        </button>
-      )}
-    </>
+    <Section title="Visits and meetings" sub={`${v.totals.done} / ${v.totals.required} done this month · Done = 'X' or STATUS 'Done' in the sheet · Missed = date passed but not marked done`}>
+      <div className="grid">
+        <div className="span-7">
+          <Panel title="Required vs done" sub="Count per activity" right={<Legend items={Object.entries(VISIT_COLORS).map(([name, color]) => ({ name, color }))} />}>
+            <Bars data={v.chart} colors={VISIT_COLORS} label="Visits and meetings: required, done, missed and upcoming per activity" height={250} />
+            {flagged.length > 0 && (
+              <div className="ff-flags">
+                {flagged.map(([c, f]) => (
+                  <span key={c}>
+                    <b>{c}</b>: {f}
+                  </span>
+                ))}
+              </div>
+            )}
+          </Panel>
+        </div>
+        <div className="span-5">
+          <Panel title="Activity summary" flush>
+            <DataTable table={v.summary} name="flo_future_visits_summary" titleCaseFirst={false} csv={false} />
+          </Panel>
+        </div>
+        {v.detail.rows.length > 0 && (
+          <div className="span-12">
+            <Panel title="Every planned visit and meeting" flush>
+              <DataTable table={v.detail} name="flo_future_visits" titleCaseFirst={false} />
+            </Panel>
+          </div>
+        )}
+      </div>
+    </Section>
   );
 }
 
@@ -73,155 +83,123 @@ export default function FloFuture() {
     <div className="page">
       <PageState q={q}>
         {(d) => {
-          if (d.empty || !d.tables || !d.charts || !d.summary)
+          const head = (lede?: React.ReactNode) => <PageHead title="FLO Future" meta={d.meta} lede={lede} />;
+          if (d.empty || !d.summary || !d.tables || !d.charts)
             return (
               <>
-                <PageHead title="FLO Future" meta={d.meta} />
+                {head()}
                 <Notices items={d.notices} />
-                <Empty title="No promises found">The FLO Future sheet has no rows in its Samples or Outsource Projects tab yet.</Empty>
+                <Empty title="No promised samples">The FLO Future sheet's Samples tab has no rows yet.</Empty>
+                <Visits d={d} />
               </>
             );
           const s = d.summary;
           const t = d.tables;
           const c = d.charts;
-          const period = d.period || "this month";
-          const lateTone = s.overdue > 0 ? "bad" : undefined;
+          const period = d.period ? ` for ${d.period}` : "";
+          const labels = Object.fromEntries(c.designers.labels.map((l) => [l.designer, l]));
+          const filters = (
+            <FilterBar active={f.active} onReset={f.reset}>
+              <MultiSelect label="Designer" options={d.options.designer} value={f.values.designer} onChange={(v) => f.set("designer", v)} pretty={(x) => x} />
+              <MultiSelect label="Team" options={d.options.team} value={f.values.team} onChange={(v) => f.set("team", v)} pretty={(x) => x} />
+              <MultiSelect label="Status" options={d.options.status} value={f.values.status} onChange={(v) => f.set("status", v)} pretty={(x) => x} />
+              <MultiSelect label="Due Status" options={d.options.due} value={f.values.due} onChange={(v) => f.set("due", v)} pretty={(x) => x} />
+            </FilterBar>
+          );
           return (
             <>
-              <PageHead
-                title="FLO Future"
-                meta={d.meta}
-                lede={
-                  <>
-                    <strong>{s.done_pct.toFixed(0)}% done</strong> of {fmtInt(s.qty)} sample pcs promised for {period}.{" "}
-                    <span className={lateTone}>{plural(s.overdue, "item")} overdue</span>, {plural(s.due_soon, "item")} due in the next 7 days
-                    {s.not_updated ? <>, {plural(s.not_updated, "item")} still “Not Updated”</> : null}.
-                  </>
-                }
-              />
-              <FilterBar active={f.active} onReset={f.reset}>
-                <MultiSelect label="Team" options={d.options.team} value={f.values.team} onChange={(v) => f.set("team", v)} pretty={(x) => x} />
-                <MultiSelect label="Designer" options={d.options.designer} value={f.values.designer} onChange={(v) => f.set("designer", v)} />
-                <MultiSelect label="Vendor" options={d.options.vendor} value={f.values.vendor} onChange={(v) => f.set("vendor", v)} pretty={(x) => x} />
-                <MultiSelect label="Status" options={d.options.status} value={f.values.status} onChange={(v) => f.set("status", v)} pretty={(x) => x} />
-                {d.options.season.length > 0 && <MultiSelect label="Season" options={d.options.season} value={f.values.season} onChange={(v) => f.set("season", v)} />}
-                {d.options.month.length > 1 && <MultiSelect label="Due month" options={d.options.month} value={f.values.month} onChange={(v) => f.set("month", v)} pretty={(x) => x} />}
-              </FilterBar>
+              {head(
+                <>
+                  <strong>{s.done_pct.toFixed(1)}% done</strong>: {fmtInt(s.completed)} of {fmtInt(s.target)} promised pcs{period}.{" "}
+                  <span className={s.overdue_items ? "bad" : undefined}>
+                    {plural(s.overdue_items, "item")} overdue ({fmtInt(s.overdue_pcs)} pcs)
+                  </span>
+                  , {plural(s.due_soon, "item")} due in the next 3 days.
+                </>,
+              )}
+              {filters}
+              <p className="stamp ff-rule">
+                Today {d.today} · Pending = Qty Promised − Completed · Overdue = due date has passed and the item is not complete · Days Left = Due Date − today
+              </p>
               <Notices items={d.notices} />
-              <KpiStrip kpis={pick(d.kpis, SAMPLE_KPIS)} cols={4} lead={["done_pct"]} />
+              {d.no_match ? (
+                <Empty title="No promised samples found for the selected filters" />
+              ) : (
+                <>
+                  <KpiStrip kpis={d.kpis} cols={d.kpis.length === 9 ? 3 : 4} lead={["done_pct"]} />
 
-              <Section title="Needs attention" sub="Late promises first, then what is due in the next 3 days and items with no status or no date">
-                <div className="grid">
-                  <div className="span-7">
-                    <Panel title="Follow up" sub={`${plural(d.attention?.length ?? 0, "item")} · samples and outsource`} flush>
-                      <Attention items={d.attention ?? []} />
-                    </Panel>
-                  </div>
-                  <div className="span-5">
-                    <Panel title="Month progress" sub="Completed pcs against everything promised">
-                      <Progress
-                        value={s.completed}
-                        max={s.qty}
-                        marker={d.pace && d.pace.due_by_today > 0 ? d.pace.due_by_today : undefined}
-                        leftLabel={`${fmtInt(s.completed)} done`}
-                        rightLabel={`${fmtInt(s.qty)} promised`}
-                      />
-                      {d.pace && d.pace.due_by_today > 0 && (
-                        <p className="stamp" style={{ marginTop: 8, whiteSpace: "normal" }}>
-                          The tick marks {fmtInt(d.pace.due_by_today)} pcs whose due date has already passed.
-                          {s.completed >= d.pace.due_by_today ? " Completed work is ahead of it." : " Completed work is behind it."}
-                        </p>
-                      )}
-                    </Panel>
-                    <Panel title="Where the pcs stand" sub="Done, and pending pcs by how far along their item is">
-                      <Split items={c.stage_share} unit="pcs" colors={STAGE_COLORS} label="Promised sample pcs by stage" />
-                    </Panel>
-                  </div>
-                </div>
-              </Section>
+                  <Section title="Follow up now" sub="Overdue first, then due today and in the next 3 days">
+                    <div className="grid">
+                      <div className="span-7">
+                        <Panel title="Urgent samples" sub={plural(d.follow_up?.length ?? 0, "item")} flush>
+                          <FollowUp items={d.follow_up ?? []} empty="Nothing is overdue or due in the next 3 days for these filters." />
+                        </Panel>
+                      </div>
+                      <div className="span-5">
+                        <Panel title="Open pcs by due status" sub="Pending pcs of items not complete">
+                          <Split items={c.due_status} unit="pcs" colors={DUE_COLORS} label="Pending pcs by due status" />
+                        </Panel>
+                        <Panel title="Open pcs by status">
+                          <BarList items={c.status} unit="pcs" max={10} label="Pending pcs by sample status" />
+                        </Panel>
+                      </div>
+                    </div>
+                  </Section>
 
-              <Section title="Designer scorecard" sub="Every designer's promises for the month; the designer filter is not applied here so all can be compared">
-                <div className="grid">
-                  <div className="span-7">
-                    <Panel title="Designer table" flush>
-                      <DataTable table={t.designers} name="flo_future_designers" maxRows={14} />
-                    </Panel>
-                  </div>
-                  <div className="span-5">
-                    <Panel title="Done and pending per designer" sub="Sample pcs" right={<Legend items={["Completed", "Pending"].map((n) => ({ name: n, color: colorFor(n) }))} />}>
-                      <HBars data={c.designers} unit="pcs" label="Completed and pending promised pcs per designer" />
-                    </Panel>
-                  </div>
-                </div>
-              </Section>
+                  <Section title="Designer-wise target vs completed" sub="The Designer filter is not applied here so all designers can be compared; the other filters apply">
+                    <div className="grid">
+                      <div className="span-5">
+                        <Panel
+                          title="Target vs completed"
+                          sub="Full bar = target pcs · label = done % and done / target"
+                          right={<Legend items={Object.entries(DESIGNER_COLORS).map(([name, color]) => ({ name, color }))} />}
+                        >
+                          <HBars
+                            data={c.designers}
+                            colors={DESIGNER_COLORS}
+                            unit="pcs"
+                            max={20}
+                            label="Designer-wise target qty split into completed and pending pcs"
+                            endLabel={(name) => {
+                              const l = labels[name];
+                              return l ? `${l.done_pct.toFixed(0)}% · ${fmtInt(l.completed)}/${fmtInt(l.target)}` : "";
+                            }}
+                          />
+                        </Panel>
+                      </div>
+                      <div className="span-7">
+                        <Panel title="Designer table" sub="Done %: green ≥ 80%, amber 40–79%, red below 40%" flush>
+                          <DataTable table={t.designers} name="flo_future_designer" maxRows={15} titleCaseFirst={false} />
+                        </Panel>
+                        {t.teams.rows.length > 0 && (
+                          <Panel title="Team table" flush>
+                            <DataTable table={t.teams} name="flo_future_team" titleCaseFirst={false} />
+                          </Panel>
+                        )}
+                      </div>
+                    </div>
+                  </Section>
 
-              <Section title="Due dates and status" sub="Pending pcs by promised date, and where open items are in the sampling pipeline">
-                <div className="grid">
-                  <div className="span-7">
-                    <Panel
-                      title="Pending pcs by due date"
-                      sub={c.timeline.no_date ? `${fmtInt(c.timeline.no_date)} pending pcs have no due date and are not shown` : "Red = date already passed"}
-                      right={<Legend items={c.timeline.series.filter((x) => x.values.some(Boolean)).map((x) => ({ name: x.name, color: TIMELINE_COLORS[x.name] }))} />}
-                    >
-                      {c.timeline.categories.length ? <Bars data={c.timeline} stacked unit="pcs" colors={TIMELINE_COLORS} label="Pending promised pcs by due date" height={260} /> : <div className="state">No open item has a due date.</div>}
+                  <Section title="Sample detail" sub="All items, most urgent first; every filter applies. Pick one designer to see their full list.">
+                    <Panel flush>
+                      <DataTable table={t.items} name="flo_future_samples" maxRows={15} titleCaseFirst={false} />
                     </Panel>
-                  </div>
-                  <div className="span-5">
-                    <Panel title="Pending pcs by status" sub="Open items only">
-                      <BarList items={c.status} unit="pcs" max={10} label="Pending promised pcs by status" />
-                    </Panel>
-                  </div>
-                </div>
-              </Section>
+                  </Section>
+                </>
+              )}
 
-              <Section title="Teams and vendors" sub="Who the samples are with">
-                <div className="grid">
-                  <div className="span-6">
-                    <Panel title="Teams" flush>
-                      <DataTable table={t.teams} name="flo_future_teams" titleCaseFirst={false} />
-                    </Panel>
-                  </div>
-                  <div className="span-6">
-                    <Panel title="Sampling vendors" flush>
-                      <DataTable table={t.vendors} name="flo_future_vendors" titleCaseFirst={false} />
-                    </Panel>
-                  </div>
-                </div>
-              </Section>
+              <Visits d={d} />
 
-              <Section title="Every promised sample" sub="Late first, then by due date; finished items last">
-                <Panel flush>
-                  <DataTable table={t.items} name="flo_future_samples" maxRows={15} titleCaseFirst={false} />
-                </Panel>
-              </Section>
-
-              <Section title="Outsource projects" sub="Work given to outside sampling houses">
-                <KpiStrip kpis={pick(d.kpis, OUT_KPIS)} cols={2} />
-                <div className="grid" style={{ marginTop: "var(--gap)" }}>
-                  <div className="span-8">
-                    <Panel title="Projects" flush>
-                      <DataTable table={t.outsource} name="flo_future_outsource" titleCaseFirst={false} />
-                    </Panel>
-                  </div>
-                  <div className="span-4">
-                    <Panel title="Outsource vendors" flush>
-                      <DataTable table={t.outsource_vendors} name="flo_future_outsource_vendors" titleCaseFirst={false} />
-                    </Panel>
-                  </div>
-                </div>
-              </Section>
-
-              <Section title="Visits and meetings" sub="Market, store, Surat and factory visits, and the Saturday meetings">
-                <KpiStrip kpis={pick(d.kpis, VISIT_KPIS)} cols={2} />
-                <div style={{ marginTop: "var(--gap)" }}>
+              {t.outsource.rows.length > 0 && (
+                <Section title="Outsource projects" sub="From the sheet's Outsource Projects tab, same rules; not part of the sample numbers above">
                   <Panel flush>
-                    {t.visits.rows.length ? <DataTable table={t.visits} name="flo_future_visits" titleCaseFirst={false} /> : <div className="state">No visits or meetings on the sheet yet.</div>}
+                    <DataTable table={t.outsource} name="flo_future_outsource" titleCaseFirst={false} />
                   </Panel>
-                </div>
-              </Section>
+                </Section>
+              )}
 
               {!!d.checks?.length && (
-                <Section title="Sheet checks" sub="Things in the FLO Future sheet that look wrong or are missing. Fix them in the sheet; this list updates within a minute.">
+                <Section title="Sheet checks" sub="Things in the sheet that look wrong or are missing. They never change a number; fix them in the sheet.">
                   <div data-reveal>
                     <Notices items={d.checks} />
                   </div>

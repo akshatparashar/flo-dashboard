@@ -247,10 +247,11 @@ def overview_dashboard(sources, months):
                 {"name": s_, "values": [float(v) for v in mt[s_]]} for s_ in smp.SAMPLE_STATUSES]},
         }
 
-    # ---- FLO Future (this month's promises; the month filter does not apply) ----
-    ff_alert = ffu.overview_alert(ff_p) if ff_p else None
-    if ff_alert:
-        alerts.append(ff_alert)
+    # ---- FLO Future highlights (this month's promises; the month filter does not apply) ----
+    ff_h = ffu.overview_highlights(ff_p) if ff_p else None
+    if ff_h:
+        alerts.append(ff_h.pop("alert"))
+        sections["flo_future"] = ff_h
 
     # ---- Designer snapshot (orders + samples) ----
     if xm is not None or (xs is not None and not xs.empty):

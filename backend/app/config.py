@@ -51,9 +51,12 @@ SHEET_REGISTRY: dict[str, dict] = {
         # (no code change); share it with the service account as Viewer first.
         "id": "1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw",
         "id_env": "FLO_FUTURE_SHEET_ID",
-        "samples_tabs": ["Samples", "Sample", "Samples Promised"],
-        "outsource_tabs": ["Outsource Projects", "Outsource", "Outsourced Projects"],
-        "visits_tabs": ["Visits & Meetings", "Visits and Meetings", "Visits", "Meetings"],
+        # Same tab rules as the old Streamlit FLO Future tab: "Samples" (by name, else a tab named sample(s)),
+        # "Visits & Meetings" (by name, else any tab with "visit" / "meeting" in its name). "Outsource Projects" is
+        # read too and shown in its own section.
+        "source_tabs": ["Samples"],
+        "visits_tabs": ["Visits & Meetings"],
+        "outsource_tabs": ["Outsource Projects", "Outsource"],
     },
 }
 

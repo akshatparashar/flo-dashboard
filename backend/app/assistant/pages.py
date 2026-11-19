@@ -49,10 +49,11 @@ PAGES: dict[str, Page] = {p.key: p for p in [
     Page("flo-future", "FLO Future", "/flo-future",
          ("flo future", "future page", "promised", "promises", "promise", "commitment", "commitments", "vaada",
           "outsource", "outsourced", "visits", "meetings", "meeting"),
-         "This month's promises from the FLO Future sheet: sample collections each designer promised (qty, "
-         "completed, pending, status, due date), outsource projects, and visits & meetings. An item is overdue when "
-         "its due date has passed and it is not complete.",
-         {"team": "team", "designer": "designer", "vendor": "vendor", "month": "month"}, 9),
+         "This month's promised samples from the FLO Future sheet (target qty, completed, pending, completion %, "
+         "overdue and due-in-3-days items, per designer and team), visits & meetings against what is required each "
+         "month, and outsource projects. Pending = Qty Promised − Completed; an item is overdue when its due date has "
+         "passed and it is not complete.",
+         {"team": "team", "designer": "designer"}, 9),
     Page("overview", "Overview", "/", ("overview", "home page", "summary page", "main page"),
          "A summary of every sheet: orders, fabricator stock, fabric POs and samples, plus the alerts that need "
          "attention.",

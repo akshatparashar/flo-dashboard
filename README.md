@@ -99,7 +99,7 @@ the test suite runs it side by side with the new API on the same sheet data, com
 | **Clients** | How much did clients order and how much has been fulfilled? | Master sheet |
 | **Samples** | How many samples are approved, and per designer and vendor? | Sample summary · `2026-27` |
 | **Target & revenue** | Are we on track for the yearly new-order target? Which designs sell again? | Designer target · `NEW` + `REPEAT` |
-| **FLO Future** | What did each designer promise this month, what is late, and who needs a nudge? | FLO Future · `Samples` + `Outsource Projects` + `Visits & Meetings` |
+| **FLO Future** | What did each designer promise this month, what is late, and who needs a nudge? | FLO Future · `Samples` + `Visits & Meetings` (+ `Outsource Projects`) |
 
 <details>
 <summary><b>Business rules the dashboards apply</b> (same as the original)</summary>
@@ -115,11 +115,12 @@ the test suite runs it side by side with the new API on the same sheet data, com
 - **Revenue** = pcs × rate. The sheet's TOTAL AMOUNT column is only used for the *Data check* section.
 - **Target**: the yearly target (₹50.2 Cr by default, editable on the page) applies to NEW orders only, split equally
   across 12 months (`NEW_MONTHLY_WEIGHTS` for a seasonal split). Months not yet started show no %.
-- **FLO Future**: pending = qty promised − completed (0 once the status is *Complete*). An item is **overdue** when
-  its due date has passed and it still has pending pcs; **due soon** = due in the next 7 days. These are worked out by
-  the API from Qty / Completed / Status / Due Date, not read from the sheet's own Overdue or Designer Summary columns.
-  Columns are found by their header text, so they can be moved. The *Sheet checks* section lists blank quantities,
-  missing due dates, items listed under two designers and rows still marked *Not Updated*.
+- **FLO Future** (same rules as the old Streamlit FLO Future tab, checked by `tests/test_parity_flo_future.py`):
+  Pending = Qty Promised − Completed (never below 0; 0 when Qty is blank). An item is **complete** when its status is
+  *Complete* or Completed ≥ Qty; **overdue** = not complete and the due date is before today (IST). Due status
+  buckets: Overdue · Due Today · Due in 1-3 Days · Due in 4-7 Days · Due Later (> 7 Days) · No Due Date · Completed.
+  Visits & meetings: done = 'X' or STATUS *Done*; required per month: market visit 1, store / exhibition 1, Surat 1,
+  factory / store 2, meetings = as many as planned. Done % colours: green ≥ 80%, amber 40–79%, red below.
 - **Percentages in TOTAL rows are recomputed** from the totals, never summed or averaged.
 - **Colours on rates**: approval / received / on-time — green ≥ 50%, amber ≥ 25%, red below; target achievement —
   green ≥ 100%, amber ≥ 75%, red below.
@@ -324,7 +325,7 @@ Every dashboard is one `GET`. Filters are query parameters; repeat a parameter t
 | `GET /api/fabricator` | `fabricator` `month` `metric` |
 | `GET /api/fabric-po` | `month` `vendor` `order_type` `client` `designer` `item` `status` |
 | `GET /api/target` | `month` `designer` `item` `order_by` `source` `annual_target_cr` |
-| `GET /api/flo-future` | `team` `designer` `vendor` `status` `season` `month` (due month) |
+| `GET /api/flo-future` | `designer` `team` `status` `due` (due status) |
 | `GET /api/context` | `month` — a compact summary of everything, for the AI assistant |
 | `GET /api/status` | — sync state of each sheet |
 | `GET /api/health` | — public; whether a passcode is required |
@@ -448,7 +449,7 @@ Principles:
 - [x] Vercel deployment config (web + API as one project) — deploy from the Vercel dashboard
 - [x] FLO Assistant that answers from the dashboard (see [`docs/CHATBOT.md`](docs/CHATBOT.md))
 - [x] React Native app for iOS and Android on the same API (`mobile/`)
-- [x] FLO Future page: designers' monthly promises (samples, outsource, visits & meetings) + chatbot support
+- [x] FLO Future page (the old Streamlit FLO Future tab, same numbers) + Overview highlights + chatbot support
 - [ ] FLO Future screen in the phone app
 - [ ] Publish the phone app (EAS build → APK / TestFlight)
 - [ ] Retire the Streamlit dashboard and remove `legacy/`

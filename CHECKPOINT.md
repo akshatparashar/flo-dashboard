@@ -17,12 +17,14 @@ Everything is committed and pushed to `origin/main` (github.com/akshatparashar/f
 ### In progress: branch `feature/flo-future` (not merged; the owner tests and merges it)
 
 New **FLO Future** page (`/flo-future`, API `GET /api/flo-future`) for the monthly "FLO_Future Nov 2026" sheet
-(`1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw`, shared with the dashboard's service account): what each designer
-promised (Samples tab), outsource projects, visits & meetings, a follow-up list (overdue → due in 3 days → no
-status), designer / team / vendor scorecards, pending pcs by due date and status, and *Sheet checks* for data
-problems. Overview gets a FLO Future alert; the chatbot answers its figures and lists items ("which samples are
-overdue"). Checked on the real November rows: 310 promised / 40 done / 270 pending / 2 overdue, the same as the
-sheet's own Designer Summary.
+(`1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw`, shared with the dashboard's service account). It is the FLO Future
+tab of the old Streamlit dashboard (github.com/design355/sample-production-dashboard) rebuilt here with the same
+rules: that repo's `app.py` is now `legacy/streamlit_app.py` (it is the old legacy file + the FLO Future tab), and
+`tests/test_parity_flo_future.py` runs it next to the API and compares every KPI, table cell and sort order.
+Also run by hand on the real November rows for 4 "today" dates × 9 filter sets: identical (310 promised / 40 done /
+270 pending / 2 overdue on 19 Nov). Extras that change no old number: a follow-up list, a team table, sheet checks
+and the Outsource Projects tab in its own section. Overview has a FLO Future alert + highlights section; the chatbot
+answers its figures and lists items ("which samples are overdue").
 
 - Ignored on purpose: "FLO Future – Nov 2026 Promised Actions (Clean)", an earlier copy whose Designer Summary tab is
   `#REF!`. Only the live sheet is read.

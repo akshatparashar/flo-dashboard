@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -28,7 +29,7 @@ from .sources.google import SheetAccessError
 KINDS = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future"]
 # Kinds whose numbers depend on today's date (overdue / due soon), so their parsed copy is redone each day.
 DATED_KINDS = {"fabric_po", "flo_future"}
-FLO_FUTURE_PARTS = ("samples", "outsource", "visits")
+FLO_FUTURE_PARTS = ("samples", "visits", "outsource")
 
 
 def _now() -> float:
@@ -147,11 +148,11 @@ class DataStore:
             return [src or next((t for t in titles if "DASHBOARD" not in t.upper()), titles[0])]
         if kind == "flo_future":
             titles = [t for t, _ in meta]
-            tabs = [next((x for x in (find_tab(titles, n) for n in cfg[f"{part}_tabs"]) if x), None)
-                    for part in FLO_FUTURE_PARTS]
-            if tabs[0] is None and tabs[1] is None:
-                raise SheetAccessError("The FLO Future sheet has no 'Samples' or 'Outsource Projects' tab.")
-            return tabs
+            samples = pick_default_tab(meta, cfg["source_tabs"], None, ffu.SAMPLE_TAB_REGEX)
+            visits = next((t for t in (find_tab(titles, n) for n in cfg["visits_tabs"]) if t), None) or \
+                next((t for t in titles if re.search(ffu.VISIT_TAB_REGEX, t, re.I)), None)
+            outsource = next((t for t in (find_tab(titles, n) for n in cfg["outsource_tabs"]) if t), None)
+            return [samples, visits, outsource]
         if kind == "target_revenue":
             titles = [t for t, _ in meta]
             return [next((x for x in (find_tab(titles, n) for n in cfg.get(key, [default])) if x), None)
@@ -194,7 +195,7 @@ class DataStore:
         if kind == "flo_future":
             grids = iter(entries)
             return ffu.parse_flo_future({part: (next(grids).value if t else [])
-                                         for part, t in zip(FLO_FUTURE_PARTS, tabs)})
+                                         for part, t in zip(FLO_FUTURE_PARTS, tabs)}, today_ist())
         if kind == "target_revenue":
             present = [t for t in tabs if t]
             grids = dict(zip(present, entries[:len(present)]))

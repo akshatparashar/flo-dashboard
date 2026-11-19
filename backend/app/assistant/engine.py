@@ -25,7 +25,8 @@ from .text import (BOTTOM, CONTEXT_WORDS, GENERIC_NAME_WORDS, HOWMANY, MARKERS, 
 Fetch = Callable[[str, dict], dict]
 
 THRESHOLD = 1.0           # below this, the rules are not sure what was asked
-SOFT = {"new", "yearly", "annual", "fy", "all", "sheet", "overall", "qty", "mtr", "day"}
+SOFT = {"new", "yearly", "annual", "fy", "all", "sheet", "overall", "qty", "mtr", "day",
+        "date", "pass", "promis"}           # FLO Future labels: "Overdue (Date Passed)", "Target Qty (Promised)"
 SKIP_KEYS = {"meta", "options", "charts", "matrix", "heatmap", "lines", "top_repeat", "gauge", "schedule"}
 SPECIAL_ROW = re.compile(r"^\(.*\)$|^(total|grand total)$", re.I)
 MAX_QUESTION = 500
@@ -224,7 +225,7 @@ _ITEM_MODES = [("overdue", r"\b(overdue|late|delay(ed)?|der)\b"),
                ("notupdated", r"\b(not updated|update nahi|no status)\b"),
                ("due", r"\b(due|this week|is hafte|next 7 days|aane wale|upcoming)\b"),
                ("pending", r"\b(pending|baki|baaki|bache|open)\b")]
-_DAYS = re.compile(r"^in (\d+) days$|^due (today|tomorrow)$", re.I)
+_DUE_SOON = {"Due Today", "Due in 1-3 Days", "Due in 4-7 Days"}
 
 
 def _month_index(word: str) -> int | None:
@@ -369,6 +370,11 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
                                                    r"vaada|vada|wada|completed?|done|not updated)\b", t) \
             and "flo-future" not in q.pages:
         q.pages.append("flo-future")
+    # "promised samples" are FLO Future's, not the Samples page's approvals
+    if re.search(r"\b(promis\w*|vaada|vada|wada|commit\w*)\b", t) and "samples" in q.pages:
+        q.pages.remove("samples")
+        if "flo-future" not in q.pages:
+            q.pages.append("flo-future")
     # "pending promises": "promise" only names the page; the measure is the other word
     if "flo-future" in q.pages and set(q.toks) & _PROMISE_MEASURES and set(q.toks) & _PROMISED and \
             not re.search(r"\b(promised (samples?|qty|pcs|quantity)|kitne .*promise|promise kiy)", t):
@@ -568,7 +574,9 @@ class Assistant:
         return f
 
     def _page_bonus(self, page: str, q: Query) -> float:
-        return (0.5 if page in q.pages else 0.0) - 0.01 * PAGES[page].order - (0.3 if page == "overview" else 0.0)
+        # Overview repeats other pages; FLO Future's generic labels ("Pending", "Completed") answer only when the
+        # question is about promises / FLO Future (or names a team, which only FLO Future has)
+        return (0.5 if page in q.pages else 0.0) - 0.01 * PAGES[page].order - (0.3 if page == "overview" else 0.0)             - (0.45 if page == "flo-future" and page not in q.pages else 0.0)
 
     def _candidates(self, q: Query, snap: Snapshot) -> list[Candidate]:
         out: list[Candidate] = []
@@ -953,15 +961,17 @@ class Assistant:
         for tname, kind in (("items", ""), ("outsource", " (outsource)")):
             tbl = (data.get("tables") or {}).get(tname) or {}
             cols = [c["label"] for c in tbl.get("columns") or []]
-            if not {"When", "Designer", "Pending (Pcs)", "Status"} <= set(cols):
+            if not {"Days Left", "Designer", "Pending", "Status", "Due Status"} <= set(cols):
                 continue
             ix = {c: i for i, c in enumerate(cols)}
             for r in tbl["rows"]:
-                when, pend, status = str(r[ix["When"]] or ""), r[ix["Pending (Pcs)"]] or 0, r[ix["Status"]]
-                m = _DAYS.match(when)
-                soon = (int(m.group(1)) if m.group(1) else (0 if m.group(2).lower() == "today" else 1)) if m else None
-                ok = {"overdue": when.endswith("late"), "due": soon is not None and soon <= 7,
-                      "notupdated": status == "Not Updated" and pend > 0, "pending": pend > 0}[mode]
+                if SPECIAL_ROW.match(str(r[0])):
+                    continue
+                when, pend, status = str(r[ix["Days Left"]] or ""), r[ix["Pending"]] or 0, r[ix["Status"]]
+                bucket = r[ix["Due Status"]]
+                ok = {"overdue": bucket == "Overdue", "due": bucket in _DUE_SOON,
+                      "notupdated": status == "Not Updated" and bucket != "Completed",
+                      "pending": pend > 0 and bucket != "Completed"}[mode]
                 if ok:
                     found.append((str(r[0]) + kind, r[ix["Designer"]], pend, when))
         what = {"overdue": "overdue", "due": "due in the next 7 days", "notupdated": "still marked Not Updated",

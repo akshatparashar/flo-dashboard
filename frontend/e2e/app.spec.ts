@@ -163,15 +163,15 @@ test("desktop sidebar folds into an icon rail and remembers it", async ({ page, 
   await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
 });
 
-test("FLO Future: follow-up list, and a team filter narrows the promised pcs", async ({ page, isMobile, request }) => {
+test("FLO Future: follow-up list, and a team filter narrows the target qty", async ({ page, isMobile, request }) => {
   test.skip(isMobile, "filter menus are covered on desktop");
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
   const all = await (await request.get(`${API}/api/flo-future`, { headers })).json();
   test.skip(!!all.empty, "the FLO Future sheet has no rows");
-  const promised = (b: { kpis: { id: string; value: number }[] }) => b.kpis.find((k) => k.id === "promised")!.value;
+  const promised = (b: { kpis: { id: string; value: number }[] }) => b.kpis.find((k) => k.id === "target")!.value;
   await page.goto("/flo-future?nointro");
   await expect(page.getByRole("heading", { level: 1, name: "FLO Future" })).toBeVisible();
-  if (all.attention.length) await expect(page.getByRole("list", { name: "Promised items that need attention" })).toBeVisible();
+  if (all.follow_up.length) await expect(page.getByRole("list", { name: "Promised samples to follow up" }).first()).toBeVisible();
   const team = all.options.team[0];
   const one = await (await request.get(`${API}/api/flo-future?team=${encodeURIComponent(team)}`, { headers })).json();
   await page.getByRole("toolbar", { name: "Filters" }).getByRole("button", { name: /^Team/ }).click();

@@ -232,6 +232,7 @@ export interface OverviewData extends Envelope {
     };
     samples?: { kpis: Kpi[]; table: TableData; chart: SeriesChart };
     designers?: { table: TableData };
+    flo_future?: FloHighlights;
   };
 }
 
@@ -262,13 +263,13 @@ export interface Health {
 }
 
 export interface PromiseItem {
-  level: "error" | "warning" | "info";
+  level: "error" | "warning";
+  bucket: string;
   reason: string;
   item: string;
   designer: string;
   team: string;
   vendor: string;
-  kind: "Sample" | "Outsource";
   status: string;
   pending: number;
   qty: number;
@@ -276,42 +277,54 @@ export interface PromiseItem {
   days_left: number | null;
 }
 
+export interface CountSlice extends Slice {
+  items: number;
+}
+
+export interface FloVisits {
+  totals: { done: number; required: number; missed: number; not_planned: number };
+  summary: TableData;
+  detail: TableData;
+  chart: SeriesChart & { flags: string[] };
+}
+
 export interface FloFutureData extends Envelope {
   empty?: boolean;
+  no_match?: boolean;
   period: string;
-  today?: string;
+  today: string;
   options: Options;
   notices: Notice[];
   checks?: Notice[];
   kpis: Kpi[];
+  visits: FloVisits;
   summary?: {
-    done_pct: number;
-    completed: number;
-    qty: number;
-    pending: number;
     items: number;
-    overdue: number;
+    target: number;
+    completed: number;
+    pending: number;
+    done_pct: number;
+    items_done: number;
+    overdue_items: number;
+    overdue_pcs: number;
     due_soon: number;
-    not_updated: number;
-    outsource: { items: number; qty: number; pending: number; overdue: number };
-    visits: { planned: number; done: number; missed: number; upcoming: number; unplanned: number };
+    due_soon_pcs: number;
+    no_due_date: number;
   };
-  pace?: { due_by_today: number; completed: number } | null;
-  attention?: PromiseItem[];
-  tables?: {
-    designers: TableData;
-    teams: TableData;
-    vendors: TableData;
-    outsource_vendors: TableData;
-    status: TableData;
-    items: TableData;
-    outsource: TableData;
-    visits: TableData;
-  };
+  follow_up?: PromiseItem[];
+  tables?: { designers: TableData; teams: TableData; items: TableData; outsource: TableData };
   charts?: {
-    designers: SeriesChart;
-    stage_share: Slice[];
-    status: Slice[];
-    timeline: SeriesChart & { today_index: number; no_date: number };
+    designers: SeriesChart & {
+      labels: { designer: string; team: string; done_pct: number; completed: number; target: number; items: number; overdue_items: number; nearest: string }[];
+    };
+    due_status: CountSlice[];
+    status: CountSlice[];
   };
+}
+
+export interface FloHighlights {
+  period: string;
+  kpis: Kpi[];
+  designers: { label: string; value: number; pending: number; target: number }[];
+  urgent: PromiseItem[];
 }

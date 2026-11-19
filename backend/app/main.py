@@ -258,12 +258,11 @@ def target(month: Multi = [], designer: Multi = [], item: Multi = [],
 
 
 @app.get("/api/flo-future", dependencies=[Depends(require_auth)])
-def flo_future(team: Multi = [], designer: Multi = [], vendor: Multi = [], status: Multi = [],
-               season: Multi = [], month: Multi = []):
-    """FLO Future: what each designer promised for the month (samples, outsource projects, visits & meetings)."""
+def flo_future(designer: Multi = [], team: Multi = [], status: Multi = [], due: Multi = []):
+    """FLO Future: promised samples, visits & meetings (same filters as the old dashboard: designer, team, status,
+    due status)."""
     ds = get_store().dataset("flo_future")
-    f = {"team": _clean(team), "designer": _clean(designer), "vendor": _clean(vendor), "status": _clean(status),
-         "season": _clean(season), "month": _clean(month)}
+    f = {"designer": _clean(designer), "team": _clean(team), "status": _clean(status), "due": _clean(due)}
     return _envelope(ffu.flo_future_dashboard(_need(ds), f), ds)
 
 

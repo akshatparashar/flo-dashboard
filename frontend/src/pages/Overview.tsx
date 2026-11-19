@@ -5,9 +5,10 @@ import type { Alert, OverviewData } from "../api/types";
 import { Bars } from "../components/charts/Bars";
 import { Legend, TIMING_COLORS, colorFor } from "../components/charts/common";
 import { HBars } from "../components/charts/HBars";
-import { Split } from "../components/charts/Lists";
+import { BarList, Split } from "../components/charts/Lists";
 import { DataFlow, type FlowOut } from "../components/DataFlow";
 import { DataTable } from "../components/DataTable";
+import { FollowUp } from "../components/FollowUp";
 import { FilterBar, MonthFilter } from "../components/Filters";
 import { KpiStrip, Notices, Panel, Section } from "../components/ui";
 import { useFilters } from "../lib/filters";
@@ -186,6 +187,28 @@ export default function Overview() {
                     <div className="span-6">
                       <Panel title="Sample status by month" sub="Pcs" right={<Legend items={s.samples.chart.series.filter((x) => x.values.some(Boolean)).map((x, i) => ({ name: x.name, color: colorFor(x.name, i) }))} />}>
                         <Bars data={s.samples.chart} stacked months unit="pcs" label="Sample status by month" />
+                      </Panel>
+                    </div>
+                  </div>
+                </Section>
+              )}
+
+              {s.flo_future && (
+                <Section
+                  title="FLO Future highlights"
+                  sub={`Designers' promised samples${s.flo_future.period ? ` · ${s.flo_future.period}` : ""} · the month filter does not apply`}
+                  right={<Link className="btn sm" to="/flo-future">Open FLO Future</Link>}
+                >
+                  <KpiStrip kpis={s.flo_future.kpis} cols={s.flo_future.kpis.length} lead={["done_pct"]} />
+                  <div className="grid" style={{ marginTop: 16 }}>
+                    <div className="span-6">
+                      <Panel title="Most urgent" sub="Overdue, then due in the next 3 days" flush>
+                        <FollowUp items={s.flo_future.urgent} max={5} empty="Nothing is overdue or due in the next 3 days." />
+                      </Panel>
+                    </div>
+                    <div className="span-6">
+                      <Panel title="Pending pcs by designer" sub="Promised but not completed yet">
+                        <BarList items={s.flo_future.designers.map((x) => ({ label: x.label, value: x.pending }))} unit="pcs" tone="neg" max={6} label="Pending promised pcs per designer" />
                       </Panel>
                     </div>
                   </div>
