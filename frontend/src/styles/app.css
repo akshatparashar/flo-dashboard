@@ -1031,6 +1031,12 @@ a.alert:hover {
 .ff-flags b {
   font-weight: 600;
 }
+.vr-heat {
+  overflow-x: auto;
+}
+.vr-heat .heat {
+  min-width: 560px;
+}
 @media (max-width: 640px) {
   .attn-row {
     grid-template-columns: 8px minmax(0, 1fr);

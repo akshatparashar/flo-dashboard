@@ -32,6 +32,7 @@ from .dashboards import master as mst
 from .dashboards import overview as ovw
 from .dashboards import samples as smp
 from .dashboards import target as tgt
+from .dashboards import vendor_rate as vrt
 from .store import KINDS, Dataset, DataStore, meta
 
 API_VERSION = "1.0.0"
@@ -266,6 +267,15 @@ def flo_future(designer: Multi = [], team: Multi = [], status: Multi = [], due: 
     return _envelope(ffu.flo_future_dashboard(_need(ds), f), ds)
 
 
+@app.get("/api/vendor-rate", dependencies=[Depends(require_auth)])
+def vendor_rate(vendor: Multi = [], fabric: Multi = []):
+    """Vendor Rate: fabric rates per vendor (44" / 60" / 36" width, per piece), cheapest vendor per fabric category.
+    `fabric` filters by fabric category (Crepe, Silk, Muslin ...)."""
+    ds = get_store().dataset("vendor_rate")
+    f = {"vendor": _clean(vendor), "fabric": _clean(fabric)}
+    return _envelope(vrt.vendor_rate_dashboard(_need(ds), f), ds)
+
+
 @app.get("/api/context", dependencies=[Depends(require_auth)])
 def context(month: Multi = []):
     """Compact, text-friendly snapshot of every dashboard for the AI assistant (no tables, no chart series)."""
@@ -273,7 +283,7 @@ def context(month: Multi = []):
     ds = store.datasets(KINDS)
     months = _clean(month)
     sources = {k: (v.data, v.error if v.data is None else None) for k, v in ds.items()
-               if k not in ("target_revenue", "flo_future")}
+               if k not in ("target_revenue", "flo_future", "vendor_rate")}
     ov = ovw.overview_dashboard(sources, months)
     out = {"alerts": [{"kind": a["kind"], "text": a["text"]} for a in ov["alerts"]],
            "errors": [e["text"] for e in ov["errors"]], "sections": {}}
@@ -288,6 +298,10 @@ def context(month: Multi = []):
         ff = ffu.flo_future_dashboard(ds["flo_future"].data, {})
         if not ff.get("empty"):
             out["sections"]["flo_future"] = {k["label"]: (k["value"], k["unit"]) for k in ff["kpis"]}
+    if ds["vendor_rate"].data is not None:
+        vd = vrt.vendor_rate_dashboard(ds["vendor_rate"].data, {})
+        if not vd.get("empty"):
+            out["sections"]["vendor_rate"] = {k["label"]: (k["value"], k["unit"]) for k in vd["kpis"]}
     out["filters"] = {"month": months or "all"}
     return _envelope(out, *ds.values())
 
@@ -295,7 +309,7 @@ def context(month: Multi = []):
 # ------------------------------------------------------------------------------------------------ assistant
 _ASSISTANT_PAGES = {"overview": overview, "designer": designer, "client": client, "production": production,
                     "samples": samples, "fabricator": fabricator, "fabric-po": fabric_po, "target": target,
-                    "flo-future": flo_future}
+                    "flo-future": flo_future, "vendor-rate": vendor_rate}
 
 
 def _assistant_fetch(page: str, filters: dict) -> dict:

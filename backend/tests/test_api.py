@@ -25,7 +25,7 @@ def make_client(monkeypatch, source=None, **overrides):
 
 
 ROUTES = ["/api/overview", "/api/designer", "/api/client", "/api/production", "/api/samples", "/api/fabricator",
-          "/api/fabric-po", "/api/target", "/api/flo-future", "/api/context", "/api/status"]
+          "/api/fabric-po", "/api/target", "/api/flo-future", "/api/vendor-rate", "/api/context", "/api/status"]
 
 
 @pytest.mark.parametrize("path", ROUTES)

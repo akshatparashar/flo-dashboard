@@ -328,3 +328,20 @@ export interface FloHighlights {
   designers: { label: string; value: number; pending: number; target: number }[];
   urgent: PromiseItem[];
 }
+
+export interface RateMatrix {
+  rows: string[];
+  columns: string[];
+  values: number[][];
+}
+
+export interface VendorRateData extends Envelope {
+  empty?: boolean;
+  source?: string;
+  options: Options;
+  notices: Notice[];
+  checks?: Notice[];
+  kpis: Kpi[];
+  tables?: { categories: TableData; vendors: TableData; rates: TableData };
+  charts?: { vendor_avg: Slice[]; matrix60: RateMatrix; matrix44: RateMatrix; category_counts: Slice[] };
+}

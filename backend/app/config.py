@@ -58,6 +58,16 @@ SHEET_REGISTRY: dict[str, dict] = {
         "visits_tabs": ["Visits & Meetings"],
         "outsource_tabs": ["Outsource Projects", "Outsource"],
     },
+    "vendor_rate": {
+        "name": "Vendor Rate",
+        # FABRIC PO 11: "Rate_Data" (the tidy rate list the sheet's own Vendor Rate Dashboard reads) and
+        # "NEW RATE SHEET" (the hand-filled vendor rate cards, used as a cross-check). The file also holds one tab
+        # per PO; only these two tabs are read.
+        "id": "1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg",
+        "id_env": "VENDOR_RATE_SHEET_ID",
+        "source_tabs": ["Rate_Data", "Rate Data"],
+        "card_tabs": ["NEW RATE SHEET", "Rate Sheet"],
+    },
 }
 
 

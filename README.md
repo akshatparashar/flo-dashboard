@@ -24,8 +24,8 @@
 
 ## Why this exists
 
-FLO's operations live in six Google Sheets: the order tracker, the sample summary, the fabricator report, the fabric
-purchase orders, the designers' revenue target and the monthly FLO Future sheet of what each designer promised. The team used to read them through a Streamlit dashboard. This
+FLO's operations live in seven Google Sheets: the order tracker, the sample summary, the fabricator report, the fabric
+purchase orders, the designers' revenue target, the monthly FLO Future sheet of what each designer promised and the vendors' fabric rate list. The team used to read them through a Streamlit dashboard. This
 project replaces it with:
 
 - a **read-only Python API** that does every calculation in one place and serves clean JSON, and
@@ -87,7 +87,7 @@ the test suite runs it side by side with the new API on the same sheet data, com
 | **Export** | Every table downloads as a CSV that opens cleanly in Excel. |
 | **Ready for AI** | The same endpoints are designed to be the tools of an AI assistant ([`docs/CHATBOT.md`](docs/CHATBOT.md)). |
 
-## The nine dashboards
+## The ten dashboards
 
 | Page | The question it answers | Source sheet |
 |---|---|---|
@@ -100,6 +100,7 @@ the test suite runs it side by side with the new API on the same sheet data, com
 | **Samples** | How many samples are approved, and per designer and vendor? | Sample summary · `2026-27` |
 | **Target & revenue** | Are we on track for the yearly new-order target? Which designs sell again? | Designer target · `NEW` + `REPEAT` |
 | **FLO Future** | What did each designer promise this month, what is late, and who needs a nudge? | FLO Future · `Samples` + `Visits & Meetings` (+ `Outsource Projects`) |
+| **Vendor Rate** | Which vendor is cheapest for each fabric, and how do vendors' rates compare? | FABRIC PO 11 · `Rate_Data` (+ `NEW RATE SHEET` cross-check) |
 
 <details>
 <summary><b>Business rules the dashboards apply</b> (same as the original)</summary>
@@ -121,6 +122,11 @@ the test suite runs it side by side with the new API on the same sheet data, com
   buckets: Overdue · Due Today · Due in 1-3 Days · Due in 4-7 Days · Due Later (> 7 Days) · No Due Date · Completed.
   Visits & meetings: done = 'X' or STATUS *Done*; required per month: market visit 1, store / exhibition 1, Surat 1,
   factory / store 2, meetings = as many as planned. Done % colours: green ≥ 80%, amber 40–79%, red below.
+- **Vendor Rate** (same as the sheet's own *Vendor Rate Dashboard* tab, checked against its Vendor Benchmark
+  Summary in `tests/test_vendor_rate.py`): a rate of 0 or a blank cell is *no rate* and is left out of averages,
+  minimums and maximums; a rate typed as text ("120/125") is shown as typed but not counted. *vs Best %* = how much
+  dearer an offering is than the cheapest rate for the same fabric category and width. Fabrics on the NEW RATE SHEET
+  but missing (or priced differently) in Rate_Data are listed under *Sheet checks*.
 - **Percentages in TOTAL rows are recomputed** from the totals, never summed or averaged.
 - **Colours on rates**: approval / received / on-time — green ≥ 50%, amber ≥ 25%, red below; target achievement —
   green ≥ 100%, amber ≥ 75%, red below.
@@ -138,6 +144,7 @@ flowchart LR
         D[Fabric PO]
         E[Designer target]
         F[FLO Future]
+        G[Vendor rates]
     end
 
     subgraph API["backend/ — FastAPI"]
@@ -149,10 +156,10 @@ flowchart LR
 
     subgraph Web["frontend/ — React + TypeScript"]
         Q[Data layer<br/>refetch every minute]
-        U[Nine pages<br/>charts · tables · filters]
+        U[Ten pages<br/>charts · tables · filters]
     end
 
-    A & B & C & D & E & F --> S --> K --> P --> X
+    A & B & C & D & E & F & G --> S --> K --> P --> X
     X -- "JSON over /api" --> Q --> U
     X -. "same endpoints" .-> AI[FLO Assistant<br/><i>POST /api/chat</i>]
     X -. "same endpoints" .-> RN[Phone app<br/><i>mobile/ · React Native</i>]
@@ -189,7 +196,7 @@ flo-dashboard/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # FastAPI app: routes, sign-in, response envelope
-│   │   ├── config.py            # settings from .env + the registry of the six sheets
+│   │   ├── config.py            # settings from .env + the registry of the seven sheets
 │   │   ├── core.py              # shared parsing (numbers, dates, months) and ₹ formatting
 │   │   ├── tables.py            # TOTAL rows, row ordering, DataFrame → JSON
 │   │   ├── store.py             # cache, single-flight fetching, stale-if-error, data versions
@@ -284,6 +291,7 @@ All settings live in `backend/.env` (copy `backend/.env.example`). The file is g
 | `TOKEN_HOURS` | `336` | How long a sign-in lasts (14 days) |
 | `CORS_ORIGINS` | — | Extra browser origins allowed to call the API (comma separated) |
 | `FLO_FUTURE_SHEET_ID` | the Nov 2026 sheet | Points the FLO Future page at a new month's copy of the sheet (no code change) |
+| `VENDOR_RATE_SHEET_ID` | FABRIC PO 11 | Points the Vendor Rate page at another sheet with a `Rate_Data` tab (e.g. the next PO book) |
 
 Sheet IDs and tab names are in [`backend/app/config.py`](backend/app/config.py) (`SHEET_REGISTRY`). Each entry lists
 the data tab names to try in order, with fallbacks, exactly as the original app did.
@@ -292,7 +300,7 @@ the data tab names to try in order, with fallbacks, exactly as the original app 
 
 1. **Google Cloud Console** → enable the **Google Sheets API** → create a **service account** → *Keys* → *Add key*
    → JSON.
-2. **Share each of the six sheets** with the service account's `client_email` as **Viewer**.
+2. **Share each of the seven sheets** with the service account's `client_email` as **Viewer**.
 3. In `backend/.env` set `DATA_SOURCE=google` and either `GOOGLE_SERVICE_ACCOUNT_FILE` or
    `GOOGLE_SERVICE_ACCOUNT_JSON`.
 4. Restart the API and check `GET /api/status` — every source should report `"ok": true`.
@@ -326,6 +334,7 @@ Every dashboard is one `GET`. Filters are query parameters; repeat a parameter t
 | `GET /api/fabric-po` | `month` `vendor` `order_type` `client` `designer` `item` `status` |
 | `GET /api/target` | `month` `designer` `item` `order_by` `source` `annual_target_cr` |
 | `GET /api/flo-future` | `designer` `team` `status` `due` (due status) |
+| `GET /api/vendor-rate` | `vendor` `fabric` (fabric category) |
 | `GET /api/context` | `month` — a compact summary of everything, for the AI assistant |
 | `GET /api/status` | — sync state of each sheet |
 | `GET /api/health` | — public; whether a passcode is required |
@@ -443,14 +452,15 @@ Principles:
 ## Roadmap
 
 - [x] Read-only API with every calculation of the original dashboard, proven identical
-- [x] Responsive web dashboard: nine views, filters, light and dark, intro, live data flow
+- [x] Responsive web dashboard: ten views, filters, light and dark, intro, live data flow
 - [x] Passcode sign-in
 - [x] Connected and verified against the live Google Sheets
 - [x] Vercel deployment config (web + API as one project) — deploy from the Vercel dashboard
 - [x] FLO Assistant that answers from the dashboard (see [`docs/CHATBOT.md`](docs/CHATBOT.md))
 - [x] React Native app for iOS and Android on the same API (`mobile/`)
 - [x] FLO Future page (the old Streamlit FLO Future tab, same numbers) + Overview highlights + chatbot support
-- [ ] FLO Future screen in the phone app
+- [x] Vendor Rate page (fabric rates per vendor, cheapest per fabric) + chatbot rate questions
+- [ ] FLO Future and Vendor Rate screens in the phone app
 - [ ] Publish the phone app (EAS build → APK / TestFlight)
 - [ ] Retire the Streamlit dashboard and remove `legacy/`
 

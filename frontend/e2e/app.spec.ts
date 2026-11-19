@@ -27,6 +27,7 @@ const PAGES = [
   { path: "/fabric-po", h1: "Fabric PO", api: "/api/fabric-po" },
   { path: "/target", h1: "Target & revenue", api: "/api/target" },
   { path: "/flo-future", h1: "FLO Future", api: "/api/flo-future" },
+  { path: "/vendor-rate", h1: "Vendor Rate", api: "/api/vendor-rate" },
 ];
 
 function watch(page: Page) {
@@ -180,4 +181,17 @@ test("FLO Future: follow-up list, and a team filter narrows the target qty", asy
   await expect(page).toHaveURL(/[?&]team=/);
   await expect(page.locator(".kpi").first()).toContainText(promised(one).toLocaleString("en-US"));
   expect(promised(one)).toBeLessThanOrEqual(promised(all));
+});
+
+test("Vendor Rate: a fabric filter narrows the rate list and the numbers match the API", async ({ page, request }) => {
+  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+  const all = await (await request.get(`${API}/api/vendor-rate`, { headers })).json();
+  test.skip(!!all.empty, "the rate sheet has no rows");
+  const fabric = all.options.fabric[0];
+  const one = await (await request.get(`${API}/api/vendor-rate?fabric=${encodeURIComponent(fabric)}`, { headers })).json();
+  const offerings = (b: { kpis: { id: string; value: number }[] }) => b.kpis.find((k) => k.id === "offerings")!.value;
+  await page.goto(`/vendor-rate?nointro&fabric=${encodeURIComponent(fabric)}`);
+  await expect(page.getByRole("heading", { level: 1, name: "Vendor Rate" })).toBeVisible();
+  await expect(page.locator(".kpi", { hasText: "Fabric offerings" })).toContainText(String(offerings(one)));
+  expect(offerings(one)).toBeLessThanOrEqual(offerings(all));
 });

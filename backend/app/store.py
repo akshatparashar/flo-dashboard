@@ -24,9 +24,11 @@ from .dashboards import flo_future as ffu
 from .dashboards import master as mst
 from .dashboards import samples as smp
 from .dashboards import target as tgt
+from .dashboards import vendor_rate as vrt
 from .sources.google import SheetAccessError
 
-KINDS = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future"]
+KINDS = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future",
+         "vendor_rate"]
 # Kinds whose numbers depend on today's date (overdue / due soon), so their parsed copy is redone each day.
 DATED_KINDS = {"fabric_po", "flo_future"}
 FLO_FUTURE_PARTS = ("samples", "visits", "outsource")
@@ -153,6 +155,15 @@ class DataStore:
                 next((t for t in titles if re.search(ffu.VISIT_TAB_REGEX, t, re.I)), None)
             outsource = next((t for t in (find_tab(titles, n) for n in cfg["outsource_tabs"]) if t), None)
             return [samples, visits, outsource]
+        if kind == "vendor_rate":
+            titles = [t for t, _ in meta]
+            rates = next((t for t in (find_tab(titles, n) for n in cfg["source_tabs"]) if t), None) or \
+                next((t for t in titles if re.search(vrt.RATE_TAB_REGEX, t, re.I)), None)
+            cards = next((t for t in (find_tab(titles, n) for n in cfg["card_tabs"]) if t), None) or \
+                next((t for t in titles if re.search(vrt.CARD_TAB_REGEX, t, re.I)), None)
+            if rates is None and cards is None:
+                raise SheetAccessError("The Vendor Rate sheet has no 'Rate_Data' or 'NEW RATE SHEET' tab.")
+            return [rates, cards]
         if kind == "target_revenue":
             titles = [t for t, _ in meta]
             return [next((x for x in (find_tab(titles, n) for n in cfg.get(key, [default])) if x), None)
@@ -166,7 +177,7 @@ class DataStore:
         jobs = []
         if kind == "overview_fabricators":
             jobs = [(tabs[0], True), (tabs[0], False)]
-        elif kind in ("target_revenue", "flo_future"):
+        elif kind in ("target_revenue", "flo_future", "vendor_rate"):
             jobs = [(t, False) for t in tabs if t]
         else:
             jobs = [(tabs[0], False)]
@@ -196,6 +207,10 @@ class DataStore:
             grids = iter(entries)
             return ffu.parse_flo_future({part: (next(grids).value if t else [])
                                          for part, t in zip(FLO_FUTURE_PARTS, tabs)}, today_ist())
+        if kind == "vendor_rate":
+            grids = iter(entries)
+            return vrt.parse_vendor_rate({part: (next(grids).value if t else [])
+                                          for part, t in zip(("rates", "cards"), tabs)})
         if kind == "target_revenue":
             present = [t for t in tabs if t]
             grids = dict(zip(present, entries[:len(present)]))

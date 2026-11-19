@@ -49,6 +49,18 @@ meetings done", "which designer has most pending promises", "har team ka pending
   "Charu ke kaun se samples pending hai", "list overdue promises for Team B".
 - Answers say which month's sheet they come from ("… (November 2026 promises)"), not "all months so far".
 
+### Vendor Rate (fabric rates)
+
+Price questions about fabric go to the Vendor Rate page and are answered from its rate list:
+
+- **Cheapest / dearest** for a fabric: "crepe ka sabse sasta vendor kaun hai", "cheapest 44 inch muslin",
+  "most expensive organza". 60" width unless the question says 44, 36 or per piece.
+- **A vendor's rates**: "Varsha ki rate list", "BSK rates"; one vendor and one fabric: "RV ka crepe rate".
+- **All rates for a fabric**: "russian silk rates", "chanderi kitne ka milta hai" (musline / lilen / russion and
+  other spellings map to the same fabric category).
+- Page figures work as usual: "average 60 inch rate", "which vendor has lowest average 60 inch rate".
+- "Fabric pending", "approval rate" and "on time rate of vendors" still go to Fabric PO / Samples as before.
+
 ## Files
 
 | Part | Where |

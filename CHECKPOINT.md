@@ -31,6 +31,18 @@ answers its figures and lists items ("which samples are overdue").
 - Next month: share the new copy with the service account and set `FLO_FUTURE_SHEET_ID` (no code change).
 - Not done yet: a FLO Future screen in the phone app (`mobile/`).
 
+### In progress: branch `feature/vendor-rate` (built on `feature/flo-future`; not merged)
+
+New **Vendor Rate** page (`/vendor-rate`, API `GET /api/vendor-rate`) for the rate tabs of **FABRIC PO 11**
+(`1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg`, newly shared with the service account). Reads `Rate_Data` (what the
+sheet's own *Vendor Rate Dashboard* tab reads) and cross-checks the hand-filled `NEW RATE SHEET`. Shows the cheapest
+vendor per fabric category, a fabric × vendor price map (60" / 44"), the vendor benchmark, the full rate list with
+"vs best %", and sheet checks. Numbers equal the sheet's own Vendor Benchmark Summary and metrics (11 vendors,
+56 offerings, avg ₹227 at 44", ₹205 at 60"). Chatbot answers rate questions ("crepe ka sabse sasta vendor").
+- Not verified on the live sheet through the API yet (no key in `backend/.env`); built from the sheet's own
+  dashboard tab. The NEW RATE SHEET block layout in particular should be checked once the key is added.
+- FABRIC PO 11 also holds the newer PO tabs (RV 1498 …); the Fabric PO page still reads FABRIC PO 10's INDEX.
+
 ## Next steps (in order)
 
 1. **Deploy on Vercel** — import the repo, set env vars, deploy (README → *Deploy to Vercel*):
