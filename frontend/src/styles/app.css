@@ -1874,3 +1874,16 @@ a.alert:hover {
   font-weight: 650;
   fill: var(--pos-ink);
 }
+.vr-ctl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.vl-star {
+  font-size: 11.5px;
+  font-weight: 700;
+  fill: var(--pos-ink);
+}
+.vl-series {
+  transition: opacity 140ms var(--ease-out);
+}

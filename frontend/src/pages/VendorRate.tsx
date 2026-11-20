@@ -4,6 +4,7 @@ import type { VendorRateData } from "../api/types";
 import { Legend } from "../components/charts/common";
 import { RateBars } from "../components/charts/RateBars";
 import { VendorDots } from "../components/charts/VendorDots";
+import { VendorLines } from "../components/charts/VendorLines";
 import { DataTable } from "../components/DataTable";
 import { FilterBar, MultiSelect } from "../components/Filters";
 import { Empty, KpiStrip, Notices, Panel, Section } from "../components/ui";
@@ -37,6 +38,7 @@ export default function VendorRate() {
   const q = useDashboard<VendorRateData>("/vendor-rate", f.values);
   const [picked, setPicked] = useState<string | null>(null);
   const [width, setWidth] = useState<string>('60"');
+  const [kind, setKind] = useState<"Line" | "Bars" | "Dots">("Line");
   return (
     <div className="page">
       <PageState q={q}>
@@ -128,21 +130,37 @@ export default function VendorRate() {
                   </Section>
 
                   {vf && vf.widths.length > 0 && (
-                    <Section title="Vendor vs fabric price" sub="Each dot is one vendor's cheapest rate for that fabric · the ringed ★ dot is the best price · hover a dot for the exact rate, or a vendor name to follow it · the Vendor and Fabric filters apply">
+                    <Section title="Vendor vs fabric price" sub="Each vendor's cheapest rate for every fabric (design) category · switch between Line, Bars and Dots · hover a point for the exact rate, or a vendor name to follow it · the Vendor and Fabric filters apply">
                       <Panel
                         title={`${vfWidth}: vendor-wise rate by fabric (★ = Best Price)`}
-                        sub="₹ per mtr · the band spans the cheapest to the dearest vendor"
+                        sub="₹ per mtr · one line (or dot / bar group) per vendor · ★ ringed point = lowest rate of that fabric"
                         right={
-                          <div className="seg" role="group" aria-label="Width">
-                            {vf.widths.map((w) => (
-                              <button key={w} type="button" aria-pressed={vfWidth === w} onClick={() => setWidth(w)}>
-                                {w}
-                              </button>
-                            ))}
+                          <div className="vr-ctl">
+                            <div className="seg" role="group" aria-label="Chart type">
+                              {(["Line", "Bars", "Dots"] as const).map((k2) => (
+                                <button key={k2} type="button" aria-pressed={kind === k2} onClick={() => setKind(k2)}>
+                                  {k2}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="seg" role="group" aria-label="Width">
+                              {vf.widths.map((w) => (
+                                <button key={w} type="button" aria-pressed={vfWidth === w} onClick={() => setWidth(w)}>
+                                  {w}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         }
                       >
-                        <VendorDots categories={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} label={`${vfWidth} rate by fabric category and vendor`} />
+                        {kind === "Line" && <VendorLines categories={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} label={`${vfWidth} rate by fabric category and vendor`} />}
+                        {kind === "Dots" && <VendorDots categories={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} label={`${vfWidth} rate by fabric category and vendor`} />}
+                        {kind === "Bars" && (
+                          <>
+                            <Legend items={vfData.series.map((x, i) => ({ name: x.name, color: VENDOR_COLORS[i % VENDOR_COLORS.length] }))} />
+                            <RateBars vendors={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} bar={vfData.series.length > 5 ? 14 : 26} label={`${vfWidth} rate by fabric category and vendor`} />
+                          </>
+                        )}
                       </Panel>
                     </Section>
                   )}
