@@ -1,63 +1,32 @@
-import { Download } from "lucide-react";
 import { useMemo } from "react";
-import type { FloFutureData, TableData } from "../api/types";
-import { downloadCsv, toCsv } from "../lib/csv";
+import type { FloFutureData } from "../api/types";
 import { fmtInt } from "../lib/format";
 import { niceScale, useWidth } from "./charts/common";
 
 /* Pieces of the FLO Future page that follow the original Streamlit tab: coloured KPI tiles, the stacked
    designer chart, the sample detail table and the visits & meetings chart. They only draw what the API sends. */
 
+/* App palette (same colours as the other tabs): blue = done, red = overdue, amber = due soon, pale blue = the rest. */
 export const FF = {
-  green: "#059669",
-  red: "#dc2626",
-  orange: "#ea580c",
-  amber: "#d97706",
-  blue: "#2563eb",
-  slate: "#94a3b8",
-  light: "color-mix(in srgb, #2563eb 32%, var(--sheet))",
+  done: "var(--accent)",
+  overdue: "var(--neg)",
+  soon: "var(--warn)",
+  later: "var(--series-pale)",
+  ref: "var(--series-ref)",
+  grey: "var(--series-grey)",
 };
 
 export function doneColor(p: number) {
-  return p >= 80 ? FF.green : p >= 40 ? FF.amber : FF.red;
-}
-
-// ------------------------------------------------------------------------------------------------ KPI tiles
-const TONES = ["#2563eb", "#059669", "#d97706", "#dc2626", "#ea580c", "#7c3aed", "#0d9488", "#db2777", "#2563eb"];
-
-export function KpiTiles({ s }: { s: NonNullable<FloFutureData["summary"]> }) {
-  const mp = s.most_pending;
-  const lo = s.longest_overdue;
-  const tiles: [string, string][] = [
-    ["Target Qty (Promised)", `${fmtInt(s.target)} Pcs`],
-    ["Completed", `${fmtInt(s.completed)} Pcs`],
-    ["Pending", `${fmtInt(s.pending)} Pcs`],
-    ["Completion %", `${s.done_pct.toFixed(1)}%`],
-    ["Overdue (Date Passed)", `${s.overdue_items} Items · ${fmtInt(s.overdue_pcs)} Pcs`],
-    ["Due in Next 3 Days", `${s.due_soon} Items · ${fmtInt(s.due_soon_pcs)} Pcs`],
-    ["⚠ Most Pending", mp ? `${mp.designer} (${fmtInt(mp.pending)} Pcs)` : "None"],
-    ["⏰ Longest Overdue", lo ? `${lo.days} Days · ${lo.designer}` : "None"],
-  ];
-  if (s.visits.required) tiles.push(["Visits & Meetings Done", `${s.visits.done} / ${s.visits.required}`]);
-  return (
-    <div className="ff-tiles" data-reveal>
-      {tiles.map(([label, value], i) => (
-        <div className="ff-tile" key={label} style={{ ["--tone" as string]: TONES[i % TONES.length] }}>
-          <div className="ff-tile-label">{label}</div>
-          <div className="ff-tile-value num">{value}</div>
-        </div>
-      ))}
-    </div>
-  );
+  return p >= 80 ? "var(--pos)" : p >= 40 ? "var(--warn)" : "var(--neg)";
 }
 
 // ------------------------------------------------------------------------------------------------ designer chart
 type DesignerChart = NonNullable<FloFutureData["charts"]>["designers"];
 export const DESIGNER_SERIES: [string, string][] = [
-  ["Completed", FF.green],
-  ["Pending · Overdue", FF.red],
-  ["Pending · Due in 0-3 Days", FF.orange],
-  ["Pending · Due later / No date", FF.light],
+  ["Completed", FF.done],
+  ["Pending · Overdue", FF.overdue],
+  ["Pending · Due in 0-3 Days", FF.soon],
+  ["Pending · Due later / No date", FF.later],
 ];
 
 /** One stacked column per designer; the full column is the target. Above it: Done % and done / target. */
@@ -139,109 +108,13 @@ export function DesignerColumns({ data }: { data: DesignerChart }) {
   );
 }
 
-// ------------------------------------------------------------------------------------------------ sample detail
-const STATUS_COLORS: Record<string, string> = {
-  Complete: FF.green,
-  "In Progress": FF.blue,
-  "In-House Process": "#0d9488",
-  "Sampling Ordered": "#7c3aed",
-  Corrections: FF.orange,
-  "CAD In Queue": "#ca8a04",
-  "CAD In Process": FF.amber,
-  "Not Started": FF.red,
-  "Not Updated": FF.slate,
-};
-
-function shortDate(v: unknown): string {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v ?? ""));
-  if (!m) return "—";
-  const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m[2]) - 1];
-  return `${m[1]}-${mon}-${m[3].slice(2)}`;
-}
-
-function daysClass(text: string): string {
-  if (text === "Done") return "good";
-  if (text.endsWith("late")) return "bad";
-  if (text === "Due today") return "mid";
-  const m = /^(\d+) days? left$/.exec(text);
-  return m ? (Number(m[1]) <= 3 ? "mid" : "good") : "";
-}
-
-/** Every sample, most urgent first: status pill, coloured Days Left, TOTAL row. Scrolls inside its own frame. */
-export function SampleDetail({ table, name }: { table: TableData; name: string }) {
-  const ix = Object.fromEntries(table.columns.map((c, i) => [c.label, i]));
-  const body = table.rows.slice(0, -1);
-  const tot = table.rows[table.rows.length - 1];
-  if (!body.length) return <div className="state">No data for the selected filters.</div>;
-  const n = (v: unknown) => (typeof v === "number" ? fmtInt(v) : "—");
-  return (
-    <>
-      <div className="ff-table-wrap">
-        <table className="ff-table">
-          <thead>
-            <tr>
-              {["Sr", "Designer", "Collection / Sample", "Vendor", "Qty", "Completed", "Pending", "Status", "Due Date", "Days Left", "Promised To", "Remark"].map((h) => (
-                <th key={h}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {body.map((r, i) => {
-              const status = String(r[ix.Status] ?? "");
-              const c = STATUS_COLORS[status] ?? FF.slate;
-              const days = String(r[ix["Days Left"]] ?? "");
-              return (
-                <tr key={i}>
-                  <td className="c">{i + 1}</td>
-                  <td className="l strong">{String(r[ix.Designer])}</td>
-                  <td className="l wrap">{String(r[0])}</td>
-                  <td className="l">{String(r[ix.Vendor] ?? "")}</td>
-                  <td>{n(r[ix.Qty])}</td>
-                  <td>{n(r[ix.Completed])}</td>
-                  <td className={r[ix.Pending] === 0 ? "zero" : undefined}>{n(r[ix.Pending])}</td>
-                  <td className="l">
-                    <span className="ff-pill" style={{ color: c, background: `color-mix(in srgb, ${c} 16%, transparent)`, borderColor: `color-mix(in srgb, ${c} 45%, transparent)` }}>
-                      {status}
-                    </span>
-                  </td>
-                  <td>{shortDate(r[ix["Due Date"]])}</td>
-                  <td className={`days ${daysClass(days)}`}>{days}</td>
-                  <td className="l">{String(r[ix["Promised To"]] ?? "")}</td>
-                  <td className="l wrap">{String(r[ix.Remark] ?? "")}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td className="l" colSpan={4}>
-                TOTAL
-              </td>
-              <td>{n(tot[ix.Qty])}</td>
-              <td>{n(tot[ix.Completed])}</td>
-              <td>{n(tot[ix.Pending])}</td>
-              <td className="l">{String(tot[ix.Status] ?? "")}</td>
-              <td />
-              <td className="l">{String(tot[ix["Days Left"]] ?? "")}</td>
-              <td colSpan={2} />
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      <button type="button" className="btn ff-dl" onClick={() => downloadCsv(`${name}.csv`, toCsv({ ...table, rows: body }))}>
-        <Download aria-hidden="true" /> Download CSV
-      </button>
-    </>
-  );
-}
-
 // ------------------------------------------------------------------------------------------------ visits chart
 type VisitChart = NonNullable<FloFutureData["visits"]>["chart"];
 export const VISIT_SERIES: [string, string][] = [
-  ["Required", "color-mix(in srgb, #94a3b8 55%, var(--sheet))"],
-  ["Done", FF.green],
-  ["Missed / Not Marked", FF.red],
-  ["Upcoming", FF.blue],
+  ["Required", FF.grey],
+  ["Done", FF.done],
+  ["Missed / Not Marked", FF.overdue],
+  ["Upcoming", FF.ref],
 ];
 
 /** Grouped columns per activity: Required | Done | Missed | Upcoming, with "x / y done" under the name. */
