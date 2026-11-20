@@ -58,7 +58,7 @@ Price questions about fabric go to the Vendor Rate page and are answered from it
 - **A vendor's rates**: "Varsha ki rate list", "BSK rates"; one vendor and one fabric: "RV ka crepe rate".
 - **All rates for a fabric**: "russian silk rates", "chanderi kitne ka milta hai" (musline / lilen / russion and
   other spellings map to the same fabric category).
-- Page figures work as usual: "average 60 inch rate", "which vendor has lowest average 60 inch rate".
+- Page figures work as usual: "lowest 60 inch rate", "lowest 44 inch rate", "pending rates".
 - "Fabric pending", "approval rate" and "on time rate of vendors" still go to Fabric PO / Samples as before.
 
 ## Files

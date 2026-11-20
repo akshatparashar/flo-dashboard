@@ -34,11 +34,13 @@ answers its figures and lists items ("which samples are overdue").
 ### In progress: branch `feature/vendor-rate` (built on `feature/flo-future`; not merged)
 
 New **Vendor Rate** page (`/vendor-rate`, API `GET /api/vendor-rate`) for the rate tabs of **FABRIC PO 11**
-(`1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg`, newly shared with the service account). Reads `Rate_Data` (what the
-sheet's own *Vendor Rate Dashboard* tab reads) and cross-checks the hand-filled `NEW RATE SHEET`. Shows the cheapest
-vendor per fabric category, a fabric × vendor price map (60" / 44"), the vendor benchmark, the full rate list with
-"vs best %", and sheet checks. Numbers equal the sheet's own Vendor Benchmark Summary and metrics (11 vendors,
-56 offerings, avg ₹227 at 44", ₹205 at 60"). Chatbot answers rate questions ("crepe ka sabse sasta vendor").
+(`1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg`, newly shared with the service account). It is the Vendor Rate tab of the
+old Streamlit dashboard (github.com/design355/sample-production-dashboard; `legacy/streamlit_app.py`) rebuilt on the
+sheet's data: `Rate_Data` is read, `NEW RATE SHEET` marks vendors with a "44/36 WIDTH" column and is cross-checked.
+`tests/test_vendor_rate.py` runs the old vr_* functions next to the API (every filter set, every category).
+Page: Vendor / Fabric category / Width / search filters, the 5 KPIs, "Compare fabric category" with the
+"<category>: vendor-wise cheapest rate (★ = Best Price)" chart + table + per-piece table, the vendor benchmark, one
+table per vendor, the master rate sheet, and sheet checks. Chatbot answers rate questions.
 - Not verified on the live sheet through the API yet (no key in `backend/.env`); built from the sheet's own
   dashboard tab. The NEW RATE SHEET block layout in particular should be checked once the key is added.
 - FABRIC PO 11 also holds the newer PO tabs (RV 1498 …); the Fabric PO page still reads FABRIC PO 10's INDEX.

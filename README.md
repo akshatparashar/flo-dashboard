@@ -122,11 +122,12 @@ the test suite runs it side by side with the new API on the same sheet data, com
   buckets: Overdue · Due Today · Due in 1-3 Days · Due in 4-7 Days · Due Later (> 7 Days) · No Due Date · Completed.
   Visits & meetings: done = 'X' or STATUS *Done*; required per month: market visit 1, store / exhibition 1, Surat 1,
   factory / store 2, meetings = as many as planned. Done % colours: green ≥ 80%, amber 40–79%, red below.
-- **Vendor Rate** (same as the sheet's own *Vendor Rate Dashboard* tab, checked against its Vendor Benchmark
-  Summary in `tests/test_vendor_rate.py`): a rate of 0 or a blank cell is *no rate* and is left out of averages,
-  minimums and maximums; a rate typed as text ("120/125") is shown as typed but not counted. *vs Best %* = how much
-  dearer an offering is than the cheapest rate for the same fabric category and width. Fabrics on the NEW RATE SHEET
-  but missing (or priced differently) in Rate_Data are listed under *Sheet checks*.
+- **Vendor Rate** (the Vendor Rate tab of the old Streamlit dashboard, checked by `tests/test_vendor_rate.py`, which
+  runs the old code next to the API): 0 = rate pending, blank = not offered; neither counts in any average, min or
+  max. Averages cover the 44" and 60" columns, Min / Max every per-metre column; per-piece rates are never mixed with
+  per-metre ones ("120/125" = 120, range to 125). Fabric categories come from the fabric name (old `vr_category`).
+  A vendor whose NEW RATE SHEET card says "44/36 WIDTH" (EKTA FABRIC) has that column read as 44/36". The compare
+  section shows each vendor's cheapest fabric per width for one category; ★ = the lowest rate of that width.
 - **Percentages in TOTAL rows are recomputed** from the totals, never summed or averaged.
 - **Colours on rates**: approval / received / on-time — green ≥ 50%, amber ≥ 25%, red below; target achievement —
   green ≥ 100%, amber ≥ 75%, red below.

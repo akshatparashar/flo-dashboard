@@ -1,9 +1,9 @@
-"""Vendor Rate: the numbers must equal the sheet's own "Vendor Rate Dashboard" tab (FABRIC PO 11) on the real rate
-list, plus parsing of the rate cards, sheet checks, filters and the API route."""
+"""Vendor Rate: parity with the old Streamlit Vendor Rate tab (legacy/streamlit_app.py: its vr_* functions run on the
+same rates), plus parsing of Rate_Data / the rate cards, sheet checks, filters, per-vendor tables and the API."""
 from __future__ import annotations
 
-import math
-
+import numpy as np
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -13,171 +13,180 @@ from app.dashboards import vendor_rate as vr
 from app.sources.demo import DemoSheetSource
 from app.store import DataStore
 
-# The real rate list as the sheet shows it (Vendor | Fabric | Category | 44" | 60" | 36" | Per Pc / Special).
-REAL = [
-    ("RV", "CREPE", "Crepe", 205, 250, "", ""), ("RV", "MUL CHANDERI", "Mul Chanderi", 195, 240, "", ""),
-    ("RV", "BASIC SILK", "Silk", 170, 195, "", ""), ("RV", "CLASSIC SILK", "Silk", 175, 200, "", ""),
-    ("RV", "RUSSIAN SILK", "Russian Silk", 200, 230, "", ""), ("RV", "CHINON", "Chinon", 185, 235, "", ""),
-    ("RV", "VISCOSE MUSLINE", "Muslin", 165, 195, "", ""), ("RV", "PLAIN ORGENZA", "Organza", 80, 120, "", ""),
-    ("RV", "PLAIN CREPE", "Crepe", 0, 125, "", ""), ("RV", "PLAIN CHINON", "Chinon", 72, 115, "", ""),
-    ("RV", "ORGANZA PRINTED", "Organza", 185, 235, "", ""),
-    ("RV", "SUPER COTTON (DIGITAL PRINT)", "Cotton", 145, 170, "", ""), ("RV", "DOBBY", "Other", "", 200, "", ""),
-    ("SWAGAT", "REMI SILK", "Silk", 175, 230, "", ""), ("SWAGAT", "NATURAL CREPE", "Crepe", 230, 280, "", ""),
-    ("SWAGAT", "SAND CREPE", "Crepe", 210, 280, "", ""),
-    ("GOKUL", "N-CREPE", "Crepe", 210, 260, "", ""), ("GOKUL", "MUSLIN", "Muslin", 160, 200, "", ""),
-    ("GOKUL", "DIG. COTTON", "Cotton", 160, 200, "", ""), ("GOKUL", "RFD CREPE", "Crepe", "", "", "", 120),
-    ("VARSHA", "MUSLINE", "Muslin", 165, 200, "", ""),
-    ("VARSHA", "MUSLINE PRINTED DUPATTA", "Muslin", 160, 210, "", ""),
-    ("VARSHA", "CREPE", "Crepe", 232, 295, "", ""), ("VARSHA", "SANTOON (DYED)", "Other", 90, "", "", ""),
-    ("VARSHA", "HAND WORK PR PC", "Hand Work / Dupatta", "", "", "", 120),
-    ("VARSHA", "CREPE HAND WORK PR PC", "Hand Work / Dupatta", "", "", "", 160),
-    ("VARSHA", "MUSLIN PRINT HAND WORK PR PC", "Hand Work / Dupatta", "", "", "", "120/125"),
-    ("VARSHA", "CHINON DUPATTA MTR", "Chinon", 220, 275, "", ""),
-    ("VIPUL", "MUSLINE", "Muslin", 160, 185, "", ""), ("VIPUL", "CREPE", "Crepe", 220, 265, "", ""),
-    ("VIPUL", "ORGENZA", "Organza", "", 220, "", ""), ("VIPUL", "RUSSIAN SILK", "Russian Silk", 185, "", "", ""),
-    ("VIPUL", "CHINON SIFON", "Chinon", 180, 230, "", ""),
-    ("EKTA FABRIC", "CHANDERI DIG. TOP/DUP.", "Mul Chanderi", 390, "", "", ""),
-    ("EKTA FABRIC", "LILEN DIG.TOP/DUP.", "Linen", 435, "", "", ""),
-    ("EKTA FABRIC", "MODAL DAYED DIG.TOP/DUP.", "Other", 675, "", "", ""),
-    ("EKTA FABRIC", "MOONGA DIG.TOP/DUP. JAMDANI", "Other", 675, "", "", ""),
-    ("EKTA FABRIC", "MOONGA FLEB DIG.TOP/DUP. JAMDANI", "Other", 565, "", "", ""),
-    ("VINAYAK", "CREPE", "Crepe", 210, 250, "", ""), ("VINAYAK", "BEMBER RUSSION SILK", "Russian Silk", 250, "", "", ""),
-    ("VINAYAK", "MUSLIN", "Muslin", 145, 180, "", ""), ("VINAYAK", "MUL CHANDERI", "Mul Chanderi", "", 225, "", ""),
-    ("VINAYAK", "ORGENZA (PRINTED)", "Organza", "", 235, "", ""),
-    ("VINAYAK", "DIG. 60*60 COTTON", "Cotton", 135, "", "", ""),
-    ("VINAYAK", "DIG.VISCOS ORGENZA", "Organza", "", 220, 225, ""),
-    ("SHREE SANTINATH", "FLEX LILEN", "Linen", "", 132, "", ""),
-    ("SHREE SANTINATH", "FLEX LILEN DUPATTA (PER PC)", "Linen", "", "", "", 145),
-    ("SHREE SANTINATH", "FLEX WRINKLE SWISS", "Other", "", 142, "", ""),
-    ("VEDANSHI", "PLAIN ORGENZA", "Organza", "", 135, 85, ""), ("VEDANSHI", "MUSLIN", "Muslin", "", 200, 165, ""),
-    ("BSK", "MUL CHANDERI", "Mul Chanderi", 175, 210, "", ""), ("BSK", "COTTON", "Cotton", "", 155, "", ""),
-    ("K THREE PLUS", "CHIKU CHANDERI", "Mul Chanderi", "", 85, 73, ""), ("K THREE PLUS", "MUSLIN", "Muslin", "", "", "", ""),
-    ("K THREE PLUS", "COTTON SILK", "Silk", "", "", "", ""), ("K THREE PLUS", "GAJJI SILK", "Silk", "", "", "", ""),
-]
-# The sheet's Vendor Benchmark Summary: Items, Avg 44", Avg 60", Min 60", Max 60" (shown rounded to whole ₹).
-SHEET_BENCH = {
-    "RV": (13, 162, 193, 115, 250), "SWAGAT": (3, 205, 263, 230, 280), "GOKUL": (4, 177, 220, 200, 260),
-    "VARSHA": (8, 173, 245, 200, 295), "VIPUL": (5, 186, 225, 185, 265), "EKTA FABRIC": (5, 548, None, None, None),
-    "VINAYAK": (7, 185, 222, 180, 250), "SHREE SANTINATH": (3, None, 137, 132, 142),
-    "VEDANSHI": (2, None, 168, 135, 200), "BSK": (2, 175, 183, 155, 210), "K THREE PLUS": (4, None, 85, 85, 85),
-}
 HEADER = ["Vendor", "S. No.", "Fabric (Original)", "Fabric Category", '44" Width Rate', '60" Width Rate',
-          '36" Width Rate', "Per Pc / Special Rate", "Metric", "Value", "Vendor", "Offerings Count"]
+          '36" Width Rate', "Per Pc / Special Rate", "", "Metric", "Value"]
 
 
-def rate_data():
-    rows, n, last = [HEADER], 0, None
-    for v, f, c, a, b, d, e in REAL:
-        n = n + 1 if v == last else 1
-        last = v
-        money = [f"₹{x}" if isinstance(x, int) else x for x in (a, b, d, e)]      # formatted like the sheet
-        rows.append([v, n, f, c, *money, "Total Vendors" if n == 1 and v == "RV" else "", 11 if v == "RV" else "",
-                     v, n])                                                        # helper block on the right
-    return rows
-
-
-CARDS = [
-    ["RV", "", "", "", "", "VARSHA"],
-    ["S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH", "36 WIDTH", "S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH"],
-    [1, "CREPE", 205, 255, "", 1, " MUSLINE", 165, 200],                      # 60" changed 250 -> 255
-    [2, "MUL CHANDERI", 195, 240, "", 2, "SILK SATIN", 300, 350],             # new at VARSHA
-    ["", "", "", "", "", ""],
-    ["GOKUL"],
-    ["S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH"],
-    [1, "N-CREPE", 210, 260],
-    [4, "RFD CREPE ", "", "", 120],                                            # unlabelled column after headers
-]
+def sheet_grids(records):
+    """The old app's rate table written the way the sheet holds it: Rate_Data (₹ text and numbers mixed, the
+    helper block on the right) and a NEW RATE SHEET card whose EKTA FABRIC block says '44/36 WIDTH'."""
+    rd = [HEADER]
+    for n, r in enumerate(records, start=1):
+        # EKTA's old 44/36" rates sit in the 44" column of Rate_Data (the sheet has no 44/36 column there)
+        c44 = r['44"'] if r['44"'] is not None else r['44/36"']
+        pc = r["Per Pc"] if r["Per Pc Max"] is None else f"{r['Per Pc']:g}/{r['Per Pc Max']:g}"
+        fmt = lambda v: "" if v is None else (f"₹{v}" if v else 0)          # noqa: E731  (formatted like the sheet)
+        rd.append([r["Vendor"], n, r["Fabric"], "Whatever", fmt(c44), fmt(r['60"']), fmt(r['36"']), fmt(pc),
+                   "", "Total Vendors" if n == 1 else "", 11 if n == 1 else ""])
+    cards = [["EKTA FABRIC"], ["S. NO.", "FABRIC", "44/36 WIDTH", "60 WIDTH"], [1, "CHANDERI DIG. TOP/DUP.", 390]]
+    return {"rates": rd, "cards": cards}
 
 
 @pytest.fixture
-def parsed():
-    return vr.parse_vendor_rate({"rates": rate_data(), "cards": CARDS})
+def old_records(legacy):
+    return legacy.vr_default_records()
+
+
+@pytest.fixture
+def parsed(old_records):
+    return vr.parse_vendor_rate(sheet_grids(old_records))
 
 
 def kpis(d):
-    return {k["id"]: k["value"] for k in d["kpis"]}
+    return {k["id"]: k for k in d["kpis"]}
 
 
-def rnd(v):
-    return None if v is None or (isinstance(v, float) and math.isnan(v)) else math.floor(v + 0.5)
+def same(a, b):
+    pd.testing.assert_frame_equal(a.reset_index(drop=True), b.reset_index(drop=True), check_dtype=False,
+                                  check_exact=False, rtol=1e-9)
 
 
-def test_rate_data_parsed(parsed):
+# ------------------------------------------------------------------------------------------------ parity
+def test_tidy_table_identical(legacy, old_records, parsed):
+    old = legacy.vr_build(old_records)
+    mine = parsed["d"]
+    assert list(mine.columns) == list(old.columns)
+    new = mine.copy()
+    new["Fabric"] = new["Fabric"].values                         # same text; compare everything else directly
+    same(old.drop(columns=["Status"]), new.drop(columns=["Status"]))
+    # the old app wrote emoji in front of its status text; the words are the same
+    assert [s.split(" ", 1)[1] if s[0] not in "PO" else s for s in old["Status"]] == list(mine["Status"])
+
+
+FILTERS = [
+    ([], [], "", ""), (["RV"], [], "", ""), ([], ["Crepe"], "", ""), ([], [], 'Has 44"', ""),
+    ([], [], 'Has 60"', ""), ([], [], 'Has 36"', ""), ([], [], "Per Piece only", ""), ([], [], "", "crepe RV"),
+    (["VARSHA"], ["Hand Work / Dupatta"], "", ""), ([], ["Muslin"], 'Has 60"', "muslin"), (["NOBODY"], [], "", ""),
+]
+
+
+@pytest.mark.parametrize("vendor,cat,width,query", FILTERS)
+def test_filter_benchmark_and_kpis_identical(legacy, old_records, parsed, vendor, cat, width, query):
+    old_d = legacy.vr_build(old_records)
+
+    def old_filter():                                            # the old filter takes one value ("All" = none)
+        x = old_d
+        if vendor:
+            x = pd.concat([legacy.vr_filter(x, v, "All", "All", "") for v in vendor])
+        if cat:
+            x = pd.concat([legacy.vr_filter(x, "All", c, "All", "") for c in cat])
+        return legacy.vr_filter(x, "All", "All", width or "All", query)
+    old_x = old_filter()
+    new_x = vr.vr_filter(parsed["d"], vendor, cat, width, query)
+    assert list(new_x.index) == list(old_x.index)
+    if new_x.empty:
+        return
+    same(legacy.vr_benchmark(old_x), vr.vr_benchmark(new_x))
+    for col in ('44"', '60"'):
+        o = legacy.vr_lowest(old_x, col)
+        n = vr.vr_lowest(new_x, col)
+        assert (o == "—") == (n is None)
+        if n:
+            assert o == f"₹{n[0]:,.0f} · {n[1]} · {n[2]}"
+    d = vr.vendor_rate_dashboard(parsed, {"vendor": vendor, "fabric": cat, "width": [width] if width else [],
+                                          "q": [query] if query else []})
+    k = kpis(d)
+    assert k["vendors"]["value"] == old_x["Vendor"].nunique() and k["offerings"]["value"] == len(old_x)
+    assert k["pending"]["value"] == int(old_x["Pending Cells"].sum())
+
+
+def test_compare_identical_for_every_category(legacy, old_records, parsed):
+    old_d = legacy.vr_build(old_records)
+    pay = vr.vendor_rate_dashboard(parsed, {})["compare"]
+    assert pay["categories"] == sorted(old_d["Category"].unique()) and pay["default"] == "Crepe"
+    for cat in pay["categories"]:
+        c = old_d[old_d["Category"] == cat]
+        mw = [w for w in legacy.VR_METER_COLS if c[w].notna().any()]
+        p = pay["data"][cat]
+        assert p["widths"] == mw
+        if not mw:
+            continue
+        cmp, best = legacy.vr_compare(c, mw)
+        assert [r[0] for r in p["table"]["rows"]] == list(cmp["Vendor"])
+        for w in mw:
+            i = [x["width"] for x in p["tiles"]].index(w)
+            assert p["tiles"][i]["rate"] == best[w] == c[w].min()
+            ser = next(s for s in p["chart"]["series"] if s["name"] == w)
+            for v, star, rate in zip(p["chart"]["vendors"], ser["best"], ser["values"]):
+                want = cmp.loc[cmp["Vendor"] == v, f"{w} Rate"].iloc[0]
+                assert (rate is None) == pd.isna(want) and (rate is None or rate == want)
+                assert star == (pd.notna(want) and want == best[w])      # ★ = Best Price
+        stars = {r[0]: r[-1] for r in p["table"]["rows"]}
+        old_stars = dict(zip(cmp["Vendor"], cmp["Best Price"].str.replace("🏆", "★")))
+        assert stars == old_stars
+        pc = c[c["Per Pc"].notna()]
+        assert (p["pieces"] is not None) == (not pc.empty)
+
+
+# ------------------------------------------------------------------------------------------------ sheet specifics
+def test_reads_the_sheets_layout(parsed):
     d = parsed["d"]
-    assert len(d) == 56 and d["vendor"].nunique() == 11 and parsed["source"] == "Rate_Data"
-    r = d.set_index(["vendor", "fabric"])
-    assert math.isnan(r.loc[("RV", "PLAIN CREPE"), "r44"]) and r.loc[("RV", "PLAIN CREPE"), "r44_zero"]
-    assert r.loc[("VARSHA", "MUSLIN PRINT HAND WORK PR PC"), "pc_text"] == "120/125"
-    assert r.loc[("VEDANSHI", "PLAIN ORGENZA"), "r36"] == 85
+    assert len(d) == 56 and d["Vendor"].nunique() == 11 and parsed["source"] == "Rate_Data"
+    ekta = d[d["Vendor"] == "EKTA FABRIC"]
+    assert ekta['44/36"'].notna().all() and ekta['44"'].isna().all()          # card says "44/36 WIDTH"
+    r = d.set_index(["Vendor", "Fabric"])
+    assert r.loc[("RV", "PLAIN CREPE"), "Status"] == 'Pending / N/A (44")'
+    assert r.loc[("VARSHA", "MUSLIN PRINT HAND WORK PR PC"), "Per Pc Max"] == 125
+    assert r.loc[("VARSHA", "MUSLIN PRINT HAND WORK PR PC"), "Note"] == "Range ₹120–125 per pc"
+    assert r.loc[("K THREE PLUS", "MUSLIN"), "Status"] == "Pending / N/A"
 
 
-def test_matches_sheet_vendor_benchmark(parsed):
-    t = vr.vendor_rate_dashboard(parsed, {})["tables"]["vendors"]
-    cols = [c["label"] for c in t["columns"]]
-    got = {r[0]: tuple(rnd(r[cols.index(c)]) if c != "Items" else r[1] for c in
-                       ("Items", 'Avg 44" Rate', 'Avg 60" Rate', 'Min 60" Rate', 'Max 60" Rate')) for r in t["rows"]}
-    assert got == SHEET_BENCH
-    assert [r[0] for r in t["rows"]] == list(SHEET_BENCH)                   # sheet order
+def test_ekta_stays_in_44_without_a_card():
+    p = vr.parse_vendor_rate({"rates": sheet_grids([{"Vendor": "EKTA FABRIC", "Fabric": "X TOP/DUP.", '36"': None,
+                                                      '44"': None, '60"': None, '44/36"': 390, "Per Pc": None,
+                                                      "Per Pc Max": None}])["rates"]})
+    assert p["d"].iloc[0]['44"'] == 390                     # no "44/36 WIDTH" card -> read as a 44" rate
 
 
-def test_kpis_match_sheet_metrics(parsed):
-    k = kpis(vr.vendor_rate_dashboard(parsed, {}))
-    assert k["vendors"] == 11 and k["offerings"] == 56                     # sheet: Total Vendors / Offerings
-    assert rnd(k["avg44"]) == 227 and rnd(k["avg60"]) == 205               # sheet: Avg 44" / 60" Width Rate
-    assert k["cheapest_vendor"] == "K THREE PLUS" and k["no_rate"] == 3
-
-
-def test_category_compare_and_rate_list(parsed):
+def test_kpis_and_sections(parsed):
     d = vr.vendor_rate_dashboard(parsed, {})
-    t = d["tables"]["categories"]
-    cols = [c["label"] for c in t["columns"]]
-    crepe = next(r for r in t["rows"] if r[0] == "Crepe")
-    assert crepe[cols.index('Best 60" Rate')] == 125 and crepe[cols.index('Best 60" Vendor')] == "RV"
-    assert crepe[cols.index('Max 60" Rate')] == 295
-    assert crepe[cols.index('Best 44" Vendor')] == "RV" and crepe[cols.index('Best 44" Rate')] == 205  # RV's 0 = no rate
-    rl = d["tables"]["rates"]
-    rc = [c["label"] for c in rl["columns"]]
-    varsha_crepe = next(r for r in rl["rows"] if r[0] == "CREPE" and r[1] == "VARSHA")
-    assert varsha_crepe[rc.index('vs Best 60" %')] == pytest.approx(136.0)  # 295 vs 125
-    hw = next(r for r in rl["rows"] if r[0] == "MUSLIN PRINT HAND WORK PR PC")
-    assert hw[rc.index("Per Pc / Special")] == "120/125"
+    k = kpis(d)
+    assert [x["label"] for x in d["kpis"]] == ["Total Vendors", "Total Fabric Offerings", 'Lowest 44" Rate',
+                                               'Lowest 60" Rate', "Pending / Missing Rates"]
+    assert k["lowest44"]["value"] == 72 and k["lowest44"]["hint"] == "RV · PLAIN CHINON"
+    assert k["lowest60"]["value"] == 85 and k["lowest60"]["hint"] == "K THREE PLUS · CHIKU CHANDERI"
+    assert k["pending"]["value"] == 4
+    cards = d["vendor_cards"]
+    assert [c["vendor"] for c in cards][:3] == ["RV", "SWAGAT", "GOKUL"] and len(cards) == 11
+    assert sum(c["items"] for c in cards) == 56
+    rv = next(c for c in cards if c["vendor"] == "RV")
+    assert len(rv["table"]["rows"]) == 13 and [c["label"] for c in rv["table"]["columns"]][:2] == ["Fabric", "Category"]
 
 
-def test_filters(parsed):
+def test_vendor_filter_limits_cards_but_compare_stays_global(parsed):
     d = vr.vendor_rate_dashboard(parsed, {"vendor": ["RV"]})
-    assert kpis(d)["offerings"] == 13 and rnd(kpis(d)["avg60"]) == 193
-    assert len(d["tables"]["vendors"]["rows"]) == 11                       # comparisons keep every vendor
-    d = vr.vendor_rate_dashboard(parsed, {"fabric": ["Crepe"]})
-    assert kpis(d)["offerings"] == 9
-    assert {r[0] for r in d["tables"]["vendors"]["rows"]} == {"RV", "SWAGAT", "GOKUL", "VARSHA", "VIPUL", "VINAYAK"}
-    m = d["charts"]["matrix60"]
-    assert m["rows"] == ["Crepe"] and "EKTA FABRIC" not in m["columns"]
+    assert [c["vendor"] for c in d["vendor_cards"]] == ["RV"] and kpis(d)["offerings"]["value"] == 13
+    crepe = d["compare"]["data"]["Crepe"]
+    assert crepe["vendors"] > 1                                           # not limited by the vendor filter
 
 
-def test_checks_and_rate_cards(parsed):
-    text = " ".join(c["text"] for c in vr.vendor_rate_dashboard(parsed, {})["checks"])
-    assert "PLAIN CREPE (RV)" in text and "120/125" in text and "no rate at all" in text
-    assert "SILK SATIN (VARSHA)" in text                                  # on the rate card, not in Rate_Data
-    assert "CREPE (RV): rate card 205/255, Rate_Data 205/250" in text
-    assert "RFD CREPE" not in text.split("differ")[-1]                    # 120 in an unlabelled column still matches
-    cards = {(c["vendor"], c["fabric"]): c["nums"] for c in vr.parse_rate_cards(CARDS)}
-    assert cards[("GOKUL", "RFD CREPE")] == [120] and cards[("VARSHA", "MUSLINE")] == [165, 200]
+def test_checks_against_the_rate_cards(parsed):
+    cards = vr.parse_rate_cards([["RV", "", "", "", "", "VARSHA"],
+                                 ["S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH", "", "S. NO.", "FABRIC", "44 WIDTH"],
+                                 [1, "CREPE", 205, 255, "", 1, " MUSLINE", 165],
+                                 [2, "SILK SATIN", 300, 350, "", 2, "X", 1]])
+    assert cards[0]["nums"] == [205, 255] and cards[2]["vendor"] == "VARSHA" and cards[2]["nums"] == [165]
+    text = " ".join(c["text"] for c in vr.checks(parsed["d"], cards, "Rate_Data"))
+    assert "CREPE (RV): rate card 205/255, Rate_Data 205/250" in text and "SILK SATIN (RV)" in text
+    assert 'PLAIN CREPE (RV) 44"' in text and "no rate at all" in text
 
 
 def test_rate_cards_used_when_rate_data_missing():
-    p = vr.parse_vendor_rate({"cards": CARDS})
+    p = vr.parse_vendor_rate({"cards": [["GOKUL"], ["S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH"],
+                                       [1, "N-CREPE", 210, 260], [2, "MUSLIN", 160, 200]]})
     d = vr.vendor_rate_dashboard(p, {})
-    assert p["source"] == "NEW RATE SHEET" and kpis(d)["offerings"] == 6 and d["notices"]
-    assert p["d"].set_index("fabric").loc["SILK SATIN", "category"] == "Silk"
-
-
-@pytest.mark.parametrize("name,cat", [("CREPE HAND WORK PR PC", "Hand Work / Dupatta"),
-                                      ("BEMBER RUSSION SILK", "Russian Silk"), ("CHIKU CHANDERI", "Mul Chanderi"),
-                                      ("COTTON SILK", "Silk"), ("FLEX LILEN DUPATTA (PER PC)", "Linen"),
-                                      ("DIG.VISCOS ORGENZA", "Organza"), ("DOBBY", "Other")])
-def test_category_rules_match_the_sheet(name, cat):
-    assert vr.category_of(name) == cat
-    assert next(c for v, f, c, *_ in REAL if f == name) == cat
+    assert p["source"] == "NEW RATE SHEET" and kpis(d)["offerings"]["value"] == 2 and d["notices"]
+    assert p["d"].iloc[0]['44"'] == 210 and p["d"].iloc[0]['60"'] == 260
 
 
 def test_empty():
@@ -193,7 +202,9 @@ def test_api_route(monkeypatch):
     c = TestClient(main.app)
     body = c.get("/api/vendor-rate").json()
     assert body["meta"]["sources"][0]["source"] == "vendor_rate" and body["kpis"]
+    assert {"benchmark", "master"} <= set(body["tables"]) and body["vendor_cards"] and body["compare"]["data"]
     v = body["options"]["vendor"][0]
     one = c.get("/api/vendor-rate", params={"vendor": v}).json()
-    assert kpis(one)["vendors"] == 1
-    assert store.status()["vendor_rate"]["ok"]
+    assert kpis(one)["vendors"]["value"] == 1 and [x["vendor"] for x in one["vendor_cards"]] == [v]
+    none = c.get("/api/vendor-rate", params={"q": "zzzz"}).json()
+    assert none["no_match"] and store.status()["vendor_rate"]["ok"]

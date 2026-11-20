@@ -355,7 +355,9 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     rest = " ".join(w for j, w in enumerate(words) if not used[j])
     q.toks = tokens(rest)
     q.dims = list(dict.fromkeys(DIMENSION_WORDS[x] for x in q.toks if x in DIMENSION_WORDS))
-    m = re.search(r"\b(?:top|bottom|best|worst|highest|lowest)\s*(\d{1,2}|three|five|ten)\b", t) or \
+    # "lowest 60 inch rate" names a width, not "the 60 lowest"
+    m = re.search(r"\b(?:top|bottom|best|worst|highest|lowest)\s*(\d{1,2}|three|five|ten)\b(?!\s*(?:inch|inches|width|mtr))",
+                  t) or \
         re.search(r"\b(\d{1,2})\s*(?:top|best|highest|lowest|worst)\b", t)
     if m:
         q.n = {"three": 3, "five": 5, "ten": 10}.get(m.group(1)) or int(m.group(1))
@@ -390,7 +392,8 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     rate_q = bool(_RATE_WORDS.search(t)) and not re.search(r"\b(approv\w*|reject\w*|on.?time|received|rcvd|"
                                                          r"completion|done|achieve\w*|percent\w*)\b", t)
     if rate_q and (any(e.type in ("fabric", "vendor") for e in q.entities) or
-                   re.search(r"\b(fabric|kapda|vendor)s?\b", t) or "vendor-rate" in q.pages or category_in_text(t)):
+                   re.search(r"\b(fabric|kapda|vendor|inch|width)s?\b", t) or "vendor-rate" in q.pages or
+                   category_in_text(t)):
         if "vendor-rate" not in q.pages:
             q.pages.append("vendor-rate")
     # "fabric pending / received / ordered" is the Fabric PO sheet; fabric *issued* to fabricators is not
@@ -965,8 +968,11 @@ class Assistant:
             return None
         t = norm(q.text)
         cats = [e for e in q.entities if e.type == "fabric"]
-        cat = cats[0].display if cats else category_in_text(t)
         vendors = [e for e in q.entities if e.type == "vendor" and "vendor-rate" in e.raw]
+        t_cat = t
+        for v in vendors:                          # "NEELAM SILKS" names a vendor, not the fabric "silk"
+            t_cat = t_cat.replace(v.display.lower(), " ")
+        cat = cats[0].display if cats else category_in_text(t_cat)
         if not cat and not vendors:
             return None
         if not cat and not re.search(r"\b(rates?|rate list|rate card|price|prices|kitne ka)\b", t):
@@ -976,15 +982,15 @@ class Assistant:
         except DataUnavailable as err:
             return self._reply(f"I can't read the vendor rate sheet right now ({err}).", "vendor-rate",
                                understood=False)
-        tbl = (data.get("tables") or {}).get("rates") or {}
+        tbl = (data.get("tables") or {}).get("master") or {}
         cols = [c["label"] for c in tbl.get("columns") or []]
-        if "Fabric Category" not in cols:
+        if "Category" not in cols:
             return None
         ix = {c: i for i, c in enumerate(cols)}
-        width = '44" Rate' if re.search(r"\b44\b", t) else '36" Rate' if re.search(r"\b36\b", t) else \
-            "Per Pc / Special" if re.search(r"\b(per (pc|piece)|pc rate|piece)\b", t) else '60" Rate'
-        wname = {'44" Rate': '44"', '60" Rate': '60"', '36" Rate': '36"', "Per Pc / Special": "per pc"}[width]
-        rows = [r for r in tbl["rows"] if (not cat or r[ix["Fabric Category"]] == cat)
+        width = '44"' if re.search(r"\b44\b", t) else '36"' if re.search(r"\b36\b", t) else \
+            "Per Pc" if re.search(r"\b(per (pc|piece)|pc rate|piece)\b", t) else '60"'
+        wname = "per pc" if width == "Per Pc" else width
+        rows = [r for r in tbl["rows"] if (not cat or r[ix["Category"]] == cat)
                 and (not vendors or r[ix["Vendor"]] in {v.raw["vendor-rate"] for v in vendors})]
         ctx = {"page": "vendor-rate", "metric": None, "intent": "rates", "entities": [e.ref() for e in q.entities],
                "months": []}
@@ -999,9 +1005,9 @@ class Assistant:
         def line(r, show_vendor=True, all_widths=False):
             head = f"**{r[ix['Fabric']]}**" + (f" ({r[ix['Vendor']]})" if show_vendor else "")
             if all_widths:
-                parts = [f"{n} {money(r[ix[c]])}" for c, n in (('44" Rate', '44"'), ('60" Rate', '60"'),
-                                                               ('36" Rate', '36"'), ("Per Pc / Special", "per pc"))
-                         if r[ix[c]] not in (None, "")]
+                parts = [f"{n} {money(r[ix[c]])}" for c, n in (('44"', '44"'), ('60"', '60"'), ('36"', '36"'),
+                                                               ('44/36"', '44/36"'), ("Per Pc", "per pc"))
+                         if c in ix and r[ix[c]] not in (None, "")]
                 return f"• {head}: " + (", ".join(parts) if parts else "no rate")
             return f"• {head}: {money(r[ix[width]])} at {wname}"
 

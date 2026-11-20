@@ -1,18 +1,20 @@
-"""Vendor Rate dashboard: what each fabric vendor charges, and who is cheapest for each kind of fabric.
+"""Vendor Rate dashboard (FABRIC PO 11).
 
-Source: the "FABRIC PO 11" Google Sheet.
-  Rate_Data       the tidy rate list the sheet's own "Vendor Rate Dashboard" tab is built from. Columns are found by
-                  header text: Vendor | S. No. | Fabric (Original) | Fabric Category | 44" Width Rate |
-                  60" Width Rate | 36" Width Rate | Per Pc / Special Rate. (The tab also holds helper blocks to the
-                  right - metrics, filter lists - which are ignored.)
-  NEW RATE SHEET  the hand-filled rate cards, one block per vendor ("RV" above "S. NO. | FABRIC | 44 WIDTH | 60 WIDTH
-                  | 36 WIDTH"). Used only as a cross-check: a fabric or rate added there but not yet in Rate_Data is
-                  listed under *Sheet checks*. If Rate_Data is missing, the rate cards are used instead.
+Ported from the Vendor Rate tab of the Streamlit dashboard (github.com/design355/sample-production-dashboard, kept as
+legacy/streamlit_app.py; tests/test_parity_vendor_rate.py runs both on the same rates and compares every number).
+The old app kept its rates in code; here they are read from the sheet:
 
-Rules (same as the sheet's own Vendor Rate Dashboard, checked against its Vendor Benchmark Summary):
-  * a rate of 0 or a blank cell is "no rate" and is left out of averages, minimums and maximums;
-  * a rate typed as text ("120/125") is shown as typed but left out of the numbers;
-  * averages are plain means of the rates that exist.
+  Rate_Data       the tidy rate list (Vendor | S. No. | Fabric (Original) | Fabric Category | 44" | 60" | 36" |
+                  Per Pc / Special). Columns are found by header text. The sheet's own Fabric Category column is not
+                  used: categories come from the fabric name with the old app's rules (vr_category).
+  NEW RATE SHEET  the hand-filled rate cards ("RV" above "S. NO. | FABRIC | 44 WIDTH | 60 WIDTH"). Two jobs: a vendor
+                  whose card says "44/36 WIDTH" has its 44" column read as the 44/36" rate (as the old app did), and
+                  fabrics / rates on a card that differ from Rate_Data are listed under Sheet checks.
+
+Rules (same as the old app):
+  * a rate of 0 means "pending", blank means "not offered"; neither counts in any average, minimum or maximum;
+  * a per-piece rate is never mixed with per-metre rates; "120/125" = per piece 120, upper end 125;
+  * averages cover the 44" and 60" columns only; Min / Max cover every per-metre column.
 """
 from __future__ import annotations
 
@@ -22,71 +24,174 @@ import numpy as np
 import pandas as pd
 
 from ..core import norm_key
-from ..tables import kpi, notice, table, with_total
+from ..tables import kpi, notice, table
 
-WIDTHS = [("r44", '44"'), ("r60", '60"'), ("r36", '36"'), ("pc", "Per Pc / Special")]
-RATE_COLS = [w for w, _ in WIDTHS]
+VR_METER_COLS = ['36"', '44"', '60"', '44/36"']          # per-metre rates (by width)
+VR_PC_COL = "Per Pc"                                      # per-piece rate (never mixed with per-metre averages)
+VR_PC_MAX = "Per Pc Max"                                  # upper end when a piece rate is a range (120/125)
+VR_PRICE_COLS = VR_METER_COLS + [VR_PC_COL]
+WIDTH_OPTIONS = ['Has 44"', 'Has 60"', 'Has 36"', "Per Piece only"]
 RATE_TAB_NAMES = ["Rate_Data", "Rate Data"]
 RATE_TAB_REGEX = r"rate\s*_?\s*data"
 CARD_TAB_NAMES = ["NEW RATE SHEET", "Rate Sheet"]
 CARD_TAB_REGEX = r"rate\s*sheet"
-
-# Fabric category from the fabric name, used only when the sheet gives none (first match wins; same groups as the
-# sheet's own Fabric Category column).
-CATEGORY_RULES = [
-    (r"HAND\s*WORK", "Hand Work / Dupatta"), (r"RUSS?I?ON?\s*SILK|RUSSIAN", "Russian Silk"),
-    (r"CHANDERI", "Mul Chanderi"), (r"CREPE", "Crepe"), (r"MUSLI", "Muslin"), (r"ORG[AE]NZA", "Organza"),
-    (r"CHINON", "Chinon"), (r"LINEN|LILEN", "Linen"), (r"SILK", "Silk"), (r"COTTON", "Cotton"),
-]
+INR = "inr_full"
 
 
-def category_of(fabric: str) -> str:
+def vr_category(fabric, has_pc=False):
+    """Clean fabric group for filters (spelling variations -> one category). Same rules as the old app."""
     t = str(fabric).upper()
-    for pat, cat in CATEGORY_RULES:
-        if re.search(pat, t):
-            return cat
+    if has_pc or re.search(r"HAND\s*WORK|TOP\s*/\s*DUP|\bP(ER|R)\s*PC\b", t):
+        return "Hand Work / Dupatta"
+    for pattern, name in (
+        (r"RUSSI", "Russian Silk"), (r"CHANDERI", "Mul Chanderi"), (r"CHINON", "Chinon"),
+        (r"ORGENZA|ORGANZA", "Organza"), (r"MUSLIN", "Muslin"), (r"CREPE", "Crepe"),
+        (r"LILEN|LINEN", "Linen"), (r"SANTOON", "Santoon"), (r"SILK", "Silk"), (r"COTTON", "Cotton"),
+    ):
+        if re.search(pattern, t):
+            return name
     return "Other"
 
 
 def category_in_text(text: str) -> str | None:
     """The fabric category a question names ("musline", "russian silk", "chanderi"), or None."""
     t = str(text).upper()
-    for pat, cat in CATEGORY_RULES:
-        if re.search(pat, t):
-            return cat
+    if re.search(r"HAND\s*WORK|DUPATTA|\bPER\s*PC\b", t):
+        return "Hand Work / Dupatta"
+    for pattern, name in (
+        (r"RUSS?I", "Russian Silk"), (r"CHANDERI", "Mul Chanderi"), (r"CHINON", "Chinon"),
+        (r"ORGENZA|ORGANZA", "Organza"), (r"MUSLI", "Muslin"), (r"CREPE", "Crepe"),
+        (r"LILEN|LINEN", "Linen"), (r"SANTOON", "Santoon"), (r"SILK", "Silk"), (r"COTTON", "Cotton"),
+    ):
+        if re.search(pattern, t):
+            return name
     return None
 
 
-def rate_value(v):
-    """Cell -> (number or NaN, text shown). 0 / blank -> (NaN, ""). '₹1,250' -> 1250. '120/125' -> (NaN, '120/125')."""
-    if v is None or (isinstance(v, float) and np.isnan(v)):
-        return np.nan, ""
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        return (float(v), "") if v > 0 else (np.nan, "")
-    t = str(v).replace("₹", "").replace(",", "").replace("\xa0", " ").strip()
-    if not t:
-        return np.nan, ""
-    if re.fullmatch(r"\d+(\.\d+)?", t):
-        f = float(t)
-        return (f, "") if f > 0 else (np.nan, "")
-    return np.nan, str(v).strip()
+def _vr_num(v):
+    """Cell -> (value or None, upper value or None). Handles 120, '₹1,200', 'N/A', '120/125'."""
+    if v is None:
+        return None, None
+    if isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, bool):
+        return (None, None) if pd.isna(v) else (float(v), None)
+    s = str(v).replace("₹", "").replace(",", "").strip()
+    nums = re.findall(r"\d+(?:\.\d+)?", s)
+    if not nums:
+        return None, None
+    return float(nums[0]), (float(nums[1]) if len(nums) > 1 else None)
 
 
-def _zero(v) -> bool:
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        return v == 0
-    return str(v).replace("₹", "").strip() in ("0", "0.0")
+def vr_build(records):
+    """records -> tidy DataFrame (0 / blank rates are kept out of every average and min / max)."""
+    out = []
+    for r in records:
+        vendor, fabric = str(r.get("Vendor", "")).strip(), str(r.get("Fabric", "")).strip()
+        if not vendor or not fabric:
+            continue
+        vals, pending = {}, []
+        for c in VR_PRICE_COLS:
+            v, _hi = _vr_num(r.get(c))
+            if v == 0:
+                pending.append(c)
+                v = None
+            vals[c] = v
+        pc_max = _vr_num(r.get(VR_PC_MAX))[0] or _vr_num(r.get(VR_PC_COL))[1]
+        if all(v is None for v in vals.values()) and not pending:
+            pending = ["ALL"]                      # every rate blank
+        status = "OK"
+        if pending:
+            status = "Pending / N/A" + ("" if pending == ["ALL"] else f" ({', '.join(pending)})")
+        note = ""
+        if vals[VR_PC_COL] and pc_max and pc_max != vals[VR_PC_COL]:
+            note = f"Range ₹{vals[VR_PC_COL]:,.0f}–{pc_max:,.0f} per pc"
+        row = {"Vendor": vendor, "Fabric": fabric,
+               "Category": vr_category(fabric, has_pc=vals[VR_PC_COL] is not None)}
+        row.update({c: (np.nan if vals[c] is None else vals[c]) for c in VR_PRICE_COLS})
+        row.update({VR_PC_MAX: (np.nan if not pc_max else pc_max), "Pending Cells": len(pending),
+                    "Status": status, "Note": note})
+        out.append(row)
+    cols = ["Vendor", "Fabric", "Category"] + VR_PRICE_COLS + [VR_PC_MAX, "Pending Cells", "Status", "Note"]
+    return pd.DataFrame(out, columns=cols)
 
 
-def _clean(s) -> str:
-    return re.sub(r"\s+", " ", str(s or "")).strip()
+def vr_filter(d, vendor, cat, width, query):
+    """vendor / cat: list of names (empty = all); width: one of WIDTH_OPTIONS or ""; query: free text."""
+    x = d
+    if vendor:
+        x = x[x["Vendor"].isin(vendor)]
+    if cat:
+        x = x[x["Category"].isin(cat)]
+    if width == 'Has 44"':
+        x = x[x['44"'].notna() | x['44/36"'].notna()]
+    elif width == 'Has 60"':
+        x = x[x['60"'].notna()]
+    elif width == 'Has 36"':
+        x = x[x['36"'].notna() | x['44/36"'].notna()]
+    elif width == "Per Piece only":
+        x = x[x[VR_PC_COL].notna() & ~x[VR_METER_COLS].notna().any(axis=1)]
+    tokens = [t for t in re.split(r"\s+", str(query or "").lower().strip()) if t]
+    if tokens:
+        hay = (x["Vendor"] + " " + x["Fabric"] + " " + x["Category"]).str.lower()
+        for t in tokens:
+            x = x[hay.loc[x.index].str.contains(re.escape(t))]
+    return x
+
+
+def vr_lowest(x, col):
+    """(rate, vendor, fabric) of the lowest rate in a column, or None."""
+    s = x[col].dropna()
+    if s.empty:
+        return None
+    i = s.idxmin()
+    return float(s[i]), x.loc[i, "Vendor"], x.loc[i, "Fabric"]
+
+
+def vr_benchmark(x):
+    rows = []
+    for vendor, g in x.groupby("Vendor", sort=False):
+        meter = g[VR_METER_COLS].stack()
+        rows.append({
+            "Vendor": vendor,
+            "Total Items": len(g),
+            'Avg 44" Rate': g['44"'].mean(),
+            'Avg 60" Rate': g['60"'].mean(),
+            "Min Rate": meter.min() if not meter.empty else np.nan,
+            "Max Rate": meter.max() if not meter.empty else np.nan,
+            "Per Pc Items": int(g[VR_PC_COL].notna().sum()),
+            "Pending": int(g["Pending Cells"].sum()),
+        })
+    return pd.DataFrame(rows)
+
+
+def vr_compare(c, widths):
+    """Per vendor: cheapest fabric + rate for every width, plus Best Price badge."""
+    rows = []
+    for vendor, g in c.groupby("Vendor", sort=False):
+        row = {"Vendor": vendor}
+        for w in widths:
+            s = g[w].dropna()
+            if s.empty:
+                row[f"{w} Rate"], row[f"{w} Fabric"] = np.nan, ""
+            else:
+                i = s.idxmin()
+                row[f"{w} Rate"], row[f"{w} Fabric"] = s[i], g.loc[i, "Fabric"]
+        rows.append(row)
+    cmp = pd.DataFrame(rows)
+    best = {w: cmp[f"{w} Rate"].min() for w in widths}
+    cmp["Best Price"] = [
+        " ".join(f"★ {w}" for w in widths if pd.notna(r[f"{w} Rate"]) and r[f"{w} Rate"] == best[w])
+        for _, r in cmp.iterrows()
+    ]
+    cmp = cmp.sort_values(f"{widths[0]} Rate", na_position="last", kind="mergesort").reset_index(drop=True)
+    order = ["Vendor"] + [c for w in widths for c in (f"{w} Rate", f"{w} Fabric")] + ["Best Price"]
+    return cmp[order], best
 
 
 # ------------------------------------------------------------------------------------------------ Rate_Data
 _RD_FIELDS = [  # field -> normalised header must start with one of these (first match wins)
     ("vendor", ("VENDOR",)), ("sno", ("SNO", "SRNO")), ("fabric", ("FABRICORIGINAL", "FABRIC")),
-    ("category", ("FABRICCATEGORY", "CATEGORY")), ("r44", ("44",)), ("r60", ("60",)), ("r36", ("36",)),
-    ("pc", ("PERPC", "SPECIAL", "PERPIECE")),
+    ("category", ("FABRICCATEGORY", "CATEGORY")), ('44"', ("44",)), ('60"', ("60",)), ('36"', ("36",)),
+    (VR_PC_COL, ("PERPC", "SPECIAL", "PERPIECE")),
 ]
 
 
@@ -102,33 +207,28 @@ def _rd_header(values):
                     if any(k.startswith(s) for s in starts) and not (field == "fabric" and "CATEGORY" in k):
                         cmap[field] = i
                         break
-            # the tidy table is the first run of headers; helper blocks further right repeat "Vendor"
             first = min(cmap.values())
-            return r, {f: i for f, i in cmap.items() if i - first < 12}
+            return r, {f: i for f, i in cmap.items() if i - first < 12}      # helper blocks further right ignored
     return None, {}
 
 
 def parse_rate_data(values):
-    """Rate_Data tab -> one row per vendor fabric offering, plus problems found."""
+    """Rate_Data tab -> list of records (Vendor, Fabric, one key per price column) in sheet order."""
     hr, cm = _rd_header(values)
     if hr is None or "vendor" not in cm or "fabric" not in cm:
-        return pd.DataFrame(), False
-    rows = []
-    for i, raw in enumerate(values[hr + 1:], start=hr + 2):
+        return [], False
+    recs = []
+    for raw in values[hr + 1:]:
         row = list(raw) + [""] * 30
-
-        def g(f):
-            return row[cm[f]] if f in cm else ""
-        vendor, fabric = _clean(g("vendor")).upper(), _clean(g("fabric"))
+        vendor = re.sub(r"\s+", " ", str(row[cm["vendor"]] or "")).strip().upper()
+        fabric = re.sub(r"\s+", " ", str(row[cm["fabric"]] or "")).strip()
         if not vendor or not fabric or norm_key(vendor) in ("VENDOR", "TOTAL"):
             continue
-        rec = {"sheet_row": i, "vendor": vendor, "sno": _clean(g("sno")), "fabric": fabric,
-               "category": _clean(g("category")) or category_of(fabric)}
-        for f in RATE_COLS:
-            rec[f], rec[f + "_text"] = rate_value(g(f))
-            rec[f + "_zero"] = _zero(g(f))
-        rows.append(rec)
-    return pd.DataFrame(rows), True
+        rec = {"Vendor": vendor, "Fabric": fabric}
+        for c in ('36"', '44"', '60"', VR_PC_COL):
+            rec[c] = row[cm[c]] if c in cm else None
+        recs.append({k: (None if v in ("", None) else v) for k, v in rec.items()})
+    return recs, True
 
 
 # ------------------------------------------------------------------------------------------------ rate cards
@@ -141,16 +241,18 @@ def _card_field(header) -> str | None:
         return None
     if k.startswith("FABRIC") or k in ("ITEM", "QUALITY"):
         return "fabric"
+    if k.startswith("4436") or k.startswith("3644"):
+        return '44/36"'
     if "PC" in k or "PIECE" in k or "SPECIAL" in k:
-        return "pc"
+        return VR_PC_COL
     for w in ("44", "60", "36"):
         if k.startswith(w):
-            return "r" + w
+            return w + '"'
     return None
 
 
 def parse_rate_cards(values):
-    """NEW RATE SHEET: vendor blocks laid out side by side and one under another -> one row per offering."""
+    """NEW RATE SHEET: vendor blocks laid out side by side and one under another -> one entry per offering."""
     grid = [list(r) for r in values]
     width = max((len(r) for r in grid), default=0)
     grid = [r + [""] * (width - len(r)) for r in grid]
@@ -177,167 +279,119 @@ def parse_rate_cards(values):
                         break
             for k in range(r + 1, len(grid)):
                 line = grid[k]
-                sno, fabric = str(line[c]).strip(), _clean(line[cols["fabric"]])
+                sno, fabric = str(line[c]).strip(), re.sub(r"\s+", " ", str(line[cols["fabric"]] or "")).strip()
                 if norm_key(sno) in _SNO or (not fabric and not re.fullmatch(r"\d+(\.0)?", sno)):
                     break
                 if not fabric:
                     continue
                 rates = [line[i] for f, i in cols.items() if f != "fabric"] + ([line[extra]] if extra else [])
-                nums = sorted(x for x in (rate_value(v)[0] for v in rates) if not np.isnan(x))
-                texts = sorted(t for t in (rate_value(v)[1] for v in rates) if t)
-                out.append({"vendor": vendor.upper(), "fabric": fabric, "nums": nums, "texts": texts})
+                nums = sorted(x for x in (_vr_num(v)[0] for v in rates) if x)
+                out.append({"vendor": vendor.upper(), "fabric": fabric, "nums": nums,
+                            "wide4436": '44/36"' in cols})
     return out
-
-
-def cards_to_frame(cards):
-    """Rate cards as the main table (only when Rate_Data is missing): rates go to the block's own columns."""
-    rows = []
-    for i, cd in enumerate(cards, start=1):
-        rec = {"sheet_row": i, "vendor": cd["vendor"], "sno": "", "fabric": cd["fabric"],
-               "category": category_of(cd["fabric"])}
-        for f in RATE_COLS:
-            rec[f], rec[f + "_text"], rec[f + "_zero"] = np.nan, "", False
-        for f, n in zip(("r44", "r60", "r36"), cd["nums"]):
-            rec[f] = n
-        if cd["texts"]:
-            rec["pc_text"] = cd["texts"][0]
-        rows.append(rec)
-    return pd.DataFrame(rows)
 
 
 # ------------------------------------------------------------------------------------------------ parse
 def parse_vendor_rate(grids: dict) -> dict:
     """grids: {"rates": Rate_Data values, "cards": NEW RATE SHEET values} (a missing tab -> [])."""
-    d, ok = parse_rate_data(grids.get("rates") or [])
+    recs, ok = parse_rate_data(grids.get("rates") or [])
     cards = parse_rate_cards(grids.get("cards") or [])
     source = "Rate_Data"
-    if d.empty and cards:
-        d, source = cards_to_frame(cards), "NEW RATE SHEET"
-    if not d.empty:
-        d["vendor_order"] = d["vendor"].map({v: i for i, v in enumerate(dict.fromkeys(d["vendor"]))})
-    return {"d": d, "cards": cards, "source": source, "rate_data_found": ok}
+    if not recs and cards:                       # no Rate_Data: the rate cards are the table
+        source = "NEW RATE SHEET"
+        recs = []
+        for cd in cards:
+            rec = {"Vendor": cd["vendor"], "Fabric": cd["fabric"]}
+            for c, n in zip(('44/36"' if cd["wide4436"] else '44"', '60"', '36"'), cd["nums"]):
+                rec[c] = n
+            recs.append(rec)
+    wide = {cd["vendor"] for cd in cards if cd["wide4436"]}      # vendors whose card says "44/36 WIDTH"
+    for rec in recs:
+        if rec["Vendor"] in wide and rec.get('44"') not in (None, "") and not rec.get('44/36"'):
+            rec['44/36"'], rec['44"'] = rec['44"'], None
+    return {"d": vr_build(recs), "cards": cards, "source": source, "rate_data_found": ok}
 
 
-# ------------------------------------------------------------------------------------------------ calculations
-def _mean(s):
-    s = s.dropna()
-    return float(s.mean()) if len(s) else np.nan
+# ------------------------------------------------------------------------------------------------ payloads
+def _num(v):
+    return None if v is None or (isinstance(v, float) and np.isnan(v)) else float(v)
 
 
-def _min(s):
-    s = s.dropna()
-    return float(s.min()) if len(s) else np.nan
+def _tbl(df, fmt=None, key_col=None):
+    return table(df, fmt, key_col=key_col, sort=False)
 
 
-def _max(s):
-    s = s.dropna()
-    return float(s.max()) if len(s) else np.nan
+RATE_FMT = {c: INR for c in VR_PRICE_COLS}
+BENCH_FMT = {'Avg 44" Rate': INR, 'Avg 60" Rate': INR, "Min Rate": INR, "Max Rate": INR}
 
 
-def vendor_benchmark(x):
-    """The sheet's Vendor Benchmark Summary (+ 36" and per-piece columns)."""
-    rows = []
-    for v, g in x.sort_values(["vendor_order", "sheet_row"]).groupby("vendor", sort=False):
-        rows.append({"Vendor": v, "Items": int(len(g)), 'Avg 44" Rate': _mean(g["r44"]),
-                     'Avg 60" Rate': _mean(g["r60"]), 'Min 60" Rate': _min(g["r60"]),
-                     'Max 60" Rate': _max(g["r60"]), 'Avg 36" Rate': _mean(g["r36"]),
-                     "Per Pc Items": int(g["pc"].notna().sum() + (g["pc_text"] != "").sum())})
-    return pd.DataFrame(rows)
+def compare_payload(d, cat):
+    """The 'Compare fabric category' section for one category (always across every vendor)."""
+    c = d[d["Category"] == cat]
+    mw = [w for w in VR_METER_COLS if c[w].notna().any()]
+    out = {"category": cat, "widths": mw, "vendors": int(c["Vendor"].nunique()), "tiles": [], "chart": None,
+           "table": None, "pieces": None}
+    if mw:
+        cmp, best = vr_compare(c, mw)
+        for w in mw:
+            i = c[w].idxmin()
+            out["tiles"].append({"width": w, "rate": float(best[w]), "vendor": c.loc[i, "Vendor"],
+                                 "fabric": c.loc[i, "Fabric"]})
+        out["chart"] = {"vendors": list(cmp["Vendor"]),
+                        "series": [{"name": w, "values": [_num(r[f"{w} Rate"]) for _, r in cmp.iterrows()],
+                                    "best": [bool(pd.notna(r[f"{w} Rate"]) and r[f"{w} Rate"] == best[w])
+                                             for _, r in cmp.iterrows()]} for w in mw]}
+        out["table"] = _tbl(cmp, {f"{w} Rate": INR for w in mw})
+    pc = c[c[VR_PC_COL].notna()].sort_values(VR_PC_COL)
+    if not pc.empty:
+        t = pc[["Vendor", "Fabric", VR_PC_COL]].rename(columns={VR_PC_COL: "Rate / Pc"}).reset_index(drop=True)
+        t["Range"] = list(pc["Note"])
+        t["Best Price"] = ["★ Best Price" if v == t["Rate / Pc"].min() else "" for v in t["Rate / Pc"]]
+        out["pieces"] = _tbl(t, {"Rate / Pc": INR})
+    return out
 
 
-def _best(g, col):
-    """(lowest rate, vendors offering it) for one width."""
-    s = g.dropna(subset=[col])
-    if s.empty:
-        return np.nan, ""
-    low = s[col].min()
-    return float(low), ", ".join(dict.fromkeys(s.loc[s[col] == low, "vendor"]))
-
-
-def category_compare(x):
-    """One row per fabric category: who is cheapest at 60" and 44", and how wide the price range is."""
-    rows = []
-    for cat, g in x.groupby("category", sort=True):
-        b60, v60 = _best(g, "r60")
-        b44, v44 = _best(g, "r44")
-        mx = _max(g["r60"])
-        rows.append({"Fabric Category": cat, "Vendors": int(g["vendor"].nunique()), "Offerings": int(len(g)),
-                     'Best 60" Rate': b60, 'Best 60" Vendor': v60, 'Avg 60" Rate': _mean(g["r60"]),
-                     'Max 60" Rate': mx, "Spread %": (mx - b60) / b60 * 100 if b60 and not np.isnan(b60) else np.nan,
-                     'Best 44" Rate': b44, 'Best 44" Vendor': v44, 'Avg 44" Rate': _mean(g["r44"])})
-    t = pd.DataFrame(rows)
-    return t.sort_values(["Offerings", "Fabric Category"], ascending=[False, True]) if len(t) else t
-
-
-def rate_list(x):
-    """Every offering, in sheet order, with how far its 60" rate is above the cheapest 60" in its category."""
-    if x.empty:
-        return pd.DataFrame()
-    x = x.sort_values(["vendor_order", "sheet_row"])
-    best60 = x.groupby("category")["r60"].min()
-    best44 = x.groupby("category")["r44"].min()
-
-    def shown(f):
-        return [r[f + "_text"] if r[f + "_text"] else (None if np.isnan(r[f]) else r[f]) for _, r in x.iterrows()]
-
-    above60 = np.where(x["r60"].notna(), (x["r60"] / x["category"].map(best60) - 1) * 100, np.nan)
-    above44 = np.where(x["r44"].notna(), (x["r44"] / x["category"].map(best44) - 1) * 100, np.nan)
-    return pd.DataFrame({
-        "Fabric": x["fabric"].values, "Vendor": x["vendor"].values, "Fabric Category": x["category"].values,
-        '44" Rate': shown("r44"), '60" Rate': shown("r60"), '36" Rate': shown("r36"),
-        "Per Pc / Special": shown("pc"),
-        'vs Best 60" %': above60, 'vs Best 44" %': above44,
-    })
-
-
-def matrix(x, col):
-    """Category x vendor average rate (0 = vendor does not quote that category at this width)."""
-    vendors = list(dict.fromkeys(x.sort_values("vendor_order")["vendor"]))
-    cats = sorted(x["category"].unique())
-    p = x.pivot_table(index="category", columns="vendor", values=col, aggfunc="mean").reindex(index=cats,
-                                                                                              columns=vendors)
-    keep_r = p.notna().any(axis=1)
-    keep_c = p.notna().any(axis=0)
-    p = p.loc[keep_r, keep_c]
-    return {"rows": list(p.index), "columns": list(p.columns),
-            "values": [[0.0 if np.isnan(v) else round(float(v), 2) for v in r] for r in p.to_numpy()]}
+def vendor_cards(x):
+    """One table per vendor (like the blocks of the NEW RATE SHEET), in sheet order."""
+    cards = []
+    for vendor, g in x.groupby("Vendor", sort=False):
+        t = g[["Fabric", "Category"] + VR_PRICE_COLS + ["Status", "Note"]].reset_index(drop=True)
+        t = t.drop(columns=[c for c in ('36"', '44/36"') if t[c].isna().all()])
+        if t["Note"].eq("").all():
+            t = t.drop(columns="Note")
+        cards.append({"vendor": vendor, "items": int(len(g)), "pending": int(g["Pending Cells"].sum()),
+                      "table": _tbl(t, {c: INR for c in VR_PRICE_COLS})})
+    return cards
 
 
 def checks(d, cards, source):
     out = []
     if d.empty:
         return out
-    zero = [(r.vendor, r.fabric, lbl) for r in d.itertuples() for f, lbl in WIDTHS if getattr(r, f + "_zero")]
-    if zero:
-        out.append(notice("Rate typed as 0 (treated as no rate, left out of averages): " + "; ".join(
-            f"{f} ({v}) {w}" for v, f, w in zero) + ".", "warning"))
-    texts = [(r.vendor, r.fabric, getattr(r, f + "_text")) for r in d.itertuples() for f, _ in WIDTHS
-             if getattr(r, f + "_text")]
-    if texts:
-        out.append(notice("Rate typed as text (shown as typed, left out of averages): " + "; ".join(
-            f"{f} ({v}) “{t}”" for v, f, t in texts) + ".", "info"))
-    none = d[d[RATE_COLS].isna().all(axis=1) & (d[[f + "_text" for f in RATE_COLS]] == "").all(axis=1)]
+    zero = d[d["Status"].str.contains(r"\(", regex=True)]
+    if len(zero):
+        out.append(notice("Rate typed as 0 (pending, left out of averages): " + "; ".join(
+            f"{r.Fabric} ({r.Vendor}) {r.Status.split('(', 1)[1].rstrip(')')}" for r in zero.itertuples()) + ".",
+            "warning"))
+    none = d[d["Status"] == "Pending / N/A"]
     if len(none):
         out.append(notice(f"{len(none)} fabric(s) have no rate at all: " + ", ".join(
-            f"{r.fabric} ({r.vendor})" for r in none.itertuples()) + ".", "info"))
-    dup = d.assign(k=d["vendor"] + "|" + d["fabric"].map(norm_key)).duplicated("k", keep=False)
+            f"{r.Fabric} ({r.Vendor})" for r in none.itertuples()) + ".", "info"))
+    dup = d.assign(k=d["Vendor"] + "|" + d["Fabric"].map(norm_key)).duplicated("k", keep=False)
     if dup.any():
         out.append(notice("Listed twice for the same vendor: " + ", ".join(
-            sorted({f"{r.fabric} ({r.vendor})" for r in d[dup].itertuples()})) + ".", "warning"))
+            sorted({f"{r.Fabric} ({r.Vendor})" for r in d[dup].itertuples()})) + ".", "warning"))
     if source == "Rate_Data" and cards:
-        have = {}
-        for r in d.itertuples():
-            nums = sorted(getattr(r, f) for f in RATE_COLS if not np.isnan(getattr(r, f)))
-            have[(r.vendor, norm_key(r.fabric))] = nums
+        have = {(r["Vendor"], norm_key(r["Fabric"])): sorted(r[c] for c in VR_PRICE_COLS if not np.isnan(r[c]))
+                for _, r in d.iterrows()}
         missing, changed = [], []
         for cd in cards:
             key = (cd["vendor"], norm_key(cd["fabric"]))
             if key not in have:
                 missing.append(f"{cd['fabric']} ({cd['vendor']})")
             elif cd["nums"] and have[key] and cd["nums"] != have[key]:
-                changed.append(f"{cd['fabric']} ({cd['vendor']}): rate card "
-                               + "/".join(f"{n:g}" for n in cd["nums"]) + ", Rate_Data "
-                               + "/".join(f"{n:g}" for n in have[key]))
+                changed.append(f"{cd['fabric']} ({cd['vendor']}): rate card " + "/".join(f"{n:g}" for n in cd["nums"])
+                               + ", Rate_Data " + "/".join(f"{n:g}" for n in have[key]))
         if missing:
             out.append(notice(f"{len(missing)} fabric(s) are on the NEW RATE SHEET but not in Rate_Data yet: "
                               + ", ".join(missing[:12]) + ("…" if len(missing) > 12 else "") + ".", "warning"))
@@ -347,82 +401,44 @@ def checks(d, cards, source):
     return out
 
 
-def _filter(d, f, skip=()):
-    x = d
-    for name, col in (("vendor", "vendor"), ("fabric", "category")):
-        if f.get(name) and name not in skip:
-            x = x[x[col].isin(f[name])]
-    return x
-
-
-INR = "inr_full"
-A60, B60, M60 = 'Avg 60" Rate', 'Best 60" Rate', 'Max 60" Rate'
-BENCH_FMT = {c: INR for c in ('Avg 44" Rate', 'Avg 60" Rate', 'Min 60" Rate', 'Max 60" Rate', 'Avg 36" Rate')}
-CAT_FMT = {'Best 60" Rate': INR, 'Avg 60" Rate': INR, 'Max 60" Rate': INR, 'Best 44" Rate': INR,
-           'Avg 44" Rate': INR, "Spread %": "pct", 'Best 60" Vendor': "text", 'Best 44" Vendor': "text"}
-LIST_FMT = {'44" Rate': INR, '60" Rate': INR, '36" Rate': INR, "Per Pc / Special": INR,
-            'vs Best 60" %': "pct", 'vs Best 44" %': "pct"}
-
-
 def vendor_rate_dashboard(parsed, f):
     d, cards, source = parsed["d"], parsed["cards"], parsed["source"]
     notices = []
     if not parsed["rate_data_found"]:
         notices.append(notice("The Rate_Data tab was not found" + (", so the rates come straight from the NEW RATE "
-                              "SHEET rate cards (fabric categories are worked out from the fabric names)."
-                              if source == "NEW RATE SHEET" else "."), "warning"))
+                              "SHEET rate cards." if source == "NEW RATE SHEET" else "."), "warning"))
     if d.empty:
-        notices.append(notice("No vendor rates found. Expected a 'Rate_Data' tab with Vendor, Fabric (Original), "
-                              "Fabric Category and 44\" / 60\" / 36\" width rate columns.", "warning"))
-        return {"empty": True, "notices": notices, "options": {"vendor": [], "fabric": []}, "kpis": []}
+        notices.append(notice("No vendor rates found. Expected a 'Rate_Data' tab with Vendor, Fabric (Original) and "
+                              "44\" / 60\" / 36\" width rate columns.", "warning"))
+        return {"empty": True, "notices": notices, "options": {"vendor": [], "fabric": [], "width": WIDTH_OPTIONS},
+                "kpis": []}
+    vendors = list(dict.fromkeys(d["Vendor"]))
+    cats = sorted(d["Category"].unique())
+    x = vr_filter(d, f.get("vendor") or [], f.get("fabric") or [], (f.get("width") or [""])[0],
+                  (f.get("q") or [""])[0])
+    base = {"source": source, "options": {"vendor": vendors, "fabric": cats, "width": WIDTH_OPTIONS},
+            "notices": notices, "checks": checks(d, cards, source)}
 
-    vendors = list(dict.fromkeys(d.sort_values("vendor_order")["vendor"]))
-    x = _filter(d, f)
-    x_nv = _filter(d, f, skip=("vendor",))           # comparisons: every vendor in the chosen categories
-    bench = vendor_benchmark(x_nv)
-    cat = category_compare(x_nv)
-    real = bench.dropna(subset=['Avg 60" Rate'])
-    cheap = real.loc[real['Avg 60" Rate'].idxmin()] if len(real) else None
-    spread = cat.dropna(subset=["Spread %"])
-    spread = spread[spread["Vendors"] > 1]
-    wide = spread.loc[spread["Spread %"].idxmax()] if len(spread) else None
-    no_rate = x[x[RATE_COLS].isna().all(axis=1) & (x[[c + "_text" for c in RATE_COLS]] == "").all(axis=1)]
+    def lowest(col):
+        lo = vr_lowest(x, col)
+        return kpi(f'Lowest {col} Rate', lo[0] if lo else "—", "", INR if lo else "text",
+                   id="lowest44" if col == '44"' else "lowest60", hint=f"{lo[1]} · {lo[2]}" if lo else None)
 
-    kpis = [
-        kpi("Vendors", int(x["vendor"].nunique()), "", id="vendors"),
-        kpi("Fabric offerings", int(len(x)), "", id="offerings", hint=f"{x['category'].nunique()} fabric categories"),
-        kpi('Avg 44" rate', _mean(x["r44"]), "", INR, id="avg44",
-            hint=f"{int(x['r44'].notna().sum())} rates · ₹ per mtr"),
-        kpi('Avg 60" rate', _mean(x["r60"]), "", INR, id="avg60",
-            hint=f"{int(x['r60'].notna().sum())} rates · ₹ per mtr"),
-        kpi('Lowest avg 60" vendor', cheap["Vendor"] if cheap is not None else "—", "", "text", id="cheapest_vendor",
-            hint=f"₹{cheap[A60]:,.0f} avg over its 60-inch rates" if cheap is not None else None),
-        kpi("Widest price gap", wide["Fabric Category"] if wide is not None else "—", "", "text", id="widest_gap",
-            hint=(f"₹{wide[B60]:,.0f} to ₹{wide[M60]:,.0f} at 60-inch "
-                  f"({wide['Spread %']:.0f}% apart)") if wide is not None else None),
-        kpi("Fabrics without a rate", int(len(no_rate)), "", id="no_rate", tone="alert",
-            hint=", ".join(f"{r.fabric} ({r.vendor})" for r in no_rate.itertuples())[:120] or None),
-    ]
-    by_cat = x.groupby("category").size().sort_values(ascending=False)
+    kpis = [kpi("Total Vendors", int(x["Vendor"].nunique()), "", id="vendors"),
+            kpi("Total Fabric Offerings", int(len(x)), "", id="offerings", hint=f"of {len(d)} on the sheet"),
+            lowest('44"'), lowest('60"'),
+            kpi("Pending / Missing Rates", int(x["Pending Cells"].sum()), "", id="pending", tone="alert",
+                hint="0 or blank rates")]
+    default = "Crepe" if "Crepe" in cats else cats[0]
+    cols = ["Vendor", "Fabric", "Category"] + VR_PRICE_COLS + ["Status", "Note"]
     return {
-        "source": source,
-        "options": {"vendor": vendors, "fabric": sorted(d["category"].unique())},
-        "notices": notices,
-        "checks": checks(d, cards, source),
+        **base,
+        "no_match": bool(x.empty),
         "kpis": kpis,
+        "compare": {"categories": cats, "default": default, "data": {c: compare_payload(d, c) for c in cats}},
         "tables": {
-            "categories": table(cat, CAT_FMT, key_col="Offerings", sort=False,
-                                note="Every vendor is compared here; the vendor filter is not applied."),
-            "vendors": table(bench, BENCH_FMT, key_col=None, sort=False,
-                             note="Same as the sheet's Vendor Benchmark Summary. 0 and blank rates are left out."),
-            "rates": table(rate_list(x), LIST_FMT, key_col=None, sort=False,
-                           note="vs Best % = how much dearer than the cheapest rate for the same fabric category "
-                                "and width (0% = cheapest)."),
+            "benchmark": _tbl(vr_benchmark(x), BENCH_FMT) if len(x) else table(None),
+            "master": _tbl(x[cols].reset_index(drop=True), RATE_FMT) if len(x) else table(None),
         },
-        "charts": {
-            "vendor_avg": [{"label": r["Vendor"], "value": float(r['Avg 60" Rate'])} for _, r in real.iterrows()],
-            "matrix60": matrix(x_nv, "r60"),
-            "matrix44": matrix(x_nv, "r44"),
-            "category_counts": [{"label": k, "value": float(v)} for k, v in by_cat.items()],
-        },
+        "vendor_cards": vendor_cards(x) if len(x) else [],
     }

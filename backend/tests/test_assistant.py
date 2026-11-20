@@ -349,19 +349,19 @@ def test_flo_future_does_not_take_over_production(client):
 
 # ------------------------------------------------------------------------------------------------ Vendor Rate
 def _rates(client):
-    t = client.get("/api/vendor-rate").json()["tables"]["rates"]
+    t = client.get("/api/vendor-rate").json()["tables"]["master"]
     ix = {c["label"]: i for i, c in enumerate(t["columns"])}
     return t["rows"], ix
 
 
 def test_vendor_rate_cheapest_by_category(client):
     rows, ix = _rates(client)
-    cat = rows[0][ix["Fabric Category"]]
-    priced = [r for r in rows if r[ix["Fabric Category"]] == cat and isinstance(r[ix['60" Rate']], (int, float))]
-    best = min(priced, key=lambda r: (r[ix['60" Rate']], r[ix["Vendor"]]))
+    cat = rows[0][ix["Category"]]
+    priced = [r for r in rows if r[ix["Category"]] == cat and isinstance(r[ix['60"']], (int, float))]
+    best = min(priced, key=lambda r: (r[ix['60"']], r[ix["Vendor"]]))
     r = ask(client, f"{cat.lower()} ka sabse sasta vendor kaun hai")
     assert r["page"] == "/vendor-rate" and r["intent"] == "rates"
-    assert bold(r["answer"])[0] == best[ix["Vendor"]] and fmt.inr(best[ix['60" Rate']]) in r["answer"]
+    assert bold(r["answer"])[0] == best[ix["Vendor"]] and fmt.inr(best[ix['60"']]) in r["answer"]
 
 
 def test_vendor_rate_list_for_a_vendor(client):
@@ -374,7 +374,7 @@ def test_vendor_rate_list_for_a_vendor(client):
 
 
 def test_vendor_rate_kpi_and_other_pages_unchanged(client):
-    r = ask(client, "average 60 inch rate")
-    assert r["page"] == "/vendor-rate" and kpi(client, "/api/vendor-rate", 'Avg 60" rate') in r["answer"]
+    r = ask(client, "lowest 60 inch rate")
+    assert r["page"] == "/vendor-rate" and kpi(client, "/api/vendor-rate", 'Lowest 60" Rate') in r["answer"]
     assert ask(client, "fabric pending")["page"] == "/fabric-po"
     assert ask(client, "approval rate")["page"] == "/samples"

@@ -268,11 +268,12 @@ def flo_future(designer: Multi = [], team: Multi = [], status: Multi = [], due: 
 
 
 @app.get("/api/vendor-rate", dependencies=[Depends(require_auth)])
-def vendor_rate(vendor: Multi = [], fabric: Multi = []):
-    """Vendor Rate: fabric rates per vendor (44" / 60" / 36" width, per piece), cheapest vendor per fabric category.
-    `fabric` filters by fabric category (Crepe, Silk, Muslin ...)."""
+def vendor_rate(vendor: Multi = [], fabric: Multi = [], width: str = "", q: Annotated[str, Query(max_length=80)] = ""):
+    """Vendor Rate: fabric rates per vendor. `fabric` = fabric category (Crepe, Silk ...), `width` = one of
+    'Has 44"', 'Has 60"', 'Has 36"', 'Per Piece only', `q` = free-text search over vendor / fabric / category."""
     ds = get_store().dataset("vendor_rate")
-    f = {"vendor": _clean(vendor), "fabric": _clean(fabric)}
+    f = {"vendor": _clean(vendor), "fabric": _clean(fabric), "width": [width] if width not in ("", "All") else [],
+         "q": [q] if q.strip() else []}
     return _envelope(vrt.vendor_rate_dashboard(_need(ds), f), ds)
 
 

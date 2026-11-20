@@ -329,19 +329,32 @@ export interface FloHighlights {
   urgent: PromiseItem[];
 }
 
-export interface RateMatrix {
-  rows: string[];
-  columns: string[];
-  values: number[][];
+export interface RateCompare {
+  category: string;
+  widths: string[];
+  vendors: number;
+  tiles: { width: string; rate: number; vendor: string; fabric: string }[];
+  chart: { vendors: string[]; series: { name: string; values: (number | null)[]; best: boolean[] }[] } | null;
+  table: TableData | null;
+  pieces: TableData | null;
+}
+
+export interface VendorCard {
+  vendor: string;
+  items: number;
+  pending: number;
+  table: TableData;
 }
 
 export interface VendorRateData extends Envelope {
   empty?: boolean;
+  no_match?: boolean;
   source?: string;
   options: Options;
   notices: Notice[];
   checks?: Notice[];
   kpis: Kpi[];
-  tables?: { categories: TableData; vendors: TableData; rates: TableData };
-  charts?: { vendor_avg: Slice[]; matrix60: RateMatrix; matrix44: RateMatrix; category_counts: Slice[] };
+  compare?: { categories: string[]; default: string; data: Record<string, RateCompare> };
+  tables?: { benchmark: TableData; master: TableData };
+  vendor_cards?: VendorCard[];
 }
