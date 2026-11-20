@@ -44,7 +44,7 @@ for (const p of PAGES) {
     await page.goto(`${p.path}?nointro`);
     // the first read of the real sheets on a cold server can take ~15 s
     await expect(page.getByRole("heading", { level: 1, name: p.h1 })).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator(".kpi-value").first()).not.toHaveText("");
+    await expect(page.locator(".kpi-value, .panel h3").first()).not.toHaveText("");
     await expect(page.locator(".skel")).toHaveCount(0);
     await page.waitForLoadState("networkidle");
     expect(problems).toEqual([]);
@@ -183,15 +183,15 @@ test("FLO Future: follow-up list, and a team filter narrows the target qty", asy
   expect(promised(one)).toBeLessThanOrEqual(promised(all));
 });
 
-test("Vendor Rate: a fabric filter narrows the rate list and the numbers match the API", async ({ page, request }) => {
+test("Vendor Rate: the vendor filter limits the vendor tables to the chosen vendor", async ({ page, request }) => {
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
   const all = await (await request.get(`${API}/api/vendor-rate`, { headers })).json();
   test.skip(!!all.empty, "the rate sheet has no rows");
-  const fabric = all.options.fabric[0];
-  const one = await (await request.get(`${API}/api/vendor-rate?fabric=${encodeURIComponent(fabric)}`, { headers })).json();
-  const offerings = (b: { kpis: { id: string; value: number }[] }) => b.kpis.find((k) => k.id === "offerings")!.value;
-  await page.goto(`/vendor-rate?nointro&fabric=${encodeURIComponent(fabric)}`);
+  const vendor = all.options.vendor[0];
+  const one = await (await request.get(`${API}/api/vendor-rate?vendor=${encodeURIComponent(vendor)}`, { headers })).json();
+  expect(one.sheet_tables.map((t: { vendor: string }) => t.vendor)).toEqual([vendor]);
+  await page.goto(`/vendor-rate?nointro&vendor=${encodeURIComponent(vendor)}`);
   await expect(page.getByRole("heading", { level: 1, name: "Vendor Rate" })).toBeVisible();
-  await expect(page.locator(".kpi", { hasText: "Fabric offerings" })).toContainText(String(offerings(one)));
-  expect(offerings(one)).toBeLessThanOrEqual(offerings(all));
+  await expect(page.getByRole("heading", { level: 2, name: "Vendor vs fabric price" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: vendor, exact: true })).toBeVisible();
 });

@@ -259,3 +259,15 @@ def test_real_new_rate_sheet_tables():
     heads = {x["vendor"]: [c["label"] for c in x["table"]["columns"]] for x in t}
     assert heads["EKTA FABRIC"][2] == "44/36 WIDTH" and heads["VEDANSHI"][2] == "36 WIDTH"
     assert heads["K THREE PLUS"][-1] == "36 WIDTH" and "36 WIDTH" not in heads["GOKUL"]
+
+
+def test_vendor_fabric_compare(parsed):
+    d = vr.vendor_rate_dashboard(parsed, {})["vendor_fabric"]
+    assert d["widths"] == ['36"', '44"', '60"', '44/36"']
+    w = d["data"]['60"']
+    i = w["categories"].index("Crepe")
+    by = {s["name"]: (s["values"][i], s["best"][i]) for s in w["series"]}
+    assert by["RV"] == (125, False) and by["GOKUL"] == (120, True)         # the old table has GOKUL's RFD CREPE at 60"
+    assert sum(b for _, b in by.values()) == 1                              # one star: the lowest rate of the category
+    only = vr.vendor_rate_dashboard(parsed, {"vendor": ["RV"], "fabric": ["Crepe"]})["vendor_fabric"]["data"]['60"']
+    assert [s["name"] for s in only["series"]] == ["RV"] and only["categories"] == ["Crepe"]

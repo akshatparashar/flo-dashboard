@@ -7,7 +7,7 @@ import { DataTable } from "../components/DataTable";
 import { FilterBar, MultiSelect } from "../components/Filters";
 import { Empty, KpiStrip, Notices, Panel, Section } from "../components/ui";
 import { useFilters } from "../lib/filters";
-import { fmtInt, inr } from "../lib/format";
+import { fmtInt } from "../lib/format";
 import { PageHead, PageState } from "./common";
 
 /* The Vendor Rate tab of the original Streamlit dashboard, rebuilt here: filters, KPIs, "Compare fabric category"
@@ -16,6 +16,8 @@ import { PageHead, PageState } from "./common";
    Rate_Data tab of FABRIC PO 11. */
 const KEYS = ["vendor", "fabric", "width", "q"];
 const WIDTH_COLORS = ["var(--accent)", "var(--series-ref)", "var(--series-pale)", "var(--warn)"];
+/* one colour per vendor (11 on the sheet), distinguishable in light and dark */
+const VENDOR_COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#475569", "#92400e", "#0d9488", "#a16207"];
 
 /** Search box: the URL (and so the API) is only updated once typing pauses. */
 function Search({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -33,6 +35,7 @@ export default function VendorRate() {
   const f = useFilters(KEYS);
   const q = useDashboard<VendorRateData>("/vendor-rate", f.values);
   const [picked, setPicked] = useState<string | null>(null);
+  const [width, setWidth] = useState<string>('60"');
   return (
     <div className="page">
       <PageState q={q}>
@@ -48,6 +51,9 @@ export default function VendorRate() {
           const k = Object.fromEntries(d.kpis.map((x) => [x.id, x]));
           const cmpCat = picked && d.compare.data[picked] ? picked : d.compare.default;
           const cmp = d.compare.data[cmpCat];
+          const vf = d.vendor_fabric;
+          const vfWidth = vf && vf.data[width] ? width : vf?.widths.includes('60"') ? '60"' : (vf?.widths[0] ?? '60"');
+          const vfData = vf?.data[vfWidth] ?? { categories: [], series: [] };
           const tables = d.sheet_tables?.length ? d.sheet_tables : (d.vendor_cards ?? []).map((c) => ({ vendor: c.vendor, items: c.items, table: c.table }));
           return (
             <>
@@ -57,8 +63,6 @@ export default function VendorRate() {
                 lede={
                   <>
                     <strong>{fmtInt(k.vendors.value as number)} vendors</strong>, {fmtInt(k.offerings.value as number)} fabric offerings.
-                    {typeof k.lowest44.value === "number" ? <> Lowest 44&quot; rate {inr(k.lowest44.value)} ({k.lowest44.hint}).</> : null}
-                    {typeof k.lowest60.value === "number" ? <> Lowest 60&quot; rate {inr(k.lowest60.value)} ({k.lowest60.hint}).</> : null}
                   </>
                 }
               />
@@ -69,7 +73,6 @@ export default function VendorRate() {
                 <Search value={f.values.q[0] ?? ""} onChange={(v) => f.set("q", v ? [v] : [])} />
               </FilterBar>
               <Notices items={d.notices} />
-              <KpiStrip kpis={d.kpis} cols={5} lead={["lowest60"]} />
 
               {d.no_match ? (
                 <Empty title="No fabric matches the selected filters" />
@@ -123,11 +126,26 @@ export default function VendorRate() {
                     </div>
                   </Section>
 
-                  <Section title="Vendor benchmark summary" sub="Per-metre rates. Averages cover the 44″ and 60″ columns only; 0 / blank (pending) rates and per-piece items are left out of average, min and max.">
-                    <Panel flush>
-                      <DataTable table={d.tables.benchmark} name="vendor_rate_benchmark" maxRows={15} titleCaseFirst={false} />
-                    </Panel>
-                  </Section>
+                  {vf && vf.widths.length > 0 && (
+                    <Section title="Vendor vs fabric price" sub="Each vendor's cheapest rate for every fabric (design) category, side by side · ★ = lowest rate of that fabric · hover a bar for the exact rate · the Vendor and Fabric filters apply">
+                      <Panel
+                        title={`${vfWidth}: vendor-wise rate by fabric (★ = Best Price)`}
+                        sub="₹ per mtr"
+                        right={
+                          <div className="seg" role="group" aria-label="Width">
+                            {vf.widths.map((w) => (
+                              <button key={w} type="button" aria-pressed={vfWidth === w} onClick={() => setWidth(w)}>
+                                {w}
+                              </button>
+                            ))}
+                          </div>
+                        }
+                      >
+                        <Legend items={vfData.series.map((s, i) => ({ name: s.name, color: VENDOR_COLORS[i % VENDOR_COLORS.length] }))} />
+                        <RateBars vendors={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} bar={vfData.series.length > 5 ? 14 : 26} label={`${vfWidth} rate by fabric category and vendor`} />
+                      </Panel>
+                    </Section>
+                  )}
 
                   <Section
                     title="NEW RATE SHEET: vendor tables"
@@ -142,12 +160,6 @@ export default function VendorRate() {
                         </div>
                       ))}
                     </div>
-                  </Section>
-
-                  <Section title="Master rate sheet" sub={`${d.tables.master.rows.length} of the sheet's items match the filters`}>
-                    <Panel flush>
-                      <DataTable table={d.tables.master} name="vendor_rates_filtered" maxRows={20} titleCaseFirst={false} />
-                    </Panel>
                   </Section>
                 </>
               )}

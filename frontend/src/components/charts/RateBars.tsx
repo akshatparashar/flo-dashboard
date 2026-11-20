@@ -8,14 +8,15 @@ interface Props {
   colors: string[];
   label: string;
   height?: number;
+  bar?: number;          // bar width; thin bars drop the value labels (hover shows them) and keep the ★
 }
 
 /** Grouped columns, one group per vendor and one bar per width. Each bar carries its rate; the cheapest rate of a
  *  width is marked ★ (Best Price). Groups never get narrower than they can be read: a long list scrolls sideways. */
-export function RateBars({ vendors, series, colors, label, height = 340 }: Props) {
+export function RateBars({ vendors, series, colors, label, height = 340, bar = 30 }: Props) {
   const [ref, avail] = useWidth<HTMLDivElement>();
   const m = { t: 28, r: 8, b: 44, l: 52 };
-  const bar = 30;
+  const values = bar >= 26;
   const group = series.length * bar + 28;
   const width = Math.max(avail, m.l + m.r + vendors.length * group);
   const iw = width - m.l - m.r;
@@ -53,15 +54,17 @@ export function RateBars({ vendors, series, colors, label, height = 340 }: Props
                         <g key={s.name}>
                           <title>{`${v} · ${s.name}: ${inr(val)}${s.best[i] ? " ★ Best Price" : ""}`}</title>
                           <rect x={x + 2} y={top} width={bar - 4} height={Math.max(0, ih - top)} rx={2} fill={colors[k % colors.length]} />
-                          <text x={x + bar / 2} y={top - 6} textAnchor="middle" className="rate-val">
-                            {inrShort(val)}
-                            {s.best[i] && <tspan className="rate-star"> ★</tspan>}
-                          </text>
+                          {(values || s.best[i]) && (
+                            <text x={x + bar / 2} y={top - 6} textAnchor="middle" className="rate-val">
+                              {values ? inrShort(val) : ""}
+                              {s.best[i] && <tspan className="rate-star">{values ? " ★" : "★"}</tspan>}
+                            </text>
+                          )}
                         </g>
                       );
                     })}
                     <text className="xtick" x={i * band + band / 2} y={ih + 18} textAnchor="middle">
-                      {v.length > 16 ? `${v.slice(0, 15)}…` : v}
+                      {v.length > 18 ? `${v.slice(0, 17)}…` : v}
                     </text>
                   </g>
                 );

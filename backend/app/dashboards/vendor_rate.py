@@ -367,6 +367,25 @@ def vendor_cards(x):
     return cards
 
 
+def vendor_fabric_compare(x):
+    """Per width: one group per fabric category ("design"), one bar per vendor = that vendor's cheapest rate for the
+    category at that width. best = the lowest rate of the category (★). Uses the filtered rows."""
+    vendors = list(dict.fromkeys(x["Vendor"]))
+    cats = sorted(x["Category"].unique())
+    out = {}
+    for w in VR_METER_COLS:
+        if not x[w].notna().any():
+            continue
+        grid = {v: [_num(x.loc[(x["Vendor"] == v) & (x["Category"] == c), w].min()) for c in cats] for v in vendors}
+        low = [min((grid[v][i] for v in vendors if grid[v][i] is not None), default=None) for i in range(len(cats))]
+        keep = [i for i in range(len(cats)) if low[i] is not None]          # categories nobody quotes at this width
+        out[w] = {"categories": [cats[i] for i in keep],
+                  "series": [{"name": v, "values": [grid[v][i] for i in keep],
+                              "best": [grid[v][i] is not None and grid[v][i] == low[i] for i in keep]}
+                             for v in vendors if any(grid[v][i] is not None for i in keep)]}
+    return {"widths": list(out), "data": out}
+
+
 def sheet_tables(cards, vendors):
     """The NEW RATE SHEET as laid out in the sheet: one table per vendor block, with that block's own columns."""
     blocks: dict = {}
@@ -463,4 +482,5 @@ def vendor_rate_dashboard(parsed, f):
         },
         "vendor_cards": vendor_cards(x) if len(x) else [],
         "sheet_tables": sheet_tables(cards, f.get("vendor") or []),
+        "vendor_fabric": vendor_fabric_compare(x) if len(x) else {"widths": [], "data": {}},
     }
