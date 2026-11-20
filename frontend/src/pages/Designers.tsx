@@ -62,7 +62,7 @@ export default function Designers() {
               <Section title="Month by month" sub="Pcs ordered per designer, darker = more">
                 <Panel>
                   {trend.series.length ? (
-                    <Heatmap rows={trend.series.map((s) => s.name)} columns={trend.categories.map(shortMonth)} values={trend.series.map((s) => s.values)} label="Pcs per designer per month" />
+                    <Heatmap rows={trend.series.map((s) => s.name)} columns={trend.categories.map(shortMonth)} values={trend.series.map((s) => s.values)} label="Pcs per designer per month" full />
                   ) : (
                     <div className="state">No monthly data for these filters.</div>
                   )}

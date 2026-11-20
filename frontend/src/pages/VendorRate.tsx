@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useDashboard } from "../api/hooks";
 import type { VendorRateData } from "../api/types";
 import { Legend } from "../components/charts/common";
-import { BestPriceBars } from "../components/charts/BestPriceBars";
 import { RateBars } from "../components/charts/RateBars";
 import { DataTable } from "../components/DataTable";
 import { VendorMaster } from "../components/VendorMaster";
@@ -18,8 +17,6 @@ import { PageHead, PageState } from "./common";
    Rate_Data tab of FABRIC PO 11. */
 const KEYS = ["vendor", "fabric", "width", "q"];
 const WIDTH_COLORS = ["var(--accent)", "var(--series-ref)", "var(--series-pale)", "var(--warn)"];
-/* one colour per vendor (11 on the sheet), distinguishable in light and dark */
-const VENDOR_COLORS = ["#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#475569", "#92400e", "#0d9488", "#a16207"];
 
 /** Search box: the URL (and so the API) is only updated once typing pauses. */
 function Search({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -142,11 +139,6 @@ export default function VendorRate() {
                         </div>
                       </div>
                       <div className="grid">
-                        <div className="span-12">
-                          <Panel title={`${vfWidth}: cheapest rate by fabric`} sub="₹ per mtr · coloured by the vendor with the best price">
-                            <BestPriceBars categories={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} label={`Cheapest ${vfWidth} rate per fabric category`} />
-                          </Panel>
-                        </div>
                         <div className="span-12">
                           <Panel title={`${vfWidth}: master price table`} sub="Fabric (design) down the side, vendors across · ₹ per mtr · green = cheap, red = dear (within the fabric), ★ = best price · · = not quoted" flush>
                             <VendorMaster categories={vfData.categories} series={vfData.series} name={`vendor_fabric_prices_${vfWidth.replace(/\W+/g, "")}`} />

@@ -96,7 +96,7 @@ export function Progress({ value, max, leftLabel, rightLabel, marker }: { value:
 }
 
 /** Rows x months matrix in one hue, darker = more. Used instead of rainbow stacks. */
-export function Heatmap({ rows, columns, values, decimals = 0, label, rowLabel = titleCase }: { rows: string[]; columns: string[]; values: number[][]; decimals?: number; label: string; rowLabel?: (s: string) => string }) {
+export function Heatmap({ rows, columns, values, decimals = 0, label, rowLabel = titleCase, full = false }: { rows: string[]; columns: string[]; values: number[][]; decimals?: number; label: string; rowLabel?: (s: string) => string; full?: boolean }) {
   const max = Math.max(0, ...values.flat());
   const ref = useGrow(values, ".hcell", "y");
   return (
@@ -128,7 +128,7 @@ export function Heatmap({ rows, columns, values, decimals = 0, label, rowLabel =
                   transformOrigin: "50% 100%",
                 }}
               >
-                {v ? (v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : v.toFixed(decimals)) : "0"}
+                {v ? (full ? v.toFixed(decimals) : v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : v.toFixed(decimals)) : "0"}
               </span>
             );
           })}
