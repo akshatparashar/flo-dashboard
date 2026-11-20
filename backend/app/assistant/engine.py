@@ -21,11 +21,11 @@ from datetime import date
 
 from . import calc, fmt
 from .orders import OrderAnalyst
-from .pages import (DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
+from .pages import (NEW_PAGES, DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
 from ..dashboards.vendor_rate import category_in_text
 from .text import (BOTTOM, CONTEXT_WORDS, GENERIC_NAME_WORDS, HOWMANY, MARKERS, MONTH_ALIASES, STOP, TOP, TREND, WORDS,
-                   label_tokens, language_of, name_key, norm, raw_tokens, similar, tokens)
+                   canon, label_tokens, language_of, name_key, norm, raw_tokens, similar, tokens)
 
 Fetch = Callable[[str, dict], dict]
 
@@ -676,7 +676,10 @@ class Assistant:
     def _page_bonus(self, page: str, q: Query) -> float:
         # Overview repeats other pages; FLO Future's generic labels ("Pending", "Completed") answer only when the
         # question is about promises / FLO Future (or names a team, which only FLO Future has)
-        return (0.5 if page in q.pages else 0.0) - 0.01 * PAGES[page].order - (0.3 if page == "overview" else 0.0)             - (0.45 if page == "flo-future" and page not in q.pages else 0.0)
+        bonus = (0.5 if page in q.pages else 0.0) - 0.01 * PAGES[page].order - (0.3 if page == "overview" else 0.0)
+        if page == "flo-future" and re.search(r"\b(items?|projects?|collections?)\b", norm(q.text)):
+            bonus += 1.2                                  # "overdue items" are FLO Future's promised items
+        return bonus             - (0.45 if page == "flo-future" and page not in q.pages else 0.0)
 
     def _candidates(self, q: Query, snap: Snapshot) -> list[Candidate]:
         out: list[Candidate] = []
@@ -770,6 +773,11 @@ class Assistant:
             res = self._calc_period(q, calc.Spec("diff"), snap, vocab)       # two months: show the change
             if res:
                 return res
+        if "vendor-rate" in q.pages and _RATE_WORDS.search(norm(q.text)):
+            vend = [e for e in q.entities if e.type == "vendor" and "vendor-rate" in e.raw]
+            res = self._rate_average(q, snap, norm(q.text), vend, category_in_text(norm(q.text)) if not vend else None)
+            if res:
+                return res
         if q.intent == "compare":
             res = self._compare(q, snap)
             if res:
@@ -786,6 +794,10 @@ class Assistant:
         items = self._promise_items(q, snap)
         if items:
             return items
+        for extra in (self._new_sections, self._table_count, self._dim_summary):
+            res = extra(q, snap, vocab)
+            if res:
+                return res
         rates = self._rate_lookup(q, snap)
         if rates:
             return rates
@@ -820,7 +832,7 @@ class Assistant:
             return self._reply(f"**{best.label}**: {what} Right now it is **{best.text()}**.", best.page,
                                self._ctx(q, best), intent="explain")
         if best.kind in ("rank",):
-            return self._rank(q, best)
+            return self._rank_total(q, best) or self._rank(q, best)
         if best.kind == "trend":
             return self._trend(q, best)
         return self._value(q, best, cands)
@@ -852,6 +864,14 @@ class Assistant:
             sentence = sentence[:-1] + " (all months so far)."
         if elsewhere and best.page not in q.pages:
             sentence = sentence[:-1] + f" (from the {PAGES[best.page].label} page)."
+        other = {}
+        for c in cands[:10]:
+            if c.label == best.label and c.page != best.page and c.text() != val and c.page not in other:
+                other[c.page] = c
+        if other and best.page not in q.pages:
+            sentence += " " + " ".join(
+                f"The {PAGES[pg].label} page also has {c.label}: **{c.text()}**." for pg, c in other.items()) + \
+                f" Name the page (for example \"{PAGES[next(iter(other))].label} {best.label.lower()}\") to pick one."
         lines = [sentence]
         same = label_tokens(best.label) & set(q.toks)
         for alt in cands[1:4]:
@@ -925,6 +945,103 @@ class Assistant:
             text = "\n".join([head] + [f"{i}. **{nm}**: {fmt.value(val, c.fmt, c.unit)}"
                                        for i, (nm, val) in enumerate(rows[:n], 1)])
         return self._reply(text, c.page, self._ctx(q, c, "rank"), intent="rank")
+
+    # -------------------------------------------------------------------------------------------- dashboard-wide helpers
+    def _new_sections(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
+        """"Give me the total for the new dashboard sections": the headline figures of the newer pages."""
+        if not re.search(r"\b(new|newly|latest|naye|naya|nayi|recent)\b.*\b(sections?|pages?|sheets?|dashboards?|tabs?)\b",
+                         norm(q.text)):
+            return None
+        lines = []
+        for key in NEW_PAGES:
+            if key not in PAGES:
+                continue
+            try:
+                kpis = kpi_list(snap.get(key))
+            except DataUnavailable:
+                continue
+            lines.append(f"**{PAGES[key].label}** ({PAGES[key].path} page)")
+            lines += [f"• {k['label']}: {fmt.value(k['value'], k.get('format'), k.get('unit') or '')}" for k in kpis[:9]]
+        if not lines:
+            return None
+        return self._reply("\n".join(lines), None, {}, intent="page")
+
+    def _tables(self, snap: Snapshot, pages):
+        for pg in pages:
+            try:
+                payload = snap.get(pg)
+            except DataUnavailable:
+                continue
+            for name, tbl in table_list(payload):
+                yield pg, name, tbl
+
+    def _table_count(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
+        """"How many outsource projects are there": the rows of a table named in the question."""
+        t = norm(q.text)
+        if HOWMANY not in q.toks or q.entities or q.months:
+            return None
+        words = set(tokens(q.text))
+        pages = list(q.pages) or list(PAGES)
+        hits = []
+        for pg, name, tbl in self._tables(snap, pages):
+            key = {w for w in tokens(name.replace("_", " "))} - {"table", "all"}
+            if key and key <= words and len(tbl.get("rows") or []) and name not in ("designers", "teams"):
+                hits.append((pg, name, tbl))
+        if len(hits) != 1:
+            return None
+        pg, name, tbl = hits[0]
+        n = sum(1 for r in tbl["rows"] if not SPECIAL_ROW.match(str(r[0])))
+        return self._reply(f"There are **{n}** entries in the {name.replace('_', ' ')} list on the {PAGES[pg].label} page.", pg,
+                           {"page": pg, "metric": None, "intent": "count"}, intent="count")
+
+    def _dim_summary(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
+        """"Show team-wise summary": the page's own table for that kind of row, every figure in it."""
+        t = norm(q.text)
+        m = re.search(r"\b([a-z]+)[- ]wise\b", q.text.lower())
+        dims = list(q.dims)
+        if m and canon(m.group(1)) in DIMENSION_WORDS:
+            dims = [DIMENSION_WORDS[canon(m.group(1))]]
+        if len(dims) != 1 or q.entities or not re.search(r"\b(wise|summary|breakdown|table|overview)\b", t):
+            return None
+        rest = {x for x in q.metric_toks if "wise" not in x} - {"summary", "breakdown", "table", "overview", "show",
+                                                              "give"} - set(DIMENSION_WORDS)
+        if rest:
+            return None
+        dim = dims[0]
+        pages = sorted(PAGES, key=lambda p: (p not in q.pages, PAGES[p].order))
+        for pg, name, tbl in self._tables(snap, pages):
+            if row_type(tbl) != dim:
+                continue
+            cols = [c["label"] for c in tbl["columns"]]
+            rows = [r for r in tbl["rows"] if not SPECIAL_ROW.match(str(r[0]))][:15]
+            if not rows:
+                continue
+            lines = [f"**{PAGES[pg].label}: {TYPE_NAMES.get(dim, dim)}-wise summary**"]
+            for r in rows:
+                parts = [f"{c}: {fmt.value(v, c_f.get('format'), '')}" for c, v, c_f in
+                         zip(cols[1:7], r[1:7], tbl["columns"][1:7]) if v not in (None, "")]
+                lines.append(f"• **{r[0]}** — " + ", ".join(parts))
+            others = sorted({p for p, _, t2 in self._tables(snap, [x for x in PAGES if x != pg])
+                             if row_type(t2) == dim}, key=lambda x: PAGES[x].order)
+            if others and not q.pages:
+                lines.append("Other pages with a " + TYPE_NAMES.get(dim, dim) + "-wise table: " +
+                             ", ".join(PAGES[x].label for x in others) + ". Name a page to see that one.")
+            return self._reply("\n".join(lines), pg, {"page": pg, "metric": None, "intent": "list", "dim": dim},
+                               intent="list")
+        return None
+
+    def _rank_total(self, q: Query, c: Candidate) -> dict | None:
+        """"Total pending of all designers": adds up the rows instead of ranking them."""
+        t = norm(q.text)
+        if not (re.search(r"\b(total|sum|kul|overall)\b", t) and re.search(r"\b(all|every|each|sabhi|sab)\b", t)):
+            return None
+        if c.fmt == "pct" or not c.rows or not all(isinstance(v, (int, float)) for _, v in c.rows):
+            return None
+        total = sum(v for _, v in c.rows)
+        what = PLURALS.get(TYPE_NAMES.get(c.row, c.row), c.row + "s")
+        scope = q.scope()
+        return self._reply(f"Total **{c.label}** across all {len(c.rows)} {what}{(' ' + scope) if scope else ''} is "
+                           f"**{fmt.value(total, c.fmt, c.unit)}**.", c.page, self._ctx(q, c, "calc"), intent="calc")
 
     def _trend(self, q: Query, c: Candidate) -> dict:
         rows = list(c.rows)
@@ -1357,6 +1474,9 @@ class Assistant:
         for v in vendors:                          # "NEELAM SILKS" names a vendor, not the fabric "silk"
             t_cat = t_cat.replace(v.display.lower(), " ")
         cat = cats[0].display if cats else category_in_text(t_cat)
+        avg = self._rate_average(q, snap, t, vendors, cat)
+        if avg:
+            return avg
         if not cat and not vendors:
             return None
         if not cat and not re.search(r"\b(rates?|rate list|rate card|price|prices|kitne ka)\b", t):
@@ -1421,6 +1541,66 @@ class Assistant:
         if len(rows) > cap:
             lines.append(f"• … and {len(rows) - cap} more on the Vendor Rate page.")
         return self._reply("\n".join(lines), "vendor-rate", ctx, intent="rates")
+
+    def _rate_average(self, q: Query, snap: Snapshot, t: str, vendors, cat) -> dict | None:
+        """Vendor Rate: average / comparison of rates. Uses the page's vendor benchmark (blank and 0 rates left out),
+        or the average of the rate list's own column when no vendor is named."""
+        wants_avg = re.search(r"\b(average|avg|mean|ausat)\b", t)
+        wants_cmp = len(vendors) >= 2 and (_COMPARE.search(t) or re.search(r"\b(rates?|price)\b", t))
+        if not (wants_avg or wants_cmp) or cat:
+            return None
+        try:
+            data = snap.get("vendor-rate")
+        except DataUnavailable:
+            return None
+        tables = data.get("tables") or {}
+        bench, master = tables.get("benchmark") or {}, tables.get("master") or {}
+        width = '44"' if re.search(r"\b44\b", t) else '36"' if re.search(r"\b36\b", t) else '60"' if re.search(
+            r"\b60\b", t) else None
+        ctx = {"page": "vendor-rate", "metric": None, "intent": "rates", "entities": [e.ref() for e in q.entities],
+               "months": []}
+        if vendors and bench.get("columns"):
+            cols = [c["label"] for c in bench["columns"]]
+            need = ["Vendor", 'Avg 44" Rate', 'Avg 60" Rate', "Min Rate", "Max Rate", "Total Items"]
+            if not set(need) <= set(cols):
+                return None
+            ix = {c: i for i, c in enumerate(cols)}
+            rows = {r[0]: r for r in bench["rows"]}
+            picked = [(v.display, rows.get(v.raw.get("vendor-rate"))) for v in vendors if "vendor-rate" in v.raw]
+            picked = [(n, r) for n, r in picked if r]
+            if not picked:
+                return None
+            lines = ["**Average rates (₹ per mtr, blank and 0 rates left out)**"]
+            c44, c60 = 'Avg 44" Rate', 'Avg 60" Rate'
+            for n, r in picked:
+                lines.append(f"• **{n}**: 44\" avg ₹{r[ix[c44]]:,.0f}, 60\" avg ₹{r[ix[c60]]:,.0f}, "
+                             f"lowest ₹{r[ix['Min Rate']]:,.0f}, highest ₹{r[ix['Max Rate']]:,.0f} "
+                             f"({r[ix['Total Items']]} fabrics)")
+            if len(picked) == 2:
+                for w in ([width] if width else ['44"', '60"']):
+                    a, b = picked[0][1][ix[f"Avg {w} Rate"]], picked[1][1][ix[f"Avg {w} Rate"]]
+                    if a and b:
+                        hi, lo = (picked[0], picked[1]) if a >= b else (picked[1], picked[0])
+                        hv, lv = max(a, b), min(a, b)
+                        lines.append(f"At {w}, **{hi[0]}** averages ₹{hv - lv:,.0f} more than {lo[0]} "
+                                     f"({(hv - lv) / lv * 100:.2f}% more; ₹{hv:,.0f} − ₹{lv:,.0f}).")
+            return self._reply("\n".join(lines), "vendor-rate", ctx, intent="rates")
+        cols = [c["label"] for c in master.get("columns") or []]
+        if not cols or not wants_avg:
+            return None
+        out = []
+        for w in ([width] if width else ['44"', '60"', '36"']):
+            if w not in cols:
+                continue
+            i = cols.index(w)
+            vals = [r[i] for r in master["rows"] if isinstance(r[i], (int, float)) and r[i] > 0]
+            if vals:
+                out.append(f"• {w}: **₹{sum(vals) / len(vals):,.2f}** per mtr (average of {len(vals)} rates, "
+                           f"₹{min(vals):,.0f} to ₹{max(vals):,.0f})")
+        if not out:
+            return None
+        return self._reply("**Average rate across all vendors** (blank and 0 rates left out):\n" + "\n".join(out),
+                           "vendor-rate", ctx, intent="rates")
 
     def _promise_items(self, q: Query, snap: Snapshot) -> dict | None:
         """FLO Future: names the promised items that are overdue / due soon / not updated / pending."""
@@ -1491,6 +1671,11 @@ class Assistant:
         whats = PLURALS.get(what, what + "s")
         if q.intent == "count" or q.style == "terse":
             text = f"There are **{len(names)}** {whats} on the dashboard." if q.style != "terse" else f"**{len(names)}**"
+            per = {pg: sum(1 for e in vocab.of_type(dim) if pg in e.raw) for pg in PAGES}
+            per = {pg: n for pg, n in per.items() if n}
+            if q.style != "terse" and len(set(per.values())) > 1:
+                text += " By page: " + ", ".join(f"{PAGES[pg].label} {n}" for pg, n in sorted(
+                    per.items(), key=lambda x: PAGES[x[0]].order)) + "."
             if q.style == "detail":
                 text += "\n" + ", ".join(names)
         else:

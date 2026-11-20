@@ -67,6 +67,9 @@ PAGES: dict[str, Page] = {p.key: p for p in [
          {"month": "month"}, 8),
 ]}
 
+# Pages added after the original dashboard (the chatbot can summarise "the new sections").
+NEW_PAGES = ("flo-future", "vendor-rate")
+
 # Option lists in the API -> entity type. Other option lists (status, order type, risk...) are not used as names.
 OPTION_TYPES = {"designer": "designer", "client": "client", "order_by": "client", "vendor": "vendor",
                 "fabricator": "fabricator", "category": "category", "item": "category", "month": "month",
@@ -84,7 +87,7 @@ DIMENSION_WORDS = {"designer": "designer", "vendor": "vendor", "client": "client
 DIMENSION_PLURALS = {"designers": "designer", "vendors": "vendor", "suppliers": "vendor", "mills": "vendor",
                      "clients": "client", "customers": "client", "parties": "client", "buyers": "client",
                      "fabricators": "fabricator", "karigars": "fabricator", "categories": "category",
-                     "items": "category", "products": "category", "teams": "team"}
+                     "items": "category", "products": "category", "teams": "team", "employees": "designer", "staff": "designer"}
 
 # "Best" / "worst" with no measure named: what makes a vendor or fabricator good (higher is better).
 QUALITY = {"vendor": "on-time rate", "fabricator": "on-time rate"}

@@ -62,7 +62,7 @@ WORDS = {
     "karigar": "fabricator", "fabricators": "fabricator", "stitcher": "fabricator",
     "item": "category", "items": "category", "product": "category", "products": "category", "categories": "category",
     "style": "category", "styles": "category",
-    "designers": "designer",
+    "designers": "designer", "employee": "designer", "employees": "designer", "staff": "designer",
     "mahina": "month", "mahine": "month", "months": "month",
     "samples": "sample", "sampling": "sample",
     "orders": "order", "designs": "design",
