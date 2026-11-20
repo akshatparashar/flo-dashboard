@@ -193,5 +193,7 @@ test("Vendor Rate: the vendor filter limits the vendor tables to the chosen vend
   await page.goto(`/vendor-rate?nointro&vendor=${encodeURIComponent(vendor)}`);
   await expect(page.getByRole("heading", { level: 1, name: "Vendor Rate" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: "Vendor vs fabric price" })).toBeVisible();
+  await expect(page.getByText("Select a vendor above to see its rate table.")).toBeVisible();   // hidden until chosen
+  await page.locator("#vr-vendor").selectOption(vendor);
   await expect(page.getByRole("heading", { level: 3, name: vendor, exact: true })).toBeVisible();
 });

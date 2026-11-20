@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { useDashboard } from "../api/hooks";
 import type { VendorRateData } from "../api/types";
 import { Legend } from "../components/charts/common";
+import { BestPriceBars } from "../components/charts/BestPriceBars";
 import { RateBars } from "../components/charts/RateBars";
-import { VendorDots } from "../components/charts/VendorDots";
-import { VendorLines } from "../components/charts/VendorLines";
 import { DataTable } from "../components/DataTable";
+import { VendorMaster } from "../components/VendorMaster";
 import { FilterBar, MultiSelect } from "../components/Filters";
 import { Empty, KpiStrip, Notices, Panel, Section } from "../components/ui";
 import { useFilters } from "../lib/filters";
@@ -38,7 +38,7 @@ export default function VendorRate() {
   const q = useDashboard<VendorRateData>("/vendor-rate", f.values);
   const [picked, setPicked] = useState<string | null>(null);
   const [width, setWidth] = useState<string>('60"');
-  const [kind, setKind] = useState<"Line" | "Bars" | "Dots">("Line");
+  const [pickedVendor, setPickedVendor] = useState("");
   return (
     <div className="page">
       <PageState q={q}>
@@ -58,6 +58,7 @@ export default function VendorRate() {
           const vfWidth = vf && vf.data[width] ? width : vf?.widths.includes('60"') ? '60"' : (vf?.widths[0] ?? '60"');
           const vfData = vf?.data[vfWidth] ?? { categories: [], series: [] };
           const tables = d.sheet_tables?.length ? d.sheet_tables : (d.vendor_cards ?? []).map((c) => ({ vendor: c.vendor, items: c.items, table: c.table }));
+          const chosen = tables.find((x) => x.vendor === pickedVendor) ?? null;
           return (
             <>
               <PageHead
@@ -130,54 +131,50 @@ export default function VendorRate() {
                   </Section>
 
                   {vf && vf.widths.length > 0 && (
-                    <Section title="Vendor vs fabric price" sub="Each vendor's cheapest rate for every fabric (design) category · switch between Line, Bars and Dots · hover a point for the exact rate, or a vendor name to follow it · the Vendor and Fabric filters apply">
-                      <Panel
-                        title={`${vfWidth}: vendor-wise rate by fabric (★ = Best Price)`}
-                        sub="₹ per mtr · one line (or dot / bar group) per vendor · ★ ringed point = lowest rate of that fabric"
-                        right={
-                          <div className="vr-ctl">
-                            <div className="seg" role="group" aria-label="Chart type">
-                              {(["Line", "Bars", "Dots"] as const).map((k2) => (
-                                <button key={k2} type="button" aria-pressed={kind === k2} onClick={() => setKind(k2)}>
-                                  {k2}
-                                </button>
-                              ))}
-                            </div>
-                            <div className="seg" role="group" aria-label="Width">
-                              {vf.widths.map((w) => (
-                                <button key={w} type="button" aria-pressed={vfWidth === w} onClick={() => setWidth(w)}>
-                                  {w}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        }
-                      >
-                        {kind === "Line" && <VendorLines categories={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} label={`${vfWidth} rate by fabric category and vendor`} />}
-                        {kind === "Dots" && <VendorDots categories={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} label={`${vfWidth} rate by fabric category and vendor`} />}
-                        {kind === "Bars" && (
-                          <>
-                            <Legend items={vfData.series.map((x, i) => ({ name: x.name, color: VENDOR_COLORS[i % VENDOR_COLORS.length] }))} />
-                            <RateBars vendors={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} bar={vfData.series.length > 5 ? 14 : 26} label={`${vfWidth} rate by fabric category and vendor`} />
-                          </>
-                        )}
-                      </Panel>
+                    <Section title="Vendor vs fabric price" sub="Each vendor's cheapest rate for every fabric (design) category · the Vendor and Fabric filters apply">
+                      <div className="vr-ctl" style={{ marginBottom: 12 }}>
+                        <div className="seg" role="group" aria-label="Width">
+                          {vf.widths.map((w) => (
+                            <button key={w} type="button" aria-pressed={vfWidth === w} onClick={() => setWidth(w)}>
+                              {w} width
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="grid">
+                        <div className="span-12">
+                          <Panel title={`${vfWidth}: cheapest rate by fabric`} sub="₹ per mtr · coloured by the vendor with the best price">
+                            <BestPriceBars categories={vfData.categories} series={vfData.series} colors={VENDOR_COLORS} label={`Cheapest ${vfWidth} rate per fabric category`} />
+                          </Panel>
+                        </div>
+                        <div className="span-12">
+                          <Panel title={`${vfWidth}: master price table`} sub="Fabric (design) down the side, vendors across · ₹ per mtr · green = cheap, red = dear (within the fabric), ★ = best price · · = not quoted" flush>
+                            <VendorMaster categories={vfData.categories} series={vfData.series} name={`vendor_fabric_prices_${vfWidth.replace(/\W+/g, "")}`} />
+                          </Panel>
+                        </div>
+                      </div>
                     </Section>
                   )}
 
-                  <Section
-                    title="NEW RATE SHEET: vendor tables"
-                    sub={`The rate cards exactly as in the sheet, one table per vendor · ${tables.length} vendor${tables.length === 1 ? "" : "s"} · the Vendor filter applies`}
-                  >
-                    <div className="grid">
-                      {tables.map((c) => (
-                        <div className="span-6" key={c.vendor}>
-                          <Panel title={c.vendor} sub={`${c.items} item${c.items === 1 ? "" : "s"}`} flush>
-                            <DataTable table={c.table} name={`new_rate_sheet_${c.vendor.replace(/\W+/g, "_")}`} maxRows={20} titleCaseFirst={false} csv />
-                          </Panel>
-                        </div>
-                      ))}
+                  <Section title="NEW RATE SHEET: vendor tables" sub="The rate card of one vendor, exactly as in the sheet · choose a vendor to see its table">
+                    <div className="vr-pick">
+                      <label htmlFor="vr-vendor">Select vendor</label>
+                      <select id="vr-vendor" className="field" value={chosen?.vendor ?? ""} onChange={(e) => setPickedVendor(e.target.value)}>
+                        <option value="">Choose a vendor…</option>
+                        {tables.map((t) => (
+                          <option key={t.vendor} value={t.vendor}>
+                            {t.vendor}
+                          </option>
+                        ))}
+                      </select>
                     </div>
+                    {chosen ? (
+                      <Panel title={chosen.vendor} sub={`${chosen.items} item${chosen.items === 1 ? "" : "s"}`} flush>
+                        <DataTable table={chosen.table} name={`new_rate_sheet_${chosen.vendor.replace(/\W+/g, "_")}`} maxRows={25} titleCaseFirst={false} csv />
+                      </Panel>
+                    ) : (
+                      <div className="state">Select a vendor above to see its rate table.</div>
+                    )}
                   </Section>
                 </>
               )}

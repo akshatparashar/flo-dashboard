@@ -1887,3 +1887,72 @@ a.alert:hover {
 .vl-series {
   transition: opacity 140ms var(--ease-out);
 }
+
+/* ============================================================================ Vendor Rate: best price + master table */
+.bp-max {
+  stroke: var(--ink);
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+.bp-val {
+  font-size: 12.5px;
+  font-weight: 700;
+  fill: var(--ink);
+  paint-order: stroke;
+  stroke: var(--sheet);
+  stroke-width: 4px;
+}
+.bp-who {
+  font-weight: 560;
+  fill: var(--ink-2);
+}
+.vm-wrap {
+  overflow: auto;
+  max-height: 560px;
+}
+.vm-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+.vm-table th,
+.vm-table td {
+  padding: 10px 14px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--rule);
+}
+.vm-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--sheet);
+  font-size: var(--t-xs);
+  font-weight: 650;
+  color: var(--muted);
+  border-bottom: 1px solid var(--rule-strong);
+}
+.vm-table .l {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--sheet);
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink);
+}
+.vm-table thead .l {
+  z-index: 3;
+}
+.vm-table td.none {
+  color: var(--faint);
+  text-align: center;
+}
+.vm-table td.best {
+  font-weight: 750;
+  color: var(--pos-ink);
+  box-shadow: inset 0 0 0 1.5px var(--pos);
+}
