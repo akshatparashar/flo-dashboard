@@ -56,6 +56,13 @@ SHEET_REGISTRY = {
         "repeat_tabs": ["REPEAT"],     # REPEAT orders -> revenue only
         "annual_target_cr": 50.2,      # yearly NEW target in crore (also editable on the dashboard)
     },
+    "FLO Future": {
+        "id": "1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw",   # FLO_Future Nov 2026
+        "type": "flo_future",
+        "source_tabs": ["Samples"],    # one row per promised sample (Designer, Qty Promised, Completed, Status, Due Date)
+        "visits_tabs": ["Visits & Meetings"],   # 'Causative Milestone' blocks (visits + meetings)
+        "period_label": "Nov 2026",
+    },
 }
 
 # Google Sheet data is re-read at most once per this many seconds (live updates)
@@ -2943,6 +2950,594 @@ def _target_quality(d):
 
 
 # -----------------------------------------------------------------------------
+# 10B. FLO FUTURE DASHBOARD  (sheet: "FLO_Future Nov 2026")
+#      A) Source tab "Samples" -> row 1 = header, one row per promised sample (filled by hand). Columns by header name
+#         (fallback position A=0 ...): Designer | Team | Collection / Sample | Vendor | Season | Qty Promised |
+#         Completed | Pending | Status | Due Date | Overdue | Promised To | Contact | Remark | Key (auto)
+#         Pending / Overdue / Days Left are re-calculated here with the SAME rule as the sheet formulas
+#         (Pending = Qty - Completed, Overdue = Due Date passed and Status not 'Complete'); the sheet's own
+#         Pending / Overdue columns are only cross-checked at the bottom.
+#      B) Source tab "Visits & Meetings" -> blocks: "Causative Milestone | <title>", then a header row
+#         "Sr | Promised Action | <freq> | QTY. | | (Promised) By Whom | (Promised) to Whom | (Promised) By When-Date |
+#         Complete (marked as 'X') | STATUS | REMARK", then numbered rows (empty rows = nothing planned).
+# -----------------------------------------------------------------------------
+FF_COLS = {          # field -> (accepted normalised header names, fallback column position A=0 ...)
+    "designer": (("DESIGNER",), 0), "team": (("TEAM",), 1), "item": (("COLLECTIONSAMPLE", "COLLECTION"), 2),
+    "vendor": (("VENDOR", "CLIENT"), 3), "season": (("SEASON",), 4), "qty": (("QTYPROMISED", "QTY"), 5),
+    "done": (("COMPLETED",), 6), "pending_sheet": (("PENDING",), 7), "status": (("STATUS",), 8),
+    "due": (("DUEDATE",), 9), "overdue_sheet": (("OVERDUE",), 10), "to": (("PROMISEDTO",), 11),
+    "contact": (("CONTACT",), 12), "remark": (("REMARK",), 13),
+}
+FF_DUE_BUCKETS = ["Overdue", "Due Today", "Due in 1-3 Days", "Due in 4-7 Days", "Due Later (> 7 Days)",
+                  "No Due Date", "Completed"]
+FF_OPEN_BUCKETS = FF_DUE_BUCKETS[:-1]
+FF_STATUS_ORDER = ["Complete", "In Progress", "In-House Process", "Sampling Ordered", "Corrections", "CAD In Queue",
+                   "CAD In Process", "Not Started", "Not Updated"]
+# Visits & Meetings: block title -> (activity type, required per month; 0 = as many as planned rows)
+FF_VISIT_TYPES = [(r"MARKET", "Market Visit (Accessories)", 1), (r"STORE\s*/?\s*EXHIBITION|EXHIBI", "Store / Exhibition Visit", 1),
+                  (r"SURAT", "Surat Sampling Visit", 1), (r"FACTORY", "Factory / Store Visit", 2),
+                  (r"MEETING", "Meetings", 0)]
+FF_VISIT_STATES = ["Done", "Missed / Not Marked", "Today", "Upcoming", "Rescheduled", "Cancelled", "No Date"]
+
+
+def ff_due_colors():
+    return {"Overdue": COLORS["red"], "Due Today": COLORS["orange"], "Due in 1-3 Days": COLORS["amber"],
+            "Due in 4-7 Days": COLORS["yellow"], "Due Later (> 7 Days)": COLORS["blue"],
+            "No Due Date": COLORS["slate"], "Completed": COLORS["green"]}
+
+
+def ff_visit_colors():
+    return {"Done": COLORS["green"], "Missed / Not Marked": COLORS["red"], "Today": COLORS["orange"],
+            "Upcoming": COLORS["blue"], "Rescheduled": COLORS["amber"], "Cancelled": COLORS["slate"],
+            "No Date": COLORS["slate"]}
+
+
+def ff_status_colors(statuses=()):
+    base = {"Complete": COLORS["green"], "In Progress": COLORS["blue"], "In-House Process": COLORS["teal"],
+            "Sampling Ordered": COLORS["purple"], "Corrections": COLORS["orange"], "CAD In Queue": COLORS["yellow"],
+            "CAD In Process": COLORS["amber"], "Not Started": COLORS["red"], "Not Updated": COLORS["slate"]}
+    p = pal()
+    for i, s in enumerate(s_ for s_ in statuses if s_ not in base):
+        base[s] = p[(i + 4) % len(p)]
+    return base
+
+
+def ff_rate_class(v):
+    """Completion % colour: green >= 80 %, amber 40-79 %, red < 40 %."""
+    return "r-good" if v >= 80 else ("r-mid" if v >= 40 else "r-bad")
+
+
+# ============================== A) SAMPLES ==============================
+def _ff_header_row(grid):
+    for r in range(min(6, len(grid))):
+        keys = {norm_key(c) for c in grid[r]}
+        if "DESIGNER" in keys and ({"QTYPROMISED", "STATUS", "DUEDATE"} & keys):
+            return r
+    return None
+
+
+def _ff_col_map(header):
+    keys = [norm_key(h) for h in header]
+    out = {}
+    for field, (names, pos) in FF_COLS.items():
+        idx = next((keys.index(n) for n in names if n in keys), None)
+        if idx is None:
+            idx = next((i for i, k in enumerate(keys) for n in names if k.startswith(n)), None)
+        out[field] = idx if idx is not None else pos
+    return out
+
+
+def _ff_canon_status(s):
+    """Status text -> one spelling (case / extra spaces ignored). Blank -> 'Not Updated'."""
+    lookup = {norm_key(v): v for v in FF_STATUS_ORDER}
+    return clean_text(s).map(lambda v: "Not Updated" if v == "" else lookup.get(norm_key(v), v.strip().title()))
+
+
+def build_ff_samples(values, today=None):
+    """Raw 'Samples' grid (unformatted values) -> one clean row per promised sample. Returns (df, header_found)."""
+    if not values:
+        return pd.DataFrame(), False
+    hr = _ff_header_row(values)
+    header_ok = hr is not None
+    hr = hr if header_ok else 0
+    cmap = _ff_col_map(values[hr])
+    rows = values[hr + 1:]
+    if not rows:
+        return pd.DataFrame(), header_ok
+    width = max(max(len(r) for r in rows), max(cmap.values()) + 1)
+    # index = real sheet row number (header on sheet row hr+1 -> first data row hr+2)
+    grid = pd.DataFrame([list(r) + [""] * (width - len(r)) for r in rows], index=range(hr + 2, hr + 2 + len(rows)))
+
+    def col(field):
+        return grid[cmap[field]]
+
+    designer, item, qty_txt = clean_text(col("designer")), clean_text(col("item")), clean_text(col("qty"))
+    qty, done = num(col("qty")), num(col("done"))
+    keep = (designer != "") & ((item != "") | (qty != 0) | (done != 0))
+
+    today = today if today is not None else _today_ist()
+    d = pd.DataFrame(index=grid.index)
+    d.index.name = "sheet_row"
+    d["designer"] = designer.str.title()
+    team = clean_text(col("team")).str.title()
+    d["team"] = team.where(team != "", "(No Team)")
+    d["item"] = item.where(item != "", "(No Name)")
+    for f in ("vendor", "season", "to", "contact", "remark"):
+        d[f] = clean_text(col(f))
+    d["qty_blank"] = qty_txt == ""
+    d["qty"], d["done"] = qty, done
+    d["status"] = _ff_canon_status(col("status"))
+    d["due"] = parse_dates(col("due")).dt.normalize()
+    d["pending_sheet"] = num(col("pending_sheet"))
+    d["overdue_sheet"] = clean_text(col("overdue_sheet")).str.upper().eq("OVERDUE")
+    d = d[keep]
+    if d.empty:
+        return d, header_ok
+
+    d["pending"] = np.where(d["qty_blank"], 0.0, (d["qty"] - d["done"]).clip(lower=0))
+    d["is_complete"] = (d["status"] == "Complete") | (~d["qty_blank"] & (d["qty"] > 0) & (d["done"] >= d["qty"]))
+    d["days_left"] = (d["due"] - today).dt.days            # NaN when no due date
+    dl = d["days_left"]
+    d["due_bucket"] = np.select(
+        [d["is_complete"], dl.isna(), dl < 0, dl == 0, dl <= 3, dl <= 7],
+        ["Completed", "No Due Date", "Overdue", "Due Today", "Due in 1-3 Days", "Due in 4-7 Days"],
+        default="Due Later (> 7 Days)")
+    d["is_overdue"] = d["due_bucket"] == "Overdue"
+    d["days_overdue"] = np.where(d["is_overdue"], -dl, 0).astype(float)
+    return d, header_ok
+
+
+def _ff_days_text(row):
+    if row["is_complete"]:
+        return "Done"
+    dl = row["days_left"]
+    if pd.isna(dl):
+        return "No date"
+    dl = int(dl)
+    if dl < 0:
+        return f"{-dl} day{'s' if dl != -1 else ''} late"
+    return "Due today" if dl == 0 else f"{dl} day{'s' if dl != 1 else ''} left"
+
+
+def _ff_days_class(row):
+    if row["is_complete"]:
+        return "r-good"
+    dl = row["days_left"]
+    if pd.isna(dl):
+        return "zero"
+    return "r-bad" if dl < 0 else ("r-mid" if dl <= 3 else "r-good")
+
+
+def _ff_date(s):
+    return s.dt.strftime("%d-%b-%y").fillna("")
+
+
+def ff_stats(g):
+    """One summary row for any slice of promised samples (totals recomputed, % never summed)."""
+    tgt, done, pen = float(g["qty"].sum()), float(g["done"].sum()), float(g["pending"].sum())
+    od = g[g["is_overdue"]]
+    soon = g[g["due_bucket"].isin(["Due Today", "Due in 1-3 Days"])]
+    return {"Items": int(len(g)), "Target Qty": tgt, "Completed": done, "Pending": pen,
+            "Done %": safe_div_pct(done, tgt), "Items Done": int(g["is_complete"].sum()),
+            "Overdue Items": int(len(od)), "Overdue Pcs": float(od["pending"].sum()),
+            "Due ≤ 3 Days": int(len(soon)), "No Due Date": int((g["due_bucket"] == "No Due Date").sum())}
+
+
+def _ff_nearest_due(g):
+    open_ = g[~g["is_complete"] & g["due"].notna()]
+    if open_.empty:
+        return "—"
+    r = open_.loc[open_["due"].idxmin()]
+    return f"{r['due'].strftime('%d-%b')} ({_ff_days_text(r)})"
+
+
+def ff_group(x, col, label, order=None):
+    keys = order if order is not None else list(dict.fromkeys(x[col]))
+    rows = [{label: k, **ff_stats(x[x[col] == k]), "Nearest Open Due": _ff_nearest_due(x[x[col] == k])}
+            for k in keys if (x[col] == k).any()]
+    return pd.DataFrame(rows)
+
+
+def _ff_chip(text, color):
+    return (f'<span style="display:inline-block;padding:2px 9px;border-radius:12px;font-size:.72rem;font-weight:700;'
+            f'background:{_hex_to_rgba(color, 0.22 if IS_DARK else 0.14)};color:{color};'
+            f'border:1px solid {_hex_to_rgba(color, 0.45)};white-space:nowrap">{_esc(text)}</span>')
+
+
+def ff_item_table(x, show_designer=False, height=None, total_label="TARGET"):
+    """Item-level HTML table (like the sheet's 'Designer Wise' tab): status pill + coloured Days Left + total row."""
+    if x.empty:
+        notice("No data for the selected filters.")
+        return
+    sc = ff_status_colors(x["status"].unique())
+    heads = ["Sr"] + (["Designer"] if show_designer else []) + [
+        "Collection / Sample", "Vendor", "Qty", "Completed", "Pending", "Status", "Due Date", "Days Left",
+        "Promised To", "Remark"]
+    body = []
+    for i, (_, r) in enumerate(x.iterrows(), start=1):
+        qty_txt = "—" if r["qty_blank"] else f"{r['qty']:,.0f}"
+        due_txt = r["due"].strftime("%d-%b-%y") if pd.notna(r["due"]) else "—"
+        pen_cls = ' class="zero"' if r["pending"] == 0 else ""
+        cells = [f"<td style='min-width:36px;text-align:center'>{i}</td>"]
+        if show_designer:
+            cells.append(f"<td style='text-align:left;font-weight:600'>{_esc(r['designer'])}</td>")
+        cells += [
+            f"<td style='text-align:left;white-space:normal;min-width:190px'>{_esc(r['item'])}</td>",
+            f"<td style='text-align:left'>{_esc(r['vendor'])}</td>",
+            f"<td>{qty_txt}</td>", f"<td>{r['done']:,.0f}</td>", f"<td{pen_cls}>{r['pending']:,.0f}</td>",
+            f"<td style='text-align:left'>{_ff_chip(r['status'], sc.get(r['status'], COLORS['slate']))}</td>",
+            f"<td>{due_txt}</td>",
+            f'<td class="{_ff_days_class(r)}">{_esc(_ff_days_text(r))}</td>',
+            f"<td style='text-align:left'>{_esc(r['to'])}</td>",
+            f"<td style='text-align:left;white-space:normal;min-width:150px'>{_esc(r['remark'])}</td>"]
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    s = ff_stats(x)
+    pad = 1 if show_designer else 0
+    tot = (f'<tr class="tot"><td>{_esc(total_label)}</td>' + "<td></td>" * (2 + pad)
+           + f"<td>{s['Target Qty']:,.0f}</td><td>{s['Completed']:,.0f}</td><td>{s['Pending']:,.0f}</td>"
+           + f"<td style='text-align:left'>{s['Done %']:.0f}% done · {s['Items Done']}/{s['Items']} items</td>"
+           + "<td></td>" + f"<td>{s['Overdue Items']} overdue</td>" + "<td></td>" * 2 + "</tr>")
+    style = f' style="max-height:{int(height)}px"' if height else ""
+    head = "".join(f"<th style='min-width:36px;text-align:center'>{_esc(h)}</th>" if h == "Sr" else f"<th>{_esc(h)}</th>"
+                   for h in heads)
+    _html(f'<div class="tbl-wrap"{style}><table><thead><tr>{head}</tr></thead>'
+          f'<tbody>{"".join(body)}{tot}</tbody></table></div>')
+
+
+# ============================== B) VISITS & MEETINGS ==============================
+def _ff_visit_type(title):
+    t = str(title).upper()
+    for pat, name, req in FF_VISIT_TYPES:
+        if re.search(pat, t):
+            return name, req
+    return (str(title).strip().title() or "Other"), 0
+
+
+def build_ff_visits(values, today=None):
+    """'Visits & Meetings' block grid -> (activities df, blocks df). Empty numbered rows = nothing planned."""
+    today = today if today is not None else _today_ist()
+    acts, blocks = [], []
+    n = len(values)
+    r = 0
+    while r < n:
+        row = values[r]
+        ci = next((c for c, v in enumerate(row) if norm_key(v).startswith("CAUSATIVEMILESTONE")), None)
+        if ci is None:
+            r += 1
+            continue
+        title = next((str(v).strip() for v in row[ci + 1:] if str(v).strip()), "")
+        vtype, req = _ff_visit_type(title)
+        # header row = first row below with 'Sr' in it
+        h = next((k for k in range(r + 1, min(r + 4, n)) if any(norm_key(v) == "SR" for v in values[k])), None)
+        if h is None:
+            r += 1
+            continue
+        keys = [norm_key(v) for v in values[h]]
+
+        def find(*names, default=None):
+            return next((i for i, k in enumerate(keys) for nm in names if k.startswith(nm)), default)
+
+        c_sr = find("SR", default=0)
+        c_act = find("PROMISEDACTION", default=c_sr + 1)
+        c_freq = c_act + 1
+        c_by = find("PROMISEDBYWHOM", default=c_act + 4)
+        c_to = find("PROMISEDTOWHOM", "PROMISEDTO", default=c_act + 5)
+        c_when = find("PROMISEDBYWHEN", default=c_act + 6)
+        c_x = find("COMPLETE", default=c_act + 7)
+        c_st = find("STATUS", default=c_act + 8)
+        c_rm = find("REMARK", default=c_act + 9)
+        freq_hdr = str(values[h][c_freq]).strip() if c_freq < len(values[h]) else ""
+        planned = 0
+        k = h + 1
+        while k < n and not any(norm_key(v).startswith("CAUSATIVEMILESTONE") for v in values[k]):
+            cells = list(values[k]) + [""] * 20
+
+            def cell(i):
+                return cells[i] if i is not None and i < len(cells) else ""
+
+            act = str(cell(c_act)).strip()
+            if act:
+                planned += 1
+                due = parse_dates(pd.Series([cell(c_when)])).iloc[0]
+                due = due.normalize() if pd.notna(due) else pd.NaT
+                st_txt = str(cell(c_st)).strip()
+                stn = norm_key(st_txt)
+                x_mark = norm_key(cell(c_x)) in ("X", "YES", "DONE", "TRUE", "Y")
+                if x_mark or stn in ("DONE", "COMPLETE", "COMPLETED"):
+                    state = "Done"
+                elif stn.startswith("CANCEL"):
+                    state = "Cancelled"
+                elif stn.startswith("RESCHED"):
+                    state = "Rescheduled"
+                elif pd.isna(due):
+                    state = "No Date"
+                elif due < today:
+                    state = "Missed / Not Marked"
+                elif due == today:
+                    state = "Today"
+                else:
+                    state = "Upcoming"
+                acts.append({"sheet_row": k + 1, "type": vtype, "milestone": title, "action": act.title(),
+                             "freq": (str(cell(c_freq)).strip() or freq_hdr).title(),
+                             "by": str(cell(c_by)).strip().title(), "to": str(cell(c_to)).strip(),
+                             "date": due, "x": "X" if x_mark else "", "sheet_status": st_txt,
+                             "remark": str(cell(c_rm)).strip(), "state": state})
+            k += 1
+        blocks.append({"type": vtype, "milestone": title, "freq": freq_hdr.title(), "required": req,
+                       "planned": planned, "sheet_row": r + 1})
+        r = k
+    a = pd.DataFrame(acts)
+    if not a.empty:
+        a["days_left"] = (a["date"] - today).dt.days
+    return a, pd.DataFrame(blocks)
+
+
+def ff_visit_summary(a, b):
+    """One row per activity type: required this month vs planned vs done / missed / upcoming."""
+    rows = []
+    for vtype in dict.fromkeys(b["type"]) if not b.empty else []:
+        g = a[a["type"] == vtype] if not a.empty else pd.DataFrame(columns=["state"])
+        planned = int(b.loc[b["type"] == vtype, "planned"].sum())
+        req = int(b.loc[b["type"] == vtype, "required"].max())
+        req = max(req, planned) if req else planned
+        done = int((g["state"] == "Done").sum())
+        rows.append({"Activity": vtype, "Required (Month)": req, "Planned": planned, "Done": done,
+                     "Missed / Not Marked": int((g["state"] == "Missed / Not Marked").sum()),
+                     "Upcoming": int(g["state"].isin(["Upcoming", "Today"]).sum()),
+                     "Not Planned Yet": max(req - planned, 0), "Done %": safe_div_pct(done, req)})
+    return pd.DataFrame(rows)
+
+
+# ============================== RENDER ==============================
+def _ff_access_error(e=None):
+    """English version of the access error, used only by the FLO Future tab."""
+    email = ""
+    try:
+        email = st.secrets["gcp_service_account"]["client_email"]
+    except Exception:
+        pass
+    notice("Could not open the Google Sheet. Share the sheet (Viewer) with this service account: "
+           + (email if email else "(client_email from secrets)") + (f"  ·  Details: {e}" if e else ""), "error")
+
+
+def render_flo_future_dashboard(sheet_name, cfg):
+    tab = resolve_source_tab(cfg, name_regex=r"^\s*samples?\s*$")
+    if tab:
+        run_live(_ff_body, sheet_name, cfg, tab)
+
+
+def _ff_load_visits(cfg):
+    """Visits & Meetings tab -> (activities, blocks, tab name or None). Never stops the samples dashboard."""
+    try:
+        titles = [t for t, _ in list_tabs_meta(cfg["id"])]
+        tab = next((t for t in (find_tab(titles, nm) for nm in cfg.get("visits_tabs", ["Visits & Meetings"])) if t), None)
+        if tab is None:
+            tab = next((t for t in titles if re.search(r"visit|meeting", t, re.I)), None)
+        if tab is None:
+            return pd.DataFrame(), pd.DataFrame(), None
+        a, b = build_ff_visits(fetch_grid(cfg["id"], tab)["values"])
+        return a, b, tab
+    except SheetAccessError:
+        raise
+    except Exception:
+        return pd.DataFrame(), pd.DataFrame(), None
+
+
+def _ff_body(sheet_name, cfg, tab):
+    sheet_id = cfg["id"]
+    try:
+        pack = fetch_grid(sheet_id, tab)
+        va, vb, vtab = _ff_load_visits(cfg)
+    except SheetAccessError as e:
+        _ff_access_error(e)
+        return
+    today = _today_ist()
+    d, header_ok = build_ff_samples(pack["values"], today)
+    period = cfg.get("period_label", "")
+    hero("🔮", f"FLO Future – Promised Actions{(' · ' + period) if period else ''}", None, pack["synced"])
+    if not header_ok:
+        notice(f"Header row (Designer / Qty Promised / Status / Due Date) not found in the '{tab}' tab - default "
+               "columns (A..N) were used, please verify the numbers.", "warning")
+    if d.empty:
+        notice(f"No data found in the '{tab}' tab. Expected: row 1 = header (Designer, Team, Collection / Sample, Vendor, "
+               "Season, Qty Promised, Completed, Pending, Status, Due Date ...), data from row 2.", "warning")
+        _ff_visits_chart(va, vb, vtab)
+        return
+
+    team_order = sorted(d["team"].unique(), key=lambda t: (t.startswith("("), t))
+    des_order = list(dict.fromkeys(d.sort_values("team", key=lambda s: s.map(team_order.index), kind="mergesort")
+                                   ["designer"]))
+    statuses = [s for s in FF_STATUS_ORDER if s in set(d["status"])] + \
+               sorted(s for s in d["status"].unique() if s not in FF_STATUS_ORDER)
+
+    # ---------------- filters ----------------
+    keys = {"designer": "ff_designer", "team": "ff_team", "status": "ff_status", "due": "ff_due"}
+    badge("🔎 Filters  (leave empty = ALL)  ·  apply to Samples")
+    c = st.columns([1.4, 1.0, 1.3, 1.3, 0.7], vertical_alignment="bottom")
+    f_des = multi(c[0], "Designer", des_order, keys["designer"], "All designers")
+    f_team = multi(c[1], "Team", team_order, keys["team"], "All teams")
+    f_status = multi(c[2], "Status", statuses, keys["status"], "All status")
+    f_due = multi(c[3], "Due Status", FF_DUE_BUCKETS, keys["due"], "All due status")
+    c[4].button("↺ Reset", key="ff_reset", on_click=_reset_filters, args=({k: [] for k in keys.values()},),
+                **STRETCH)
+
+    def flt(skip=()):
+        y = d
+        for name, sel, colname in (("designer", f_des, "designer"), ("team", f_team, "team"),
+                                   ("status", f_status, "status"), ("due", f_due, "due_bucket")):
+            if sel and name not in skip:
+                y = y[y[colname].isin(sel)]
+        return y
+
+    x = flt()
+    x_nd = flt(skip=("designer",))       # designer comparison: all designers
+    st.caption(f"Today: {today.strftime('%d %b %Y')}  ·  Pending = Qty Promised − Completed  ·  Overdue = Due Date "
+               "has passed and Status is not 'Complete' (same rule as the sheet)  ·  Days Left = Due Date − today.")
+
+    # ---------------- KPIs ----------------
+    vs = ff_visit_summary(va, vb) if not vb.empty else pd.DataFrame()
+    if x.empty:
+        notice("No promised samples found for the selected filters.")
+    else:
+        s = ff_stats(x)
+        dg = ff_group(x, "designer", "Designer", [n for n in des_order if n in set(x["designer"])])
+        most_pen = dg.loc[dg["Pending"].idxmax()] if len(dg) and dg["Pending"].max() > 0 else None
+        worst = x.loc[x["days_overdue"].idxmax()] if x["days_overdue"].max() > 0 else None
+        soon_pcs = x.loc[x["due_bucket"].isin(["Due Today", "Due in 1-3 Days"]), "pending"].sum()
+        tiles = [("Target Qty (Promised)", f"{fmt(s['Target Qty'])} Pcs"),
+                 ("Completed", f"{fmt(s['Completed'])} Pcs"),
+                 ("Pending", f"{fmt(s['Pending'])} Pcs"),
+                 ("Completion %", f"{s['Done %']:.1f}%"),
+                 ("Overdue (Date Passed)", f"{s['Overdue Items']} Items · {fmt(s['Overdue Pcs'])} Pcs"),
+                 ("Due in Next 3 Days", f"{s['Due ≤ 3 Days']} Items · {fmt(soon_pcs)} Pcs"),
+                 ("⚠ Most Pending", f"{most_pen['Designer']} ({fmt(most_pen['Pending'])} Pcs)"
+                                   if most_pen is not None else "None"),
+                 ("⏰ Longest Overdue", f"{int(worst['days_overdue'])} Days · {worst['designer']}"
+                                       if worst is not None else "None")]
+        if not vs.empty:
+            tiles.append(("Visits & Meetings Done", f"{int(vs['Done'].sum())} / {int(vs['Required (Month)'].sum())}"))
+        badge("📊 Key Performance Indicators")
+        metrics(tiles)
+
+
+        # ================= 1) CHART (full width, right after KPIs): designer-wise target vs completed =================
+        dsc = ff_group(x_nd, "designer", "Designer", [n for n in des_order if n in set(x_nd["designer"])])
+        team_of = d.groupby("designer")["team"].agg(lambda v: v.mode().iloc[0])
+        dsc.insert(1, "Team", dsc["Designer"].map(team_of))
+        st.markdown("---")
+        badge("👩‍🎨 Designer-wise Target vs Completed")
+        st.caption("The Designer filter is not applied here so all designers can be compared; the other filters apply.")
+        _ff_designer_chart(dsc, x_nd)
+
+        # ================= 2) TABLE: designer-wise numbers =================
+        st.markdown("---")
+        badge("📊 Designer-wise Table")
+        st.caption("Done % colour: 🟢 ≥80%  🟡 40-79%  🔴 <40%.")
+        cols = ["Designer", "Team", "Items", "Target Qty", "Completed", "Pending", "Done %", "Overdue Items",
+                "Due ≤ 3 Days", "Nearest Open Due"]
+        tbl = with_total(dsc[cols], "Designer", pct=("Done %", "Completed", "Target Qty"))
+        tbl.loc[tbl["Designer"] == "TOTAL", ["Team", "Nearest Open Due"]] = ["", _ff_nearest_due(x_nd)]
+        table_with_download(tbl, "flo_future_designer", pct_cols=("Done %",), rate_cols=("Done %",),
+                            rate_fn=ff_rate_class, key_col="Target Qty", height=560)
+
+        # ================= 3) TABLE: every sample, most urgent first =================
+        st.markdown("---")
+        badge("📋 Sample Detail (all items · most urgent first)")
+        st.caption("All filters above apply here - pick one designer to see their full list. "
+                   "Days Left: 🔴 late  🟡 0-3 days  🟢 3+ days / done.")
+        rank = x["due_bucket"].map({b: i for i, b in enumerate(FF_DUE_BUCKETS)})
+        ff_item_table(x.assign(_r=rank).sort_values(["_r", "days_left", "designer"], na_position="last"),
+                      show_designer=True, height=620, total_label="TOTAL")
+        full = _ff_export(x)
+        st.download_button("⬇️ Download CSV", full.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="flo_future_samples.csv", mime="text/csv", key="dl_ff_samples")
+
+    # ================= 4) CHART: visits & meetings =================
+    _ff_visits_chart(va, vb, vtab, vs)
+
+
+def _ff_export(x):
+    return pd.DataFrame({
+        "Sheet Row": x.index, "Designer": x["designer"].values, "Team": x["team"].values,
+        "Collection / Sample": x["item"].values, "Vendor": x["vendor"].values, "Season": x["season"].values,
+        "Qty Promised": np.where(x["qty_blank"], np.nan, x["qty"]), "Completed": x["done"].values,
+        "Pending": x["pending"].values, "Status": x["status"].values, "Due Date": _ff_date(x["due"]).values,
+        "Days Left": x["days_left"].values, "Due Status": x["due_bucket"].values, "Promised To": x["to"].values,
+        "Remark": x["remark"].values})
+
+
+def _ff_designer_chart(dsc, x_nd):
+    """Vertical stacked column per designer. Full column = Target Qty =
+    Completed (green) + Pending overdue (red) + Pending due in 0-3 days (orange) + Other pending (light blue).
+    Label on top: Done % and done / target. Hover shows the full detail of that designer."""
+    if dsc.empty:
+        notice("No data for the selected filters.")
+        return
+    o = dsc.sort_values(["Target Qty", "Designer"], ascending=[False, True]).reset_index(drop=True)
+    od = o["Designer"].map(x_nd[x_nd["due_bucket"] == "Overdue"].groupby("designer")["pending"].sum()).fillna(0.0)
+    soon = o["Designer"].map(x_nd[x_nd["due_bucket"].isin(["Due Today", "Due in 1-3 Days"])]
+                             .groupby("designer")["pending"].sum()).fillna(0.0)
+    rest = (o["Pending"] - od - soon).clip(lower=0)
+    xlab = [f"<b>{n}</b><br>{t}" for n, t in zip(o["Designer"], o["Team"])]
+    hover = [(f"<b>{r['Designer']}</b> · {r['Team']}<br>Target: {fmt(r['Target Qty'])} pcs ({r['Items']} items)"
+              f"<br>Completed: {fmt(r['Completed'])} pcs ({r['Done %']:.1f}%)<br>Pending: {fmt(r['Pending'])} pcs"
+              f"<br>Overdue: {r['Overdue Items']} items · {fmt(od[i])} pcs"
+              f"<br>Due in 0-3 days: {r['Due ≤ 3 Days']} items · {fmt(soon[i])} pcs"
+              f"<br>Nearest open due: {r['Nearest Open Due']}") for i, r in o.iterrows()]
+    fig = go.Figure()
+    for name, vals, color in (("Completed", o["Completed"], COLORS["green"]),
+                              ("Pending · Overdue", od, COLORS["red"]),
+                              ("Pending · Due in 0-3 Days", soon, COLORS["orange"]),
+                              ("Pending · Due later / No date", rest, _hex_to_rgba(COLORS["blue"], 0.35))):
+        fig.add_trace(go.Bar(name=name, x=xlab, y=vals, marker_color=color, marker_line=dict(width=0),
+                             text=[fmt(v) if v >= 1 else "" for v in vals], textposition="inside",
+                             insidetextanchor="middle", textangle=0, textfont=dict(size=11),
+                             customdata=hover, hovertemplate="%{customdata}<extra>" + name + "</extra>"))
+    top = float(np.maximum(o["Target Qty"], o["Completed"] + o["Pending"]).max())
+    for i, r in o.iterrows():
+        h = max(float(r["Target Qty"]), float(r["Completed"] + r["Pending"]))
+        color = COLORS["green"] if r["Done %"] >= 80 else (COLORS["amber"] if r["Done %"] >= 40 else COLORS["red"])
+        fig.add_annotation(x=xlab[i], y=h, yshift=4, yanchor="bottom", showarrow=False,
+                           text=f"<b>{r['Done %']:.0f}%</b><br>{fmt(r['Completed'])}/{fmt(r['Target Qty'])}",
+                           font=dict(size=11, color=color))
+    fig.update_layout(barmode="stack", bargap=0.32, legend_traceorder="normal", uniformtext_minsize=9,
+                      uniformtext_mode="hide")
+    fig.update_yaxes(title="Pcs (full column = Target)", range=[0, top * 1.22 + 1])
+    fig.update_xaxes(title="", tickfont=dict(size=11))
+    tot = dsc[["Target Qty", "Completed"]].sum()
+    chart(fig, "Designer-wise Target vs Completed (Pcs)", 470, ns="ff",
+          subtitle=f"Total {fmt(tot['Completed'])} / {fmt(tot['Target Qty'])} done "
+                   f"({safe_div_pct(tot['Completed'], tot['Target Qty']):.1f}%) · top label = Done % and done/target · "
+                   "hover for full details")
+
+
+def _ff_visits_chart(va, vb, vtab, vs=None):
+    """Vertical grouped columns per activity: Required | Done | Missed (date passed, not marked) | Upcoming.
+    Under each activity: 'x / y done'; above an activity with a problem: a warning. Hover lists names + dates."""
+    st.markdown("---")
+    badge("🗓️ Visits & Meetings (this month)")
+    if vtab is None or vb.empty:
+        notice("'Visits & Meetings' tab not found, or it has no 'Causative Milestone' blocks.", "warning")
+        return
+    vs = vs if vs is not None and not vs.empty else ff_visit_summary(va, vb)
+    vc = ff_visit_colors()
+
+    def names(vtype, states):
+        if va.empty or not states:
+            return ""
+        g = va[(va["type"] == vtype) & va["state"].isin(states)].sort_values("date")
+        return "<br>".join(f"• {r['action']} · {r['by']} · "
+                           f"{r['date'].strftime('%d %b') if pd.notna(r['date']) else 'no date'}" for _, r in g.iterrows())
+
+    xlab = [f"<b>{a}</b><br>{int(d_)}/{int(q)} done" for a, d_, q in zip(vs["Activity"], vs["Done"], vs["Required (Month)"])]
+    fig = go.Figure()
+    for name, colname, color, states in (
+            ("Required", "Required (Month)", _hex_to_rgba(COLORS["slate"], 0.45), []),
+            ("Done", "Done", vc["Done"], ["Done"]),
+            ("Missed / Not Marked", "Missed / Not Marked", vc["Missed / Not Marked"], ["Missed / Not Marked"]),
+            ("Upcoming", "Upcoming", vc["Upcoming"], ["Upcoming", "Today"])):
+        vals = vs[colname].astype(int)
+        fig.add_trace(go.Bar(name=name, x=xlab, y=vals, marker_color=color,
+                             text=[str(v) if v else "" for v in vals], textposition="outside", cliponaxis=False,
+                             customdata=[names(a, states) for a in vs["Activity"]],
+                             hovertemplate="%{x}<br><b>" + name + ": %{y}</b><br>%{customdata}<extra></extra>"))
+    top = float(vs["Required (Month)"].max()) if len(vs) else 1.0
+    for i, r in vs.iterrows():
+        msg = "⚠ Not planned" if r["Planned"] == 0 else (
+            f"⚠ {int(r['Missed / Not Marked'])} not marked" if r["Missed / Not Marked"] else "")
+        if msg:
+            fig.add_annotation(x=xlab[i], y=float(r["Required (Month)"]), yshift=22, yanchor="bottom",
+                               showarrow=False, text=msg, font=dict(size=11, color=COLORS["red"]))
+    fig.update_layout(barmode="group", bargap=0.3, bargroupgap=0.08)
+    fig.update_yaxes(title="Count", range=[0, top * 1.35 + 1], **({"dtick": 1} if top <= 10 else {}))
+    fig.update_xaxes(title="", tickfont=dict(size=11))
+    done, req = int(vs["Done"].sum()), int(vs["Required (Month)"].sum())
+    chart(fig, "Visits & Meetings: Required vs Done", 440, ns="ff",
+          subtitle=f"{done} / {req} done · Done = 'X' or STATUS 'Done' in the sheet · Missed = date passed but not "
+                   "marked done · hover a bar for names and dates")
+
+
+# -----------------------------------------------------------------------------
 # 11. MANAGEMENT OVERVIEW  (first tab)
 #     One page for management: Orders / Production / Client / Designer (Master Sheet), Sample, Fabricator stock
 #     and Fabric PO.  Target & Revenue is NOT included (it has its own tab).
@@ -3353,7 +3948,8 @@ def _source_jobs(kind, tabs_info):
         src = next((t for t in (find_tab(tabs_info, c) for c in cfg.get("source_tabs", [])) if t), None)
         src = src or next((t for t in tabs_info if "DASHBOARD" not in t.upper()), tabs_info[0])
         return [(load_tab_raw, (sid, src))]
-    regex = {"overview_fabricators": r"monthwise|monthly\s*summary", "fabric_po": r"^\s*index\s*$"}.get(kind)
+    regex = {"overview_fabricators": r"monthwise|monthly\s*summary", "fabric_po": r"^\s*index\s*$",
+             "flo_future": r"^\s*samples?\s*$"}.get(kind)
     if kind == "target_revenue":
         titles = [t for t, _ in tabs_info]
         out = []
@@ -3363,6 +3959,10 @@ def _source_jobs(kind, tabs_info):
                 out.append((fetch_grid, (sid, t)))
         return out
     tab = pick_default_tab(tabs_info, cfg.get("source_tabs", []), cfg.get("gid"), regex)
+    if kind == "flo_future":
+        titles = [t for t, _ in tabs_info]
+        vt = next((t for t in (find_tab(titles, n) for n in cfg.get("visits_tabs", [])) if t), None)
+        return [(fetch_grid, (sid, tab))] + ([(fetch_grid, (sid, vt))] if vt else [])
     if kind == "overview_fabricators":
         return [(fetch_grid, (sid, tab, True)), (fetch_grid, (sid, tab))]
     return [(fetch_grid, (sid, tab))]
@@ -3458,6 +4058,403 @@ def _hide_splash(ph, t0):
 
 
 # -----------------------------------------------------------------------------
+# 13b. VENDOR RATE DASHBOARD  (NEW tab - "NEW RATE SHEET" vendor fabric rates)
+# -----------------------------------------------------------------------------
+# Data = built-in rate sheet below. Rates change? -> use "Update / Paste New Sheet Data" inside the tab
+# (CSV / JSON upload or paste), or edit _VR_DEFAULT_ROWS to make the change permanent.
+VR_METER_COLS = ['36"', '44"', '60"', '44/36"']     # per-meter rates (by width)
+VR_PC_COL = "Per Pc"                                # per-piece rate (never mixed with per-meter averages)
+VR_PC_MAX = "Per Pc Max"                            # upper end when a piece rate is a range (120/125)
+VR_PRICE_COLS = VR_METER_COLS + [VR_PC_COL]
+VR_STATE_KEY = "vr_rows_json"
+
+# (Vendor, Fabric, 36", 44", 60", 44/36", Per Pc, Per Pc Max)   - None = not offered, 0 = rate pending
+_VR_DEFAULT_ROWS = [
+    ("RV", "CREPE", None, 205, 250, None, None, None),
+    ("RV", "MUL CHANDERI", None, 195, 240, None, None, None),
+    ("RV", "BASIC SILK", None, 170, 195, None, None, None),
+    ("RV", "CLASSIC SILK", None, 175, 200, None, None, None),
+    ("RV", "RUSSIAN SILK", None, 200, 230, None, None, None),
+    ("RV", "CHINON", None, 185, 235, None, None, None),
+    ("RV", "VISCOSE MUSLINE", None, 165, 195, None, None, None),
+    ("RV", "PLAIN ORGENZA", None, 80, 120, None, None, None),
+    ("RV", "PLAIN CREPE", None, 0, 125, None, None, None),
+    ("RV", "PLAIN CHINON", None, 72, 115, None, None, None),
+    ("RV", "ORGANZA PRINTED", None, 185, 235, None, None, None),
+    ("RV", "SUPER COTTON (DIGITAL PRINT)", None, 145, 170, None, None, None),
+    ("RV", "DOBBY", None, None, 200, None, None, None),
+    ("SWAGAT", "REMI SILK", None, 175, 230, None, None, None),
+    ("SWAGAT", "NATURAL CREPE", None, 230, 280, None, None, None),
+    ("SWAGAT", "SAND CREPE", None, 210, 280, None, None, None),
+    ("GOKUL", "N-CREPE", None, 210, 260, None, None, None),
+    ("GOKUL", "MUSLIN", None, 160, 200, None, None, None),
+    ("GOKUL", "DIG. COTTON", None, 160, 200, None, None, None),
+    ("GOKUL", "RFD CREPE", None, None, 120, None, None, None),
+    ("VARSHA", "MUSLINE", None, 165, 200, None, None, None),
+    ("VARSHA", "MUSLINE PRINTED DUPATTA", None, 160, 210, None, None, None),
+    ("VARSHA", "CREPE", None, 232, 295, None, None, None),
+    ("VARSHA", "SANTOON (DYED)", None, 90, None, None, None, None),
+    ("VARSHA", "HAND WORK PR PC", None, None, None, None, 120, None),
+    ("VARSHA", "CREPE HAND WORK PR PC", None, None, None, None, 160, None),
+    ("VARSHA", "MUSLIN PRINT HAND WORK PR PC", None, None, None, None, 120, 125),
+    ("VARSHA", "CHINON DUPATTA MTR", None, 220, 275, None, None, None),
+    ("VIPUL", "MUSLINE", None, 160, 185, None, None, None),
+    ("VIPUL", "CREPE", None, 220, 265, None, None, None),
+    ("VIPUL", "ORGENZA", None, None, 220, None, None, None),
+    ("VIPUL", "RUSSIAN SILK", None, 185, None, None, None, None),
+    ("VIPUL", "CHINON SIFON", None, 180, 230, None, None, None),
+    ("EKTA FABRIC", "CHANDERI DIG. TOP/DUP.", None, None, None, 390, None, None),
+    ("EKTA FABRIC", "LILEN DIG. TOP/DUP.", None, None, None, 435, None, None),
+    ("EKTA FABRIC", "MODAL DAYED DIG. TOP/DUP.", None, None, None, 675, None, None),
+    ("EKTA FABRIC", "MOONGA DIG. TOP/DUP. JAMDANI", None, None, None, 675, None, None),
+    ("EKTA FABRIC", "MOONGA FLEB DIG. TOP/DUP. JAMDANI", None, None, None, 565, None, None),
+    ("VINAYAK", "CREPE", None, 210, 250, None, None, None),
+    ("VINAYAK", "BEMBER RUSSION SILK", None, 250, None, None, None, None),
+    ("VINAYAK", "MUSLIN", None, 145, 180, None, None, None),
+    ("VINAYAK", "MUL CHANDERI", None, None, 225, None, None, None),
+    ("VINAYAK", "ORGENZA (PRINTED)", None, None, 235, None, None, None),
+    ("VINAYAK", "DIG. 60*60 COTTON", None, 135, None, None, None, None),
+    ("VINAYAK", "DIG. VISCOS ORGENZA", 225, None, 220, None, None, None),
+    ("SHREE SANTINATH", "FLEX LILEN", None, None, 132, None, None, None),
+    ("SHREE SANTINATH", "FLEX LILEN DUPATTA (PER PC)", None, None, None, None, 145, None),
+    ("SHREE SANTINATH", "FLEX WRINKLE SWISS", None, None, 142, None, None, None),
+    ("VEDANSHI", "PLAIN ORGENZA", 85, None, 135, None, None, None),
+    ("VEDANSHI", "MUSLIN", 165, None, 200, None, None, None),
+    ("BSK", "MUL CHANDERI", None, 175, 210, None, None, None),
+    ("BSK", "COTTON", None, None, 155, None, None, None),
+    ("K THREE PLUS", "CHIKU CHANDERI", 73, None, 85, None, None, None),
+    ("K THREE PLUS", "MUSLIN", None, None, None, None, None, None),
+    ("K THREE PLUS", "COTTON SILK", None, None, None, None, None, None),
+    ("K THREE PLUS", "GAJJI SILK", None, None, None, None, None, None),
+]
+_VR_KEYS = ["Vendor", "Fabric"] + VR_PRICE_COLS + [VR_PC_MAX]
+
+
+def vr_default_records():
+    return [dict(zip(_VR_KEYS, r)) for r in _VR_DEFAULT_ROWS]
+
+
+def vr_category(fabric, has_pc=False):
+    """Clean fabric group for filters (spelling variations -> one category)."""
+    t = str(fabric).upper()
+    if has_pc or re.search(r"HAND\s*WORK|TOP\s*/\s*DUP|\bP(ER|R)\s*PC\b", t):
+        return "Hand Work / Dupatta"
+    for pattern, name in (
+        (r"RUSSI", "Russian Silk"), (r"CHANDERI", "Mul Chanderi"), (r"CHINON", "Chinon"),
+        (r"ORGENZA|ORGANZA", "Organza"), (r"MUSLIN", "Muslin"), (r"CREPE", "Crepe"),
+        (r"LILEN|LINEN", "Linen"), (r"SANTOON", "Santoon"), (r"SILK", "Silk"), (r"COTTON", "Cotton"),
+    ):
+        if re.search(pattern, t):
+            return name
+    return "Other"
+
+
+def _vr_num(v):
+    """Cell -> (value or None, upper value or None). Handles 120, '₹1,200', 'N/A', '120/125'."""
+    if v is None:
+        return None, None
+    if isinstance(v, (int, float, np.integer, np.floating)):
+        return (None, None) if pd.isna(v) else (float(v), None)
+    s = str(v).replace("₹", "").replace(",", "").strip()
+    nums = re.findall(r"\d+(?:\.\d+)?", s)
+    if not nums:
+        return None, None
+    return float(nums[0]), (float(nums[1]) if len(nums) > 1 else None)
+
+
+def vr_build(records):
+    """records -> tidy DataFrame (0 / blank rates are kept out of every average and min / max)."""
+    out = []
+    for r in records:
+        vendor, fabric = str(r.get("Vendor", "")).strip(), str(r.get("Fabric", "")).strip()
+        if not vendor or not fabric:
+            continue
+        vals, pending = {}, []
+        for c in VR_PRICE_COLS:
+            v, _hi = _vr_num(r.get(c))
+            if v == 0:
+                pending.append(c)
+                v = None
+            vals[c] = v
+        pc_max = _vr_num(r.get(VR_PC_MAX))[0] or _vr_num(r.get(VR_PC_COL))[1]
+        if all(v is None for v in vals.values()) and not pending:
+            pending = ["ALL"]                      # every rate blank
+        status = "✅ OK"
+        if pending:
+            status = "⚠️ Pending / N/A" + ("" if pending == ["ALL"] else f" ({', '.join(pending)})")
+        note = ""
+        if vals[VR_PC_COL] and pc_max and pc_max != vals[VR_PC_COL]:
+            note = f"Range ₹{vals[VR_PC_COL]:,.0f}–{pc_max:,.0f} per pc"
+        row = {"Vendor": vendor, "Fabric": fabric,
+               "Category": vr_category(fabric, has_pc=vals[VR_PC_COL] is not None)}
+        row.update({c: (np.nan if vals[c] is None else vals[c]) for c in VR_PRICE_COLS})
+        row.update({VR_PC_MAX: (np.nan if not pc_max else pc_max), "Pending Cells": len(pending),
+                    "Status": status, "Note": note})
+        out.append(row)
+    cols = ["Vendor", "Fabric", "Category"] + VR_PRICE_COLS + [VR_PC_MAX, "Pending Cells", "Status", "Note"]
+    return pd.DataFrame(out, columns=cols)
+
+
+def _vr_header(h):
+    t = str(h).strip().lower()
+    for ch in ('"', "”", "″", "'", "inches", "inch", "width", " "):
+        t = t.replace(ch, "")
+    if t in ("vendor", "vendorname", "supplier", "party"):
+        return "Vendor"
+    if t in ("fabric", "fabricname", "item", "fabricitem", "quality", "name"):
+        return "Fabric"
+    if t in ("36", "44", "60"):
+        return t + '"'
+    if t in ("44/36", "36/44"):
+        return '44/36"'
+    if t in ("perpcmax", "perpiecemax", "pcmax", "maxperpc"):
+        return VR_PC_MAX
+    if t in ("perpc", "perpiece", "pc", "piece", "perpcrate", "rateperpc"):
+        return VR_PC_COL
+    return None
+
+
+def vr_parse_text(text):
+    """CSV (comma / tab - straight copy from Google Sheet works) or JSON text -> list of record dicts."""
+    import io
+    import json
+    text = (text or "").strip().lstrip("\ufeff")
+    if not text:
+        raise ValueError("Koi data nahi mila.")
+    if text[0] in "[{":
+        data = json.loads(text)
+        if isinstance(data, dict):
+            data = next((v for v in data.values() if isinstance(v, list)), None)
+        if not isinstance(data, list):
+            raise ValueError("JSON me records ki list honi chahiye.")
+        df = pd.DataFrame(data)
+    else:
+        df = pd.read_csv(io.StringIO(text), sep=None, engine="python", dtype=str, keep_default_na=False)
+    df = df.rename(columns={c: _vr_header(c) for c in df.columns if _vr_header(c)})
+    df = df.loc[:, ~df.columns.duplicated()]
+    if "Vendor" not in df.columns or "Fabric" not in df.columns:
+        raise ValueError("Columns 'Vendor' aur 'Fabric' zaroori hain (template download karke dekhein).")
+    if not any(c in df.columns for c in VR_PRICE_COLS):
+        raise ValueError("Kam se kam ek rate column chahiye: 36, 44, 60, 44/36 ya Per Pc.")
+    df = df.astype(object).where(pd.notna(df), None)
+    recs = []
+    for r in df.to_dict("records"):
+        recs.append({k: (r.get(k) if r.get(k) not in ("", None) else None) for k in _VR_KEYS})
+    if not vr_build(recs).shape[0]:
+        raise ValueError("Koi valid row nahi mili.")
+    return recs
+
+
+def vr_template_csv():
+    return pd.DataFrame(vr_default_records())[_VR_KEYS].to_csv(index=False).encode("utf-8-sig")
+
+
+def _vr_current_records():
+    import json
+    raw = st.session_state.get(VR_STATE_KEY)
+    if raw:
+        try:
+            return json.loads(raw), True
+        except Exception:
+            pass
+    return vr_default_records(), False
+
+
+def vr_filter(d, vendor, cat, width, query):
+    x = d
+    if vendor != "All":
+        x = x[x["Vendor"] == vendor]
+    if cat != "All":
+        x = x[x["Category"] == cat]
+    if width == 'Has 44"':
+        x = x[x['44"'].notna() | x['44/36"'].notna()]
+    elif width == 'Has 60"':
+        x = x[x['60"'].notna()]
+    elif width == 'Has 36"':
+        x = x[x['36"'].notna() | x['44/36"'].notna()]
+    elif width == "Per Piece only":
+        x = x[x[VR_PC_COL].notna() & ~x[VR_METER_COLS].notna().any(axis=1)]
+    tokens = [t for t in re.split(r"\s+", str(query or "").lower().strip()) if t]
+    if tokens:
+        hay = (x["Vendor"] + " " + x["Fabric"] + " " + x["Category"]).str.lower()
+        for t in tokens:
+            x = x[hay.loc[x.index].str.contains(re.escape(t))]
+    return x
+
+
+def vr_lowest(x, col):
+    s = x[col].dropna()
+    if s.empty:
+        return "—"
+    i = s.idxmin()
+    return f"₹{s[i]:,.0f} · {x.loc[i, 'Vendor']} · {x.loc[i, 'Fabric']}"
+
+
+def vr_benchmark(x):
+    rows = []
+    for vendor, g in x.groupby("Vendor", sort=False):
+        meter = g[VR_METER_COLS].stack()
+        rows.append({
+            "Vendor": vendor,
+            "Total Items": len(g),
+            'Avg 44" Rate': g['44"'].mean(),
+            'Avg 60" Rate': g['60"'].mean(),
+            "Min Rate": meter.min() if not meter.empty else np.nan,
+            "Max Rate": meter.max() if not meter.empty else np.nan,
+            "Per Pc Items": int(g[VR_PC_COL].notna().sum()),
+            "Pending": int(g["Pending Cells"].sum()),
+        })
+    return pd.DataFrame(rows)
+
+
+def vr_compare(c, widths):
+    """Per vendor: cheapest fabric + rate for every width, plus Best Price badge."""
+    rows = []
+    for vendor, g in c.groupby("Vendor", sort=False):
+        row = {"Vendor": vendor}
+        for w in widths:
+            s = g[w].dropna()
+            if s.empty:
+                row[f"{w} Rate"], row[f"{w} Fabric"] = np.nan, ""
+            else:
+                i = s.idxmin()
+                row[f"{w} Rate"], row[f"{w} Fabric"] = s[i], g.loc[i, "Fabric"]
+        rows.append(row)
+    cmp = pd.DataFrame(rows)
+    best = {w: cmp[f"{w} Rate"].min() for w in widths}
+    cmp["Best Price"] = [
+        " ".join(f"🏆 {w}" for w in widths if pd.notna(r[f"{w} Rate"]) and r[f"{w} Rate"] == best[w])
+        for _, r in cmp.iterrows()
+    ]
+    cmp = cmp.sort_values(f"{widths[0]} Rate", na_position="last", kind="mergesort").reset_index(drop=True)
+    order = ["Vendor"] + [c for w in widths for c in (f"{w} Rate", f"{w} Fabric")] + ["Best Price"]
+    return cmp[order], best
+
+
+# ---------------------------------------------------------------- UI
+def _vr_update_panel(is_custom):
+    import json
+    with st.expander("🔄 Update / Paste New Sheet Data", expanded=False):
+        st.caption('Format: ek flat table - columns **Vendor, Fabric, 36", 44", 60", 44/36", Per Pc** (optional **Per Pc Max**). '
+                   "Rate khali = nahi milta, 0 = Pending. Google Sheet me wahi table select karke copy → neeche paste kar sakte hain.")
+        c1, c2 = st.columns(2)
+        up = c1.file_uploader("CSV / JSON file upload", type=["csv", "json", "txt"], key="_vr_upload")
+        pasted = c2.text_area("Ya data yahan paste karein (CSV / tab-separated / JSON)", height=140, key="vr_paste")
+        b1, b2, b3, b4 = st.columns(4)
+        if b1.button("✅ Apply new data", key="_vr_apply", **STRETCH):
+            try:
+                text = up.getvalue().decode("utf-8-sig") if up is not None else pasted
+                recs = vr_parse_text(text)
+                st.session_state[VR_STATE_KEY] = json.dumps(recs)
+                st.rerun()
+            except ValueError as e:
+                notice(str(e), "error")
+            except Exception as e:                      # bad file / bad JSON
+                notice(f"Data padh nahi paya: {e}", "error")
+        if is_custom and b2.button("↩️ Reset to built-in data", key="_vr_default", **STRETCH):
+            st.session_state.pop(VR_STATE_KEY, None)
+            st.rerun()
+        b3.download_button("⬇️ Template / current data CSV", vr_template_csv() if not is_custom else
+                           pd.DataFrame(_vr_current_records()[0])[_VR_KEYS].to_csv(index=False).encode("utf-8-sig"),
+                           file_name="vendor_rates.csv", mime="text/csv", key="dl_vr_template", **STRETCH)
+        notice("Naya data sirf is session me rehta hai (page reload par built-in data wapas aata hai). "
+               "Permanent karne ke liye CSV download karke code me _VR_DEFAULT_ROWS update karein.", "info")
+
+
+def render_vendor_rate_dashboard():
+    records, is_custom = _vr_current_records()
+    d = vr_build(records)
+    dash_title("💰 Vendor Rate Comparison", chip="📥 Uploaded data" if is_custom else "📋 NEW RATE SHEET")
+    _vr_update_panel(is_custom)
+    if d.empty:
+        notice("Rate data nahi mila.", "warning")
+        return
+
+    # ---- filters -----------------------------------------------------------
+    vendors = ["All"] + list(dict.fromkeys(d["Vendor"]))
+    cats = ["All"] + sorted(d["Category"].unique())
+    widths = ["All", 'Has 44"', 'Has 60"', 'Has 36"', "Per Piece only"]
+    for key, opts in (("vr_vendor", vendors), ("vr_cat", cats), ("vr_width", widths)):
+        if st.session_state.get(key) not in opts:
+            st.session_state[key] = "All"
+    f1, f2, f3, f4 = st.columns([1, 1, 1, 1.3])
+    vendor = f1.selectbox("Vendor", vendors, key="vr_vendor")
+    cat = f2.selectbox("Fabric category", cats, key="vr_cat")
+    width = f3.selectbox("Width availability", widths, key="vr_width")
+    query = f4.text_input("🔍 Search fabric / vendor", key="vr_search", placeholder="e.g. crepe, RV, organza")
+    x = vr_filter(d, vendor, cat, width, query)
+
+    # ---- KPIs ----------------------------------------------------------------
+    badge("Overview")
+    metrics([
+        ("Total Vendors", f"{x['Vendor'].nunique()}"),
+        ("Total Fabric Offerings", f"{len(x)}"),
+        ('Lowest 44" Rate', vr_lowest(x, '44"')),
+        ('Lowest 60" Rate', vr_lowest(x, '60"')),
+        ("Pending / Missing Rates", f"{int(x['Pending Cells'].sum())}"),
+    ])
+    if x.empty:
+        notice("Selected filters ke liye koi fabric nahi mila.", "warning")
+        return
+
+    # ---- side-by-side comparison --------------------------------------------
+    badge("Side-by-Side Fabric Price Comparison")
+    all_cats = sorted(d["Category"].unique())
+    if st.session_state.get("vr_cmp_cat") not in all_cats:
+        st.session_state["vr_cmp_cat"] = "Crepe" if "Crepe" in all_cats else all_cats[0]
+    sel = st.selectbox("Compare fabric category", all_cats, key="vr_cmp_cat",
+                       help="Yeh comparison hamesha saare vendors ke beech hota hai (upar ke Vendor filter se alag).")
+    c = d[d["Category"] == sel]
+    mw = [w for w in VR_METER_COLS if c[w].notna().any()]
+    if mw:
+        cmp, best = vr_compare(c, mw)
+        tiles = []
+        for w in mw:
+            i = c[w].idxmin()
+            tiles.append((f"Cheapest {w}", f"₹{best[w]:,.0f} · {c.loc[i, 'Vendor']} · {c.loc[i, 'Fabric']}"))
+        tiles.append(("Vendors offering", f"{c['Vendor'].nunique()}"))
+        metrics(tiles)
+        long = []
+        for _, r in cmp.iterrows():
+            for w in mw:
+                if pd.notna(r[f"{w} Rate"]):
+                    star = " ★" if r[f"{w} Rate"] == best[w] else ""
+                    long.append({"Vendor": r["Vendor"], "Width": w, "Rate": r[f"{w} Rate"],
+                                 "Label": f"₹{r[f'{w} Rate']:,.0f}{star}"})
+        fig = px.bar(pd.DataFrame(long), x="Vendor", y="Rate", color="Width", barmode="group", text="Label",
+                     color_discrete_sequence=pal(), labels={"Rate": "Rate (₹ / mtr)"})
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        chart(fig, f"{sel}: vendor-wise cheapest rate (★ = Best Price)", height=380, ns="vr")
+        show_table(cmp, money_cols=[f"{w} Rate" for w in mw], sort=False)
+    pc = c[c[VR_PC_COL].notna()].sort_values(VR_PC_COL)
+    if not pc.empty:
+        badge(f"{sel}: per piece rates (alag - per-meter se mix nahi)")
+        t = pc[["Vendor", "Fabric", VR_PC_COL]].rename(columns={VR_PC_COL: "Rate / Pc"}).reset_index(drop=True)
+        t["Range"] = [n for n in pc["Note"]]
+        t["Best Price"] = ["🏆 Best Price" if v == t["Rate / Pc"].min() else "" for v in t["Rate / Pc"]]
+        show_table(t, money_cols=["Rate / Pc"], sort=False)
+    if not mw and pc.empty:
+        notice("Is category me abhi koi rate available nahi hai.", "warning")
+
+    # ---- vendor benchmark ---------------------------------------------------------
+    badge("Vendor Benchmark Summary (per-meter rates; column header par click karke sort karein)")
+    bm = vr_benchmark(x)
+    money = lambda lab: st.column_config.NumberColumn(lab, format="₹%.0f")
+    st.dataframe(bm, hide_index=True, column_config={
+        'Avg 44" Rate': money('Avg 44" Rate'), 'Avg 60" Rate': money('Avg 60" Rate'),
+        "Min Rate": money("Min Rate"), "Max Rate": money("Max Rate")}, **STRETCH)
+    st.caption('Averages sirf 44" aur 60" ke rates ka hai. 0 / blank (Pending) rates aur per-piece items average, min, max me nahi ginte.')
+
+    # ---- master table ---------------------------------------------------------------
+    badge(f"Master Rate Sheet ({len(x)} of {len(d)} items)")
+    cols = ["Vendor", "Fabric", "Category"] + VR_PRICE_COLS + ["Status", "Note"]
+    cfg = {c_: money(c_) for c_ in VR_PRICE_COLS}
+    st.dataframe(x[cols], hide_index=True, column_config=cfg, **STRETCH)
+    st.download_button("⬇️ Download CSV", x[cols].to_csv(index=False).encode("utf-8-sig"),
+                       file_name="vendor_rates_filtered.csv", mime="text/csv", key="dl_vr_master")
+
+
+# -----------------------------------------------------------------------------
 # 14. MAIN ROUTER
 # -----------------------------------------------------------------------------
 LIVE_OPTIONS = {"Off": 0, "Every 1 min": 60, "Every 2 min": 120, "Every 5 min": 300}
@@ -3478,7 +4475,8 @@ def main():
     try:
         if splash is not None:
             # behind the logo: all 5 sheets at the same time, so every tab opens without waiting afterwards
-            _prefetch_sources(["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue"])
+            _prefetch_sources(["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue",
+                               "flo_future"])
         _main_body()
     finally:
         _hide_splash(splash, t0)       # always removed, even if something fails
@@ -3487,7 +4485,7 @@ def main():
 def _main_body():
     with st.sidebar:
         st.markdown("### ⏱️ Live Updates")
-        choice = st.selectbox("Auto-refresh (Sample, Fabricator, Fabric PO & Target)", list(LIVE_OPTIONS.keys()), index=2, key="live_choice",
+        choice = st.selectbox("Auto-refresh (Sample, Fabricator, Fabric PO, Target & FLO Future)", list(LIVE_OPTIONS.keys()), index=2, key="live_choice",
                               help="Google Sheet me change hone par dashboard itne time me khud update ho jayega. "
                                    "Master Sheet ke liye Refresh button use karein ya page reload karein.")
         st.session_state["live_secs"] = LIVE_OPTIONS[choice]
@@ -3498,18 +4496,19 @@ def _main_body():
 
     fy = f"{FY_START_YEAR}-{(FY_START_YEAR + 1) % 100:02d}"
     _html(f'<div class="dashboard-hero"><div class="hero-t">📊 Executive Operations &amp; Production Hub {fy}</div>'
-          f'<p>Overview · Designer · Production · Client · Sample · Fabricator · Fabric PO · Target &amp; Revenue — live from Google Sheets</p></div>')
+          f'<p>Overview · Designer · Production · Client · Sample · Fabricator · Fabric PO · Target &amp; Revenue · FLO Future · Vendor Rate — live from Google Sheets</p></div>')
 
     master_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "tracker")
     sample_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "sample_summary")
     fab_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "overview_fabricators")
     po_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "fabric_po")
     tgt_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "target_revenue")
+    ff_name = next(n for n, c in SHEET_REGISTRY.items() if c.get("type") == "flo_future")
     master_cfg = SHEET_REGISTRY[master_name]
 
     labels = ["📌 Overview", "👨‍🎨 Designer Dashboard", "🏭 Production Process Dashboard", "🏢 Client Dashboard",
               "🔬 Sample Dashboard", "🧵 Fabricator Dashboard", "🧾 Fabric PO Dashboard",
-              "🎯 Target & Revenue Dashboard"]
+              "🎯 Target & Revenue Dashboard", "🔮 FLO Future", "💰 Vendor Rate"]
     # Only the open tab is built (Streamlit 1.5x+). Older Streamlit: all tabs are built, like before.
     try:
         tabs = st.tabs(labels, key="main_tab", on_change="rerun")
@@ -3517,7 +4516,7 @@ def _main_body():
     except TypeError:
         tabs = st.tabs(labels)
         lazy = False
-    t_ovw, t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt = tabs
+    t_ovw, t_des, t_prod, t_cli, t_smp, t_fab, t_po, t_tgt, t_ff, t_vr = tabs
 
     def is_open(t):
         if not lazy:
@@ -3562,6 +4561,15 @@ def _main_body():
         _prefetch_sources(["target_revenue"])
         with t_tgt:
             _safe(render_target_dashboard, tgt_name, SHEET_REGISTRY[tgt_name])
+    if is_open(t_ff):
+        with t_ff:
+            try:
+                render_flo_future_dashboard(ff_name, SHEET_REGISTRY[ff_name])
+            except SheetAccessError as e:
+                _ff_access_error(e)
+    if is_open(t_vr):
+        with t_vr:
+            render_vendor_rate_dashboard()
 
 
 if __name__ == "__main__":

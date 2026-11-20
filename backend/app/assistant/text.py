@@ -21,6 +21,10 @@ PHRASES = [
     ("order by", "client"), ("ordered by", "client"),
     ("total orders", "order qty"), ("total order", "order qty"), ("order quantity", "order qty"),
     ("kitne order", "order qty"), ("kitna order", "order qty"),
+    ("not updated", "notupdated"), ("update nahi", "notupdated"),
+    ("due soon", "due"), ("next 7 days", "due"), ("next week", "due"), ("this week", "due"), ("is hafte", "due"),
+    ("visits and meetings", "visit meeting"), ("visits & meetings", "visit meeting"),
+    ("not planned", "unplanned"), ("plan nahi", "unplanned"),
 ]
 
 # Single words -> canonical word.
@@ -65,6 +69,14 @@ WORDS = {
     "average": "avg", "avg": "avg", "mean": "avg",
     "required": "require", "needed": "require", "need": "require", "zaroorat": "require", "chahiye": "require",
     "chahie": "require", "chahiyen": "require",
+    # FLO Future
+    "promise": "promised", "promises": "promised", "commitment": "promised", "commitments": "promised",
+    "committed": "promised", "vaada": "promised", "vada": "promised", "wada": "promised",
+    "done": "completed", "complete": "completed", "finished": "completed", "ready": "completed",
+    "completion": "completed", "pura": "completed", "poora": "completed",
+    "outsourced": "outsource", "bahar": "outsource",
+    "meetings": "meeting", "visits": "visit", "baithak": "meeting",
+    "teams": "team",
 }
 
 # Words that mostly say which page a question is about. When a question also has a more specific word
@@ -80,7 +92,7 @@ whose kaun konsa kaunsa kon sa wala wali wale ye yeh woh wo uska iska there any 
 it its it's by from as us my your hamara hamare humara mujhe hume our pe par bhi just only sirf bas aur ji sir mam
 madam hello hi hey thanks thank ok okay right now today data number list names name see
 find check know dikhata dikhati dikhate dikha hota hoti hote hue hua hui raha rahe rahi gaya gaye gayi paas
-kis kisne kisi liye wala tha thi the wise
+kis kisne kisi liye wala tha thi the wise flo future
 """.split())
 
 GENERIC_NAME_WORDS = set("""

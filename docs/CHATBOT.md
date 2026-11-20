@@ -54,6 +54,34 @@ dashboard's numbers and pages, in English, Hinglish or Hindi, and quotes exactly
 - Answer style: add "in one word" for just the number, or "in detail" for a breakdown.
 - Follow-ups keep the subject: "total samples" → "and for May?".
 
+### FLO Future (this month's promises)
+
+The FLO Future page is one more page the assistant reads, so its figures work like any other: "kitne samples pending
+hai flo future me", "Keerti ka completion rate", "Team A pending samples", "longest overdue", "how many visits and
+meetings done", "which designer has most pending promises", "har team ka pending". A few things are specific to it:
+
+- Words: *promise / promised / vaada / commitment*, *outsource*, *visits / meetings*, *not updated*, *due soon /
+  this week / is hafte*. "Team A" / "Team B" / "Team C" work as names and as a ranking.
+- FLO Future answers only when the question is about promises / FLO Future (or names a team): "Keerti pending" still
+  means Production. Pending, overdue, due or promised **samples** go to FLO Future (the Samples page only has
+  approval figures).
+- "Which / kaun se / list" + overdue, due, not updated or pending names the **items** themselves, worst first, with
+  designer, pcs and how late: "which samples are overdue", "kaun se items is hafte due hai",
+  "Charu ke kaun se samples pending hai", "list overdue promises for Team B".
+- Answers say which month's sheet they come from ("… (November 2026 promises)"), not "all months so far".
+
+### Vendor Rate (fabric rates)
+
+Price questions about fabric go to the Vendor Rate page and are answered from its rate list:
+
+- **Cheapest / dearest** for a fabric: "crepe ka sabse sasta vendor kaun hai", "cheapest 44 inch muslin",
+  "most expensive organza". 60" width unless the question says 44, 36 or per piece.
+- **A vendor's rates**: "Varsha ki rate list", "BSK rates"; one vendor and one fabric: "RV ka crepe rate".
+- **All rates for a fabric**: "russian silk rates", "chanderi kitne ka milta hai" (musline / lilen / russion and
+  other spellings map to the same fabric category).
+- Page figures work as usual: "lowest 60 inch rate", "lowest 44 inch rate", "pending rates".
+- "Fabric pending", "approval rate" and "on time rate of vendors" still go to Fabric PO / Samples as before.
+
 ## Files
 
 | Part | Where |

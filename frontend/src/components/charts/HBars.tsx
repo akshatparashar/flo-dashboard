@@ -13,10 +13,13 @@ interface Props {
   descending?: boolean;     // biggest first (input arrives smallest-first from the API)
   max?: number;             // cap rows
   sortBy?: string;          // sort by this series instead of the row total
+  colors?: Record<string, string>;                      // fixed colour per series name
+  endLabel?: (category: string, total: number) => string; // text after each bar (default: the row total)
 }
 
 /** Horizontal stacked bars, one row per entity: who ranks, and how each splits. */
-export function HBars({ data, money = false, unit = "", label, descending = true, max = 14, sortBy }: Props) {
+export function HBars({ data, money = false, unit = "", label, descending = true, max = 14, sortBy, colors, endLabel }: Props) {
+  const color = (n: string, k: number) => colors?.[n] ?? colorFor(n, k);
   const [ref, width] = useWidth<HTMLDivElement>();
   const svgRef = useRef<SVGSVGElement>(null);
   const [tip, setTip] = useState<TipState | null>(null);
@@ -31,7 +34,7 @@ export function HBars({ data, money = false, unit = "", label, descending = true
 
   const rowH = 30;
   const nameW = Math.min(150, Math.max(90, width * 0.28));
-  const m = { t: 4, r: 56, b: 22, l: nameW };
+  const m = { t: 4, r: endLabel ? 104 : 56, b: 22, l: nameW };
   const iw = Math.max(0, width - m.l - m.r);
   const height = m.t + m.b + rows.length * rowH;
   const maxV = Math.max(0, ...rows.map((r) => r.total));
@@ -72,7 +75,7 @@ export function HBars({ data, money = false, unit = "", label, descending = true
                     transform={`translate(0,${j * rowH})`}
                     onMouseMove={(e) => {
                       const b = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
-                      setTip({ x: e.clientX - b.left, y: e.clientY - b.top, title: name, rows: series.map((s, k) => ({ name: s.name, color: colorFor(s.name, k), value: fmtV(s.values[r.i] ?? 0) })) });
+                      setTip({ x: e.clientX - b.left, y: e.clientY - b.top, title: name, rows: series.map((s, k) => ({ name: s.name, color: color(s.name, k), value: fmtV(s.values[r.i] ?? 0) })) });
                     }}
                   >
                     <rect className="hover-band" x={0} y={1} width={width} height={rowH - 2} rx={6} opacity={tip?.title === name ? 1 : 0} />
@@ -84,10 +87,10 @@ export function HBars({ data, money = false, unit = "", label, descending = true
                       const x0 = x(acc);
                       acc += v;
                       const w = x(acc) - x0;
-                      return w > 0 ? <rect key={s.name} className="bar" x={m.l + x0} y={8} width={Math.max(0, w - 1)} height={rowH - 16} rx={2} fill={colorFor(s.name, k)} /> : null;
+                      return w > 0 ? <rect key={s.name} className="bar" x={m.l + x0} y={8} width={Math.max(0, w - 1)} height={rowH - 16} rx={2} fill={color(s.name, k)} /> : null;
                     })}
                     <text className="val" x={m.l + x(r.total) + 6} y={rowH / 2} dy="0.32em">
-                      {money ? tickText(r.total, true) : fmtInt(r.total)}
+                      {endLabel ? endLabel(r.c, r.total) : money ? tickText(r.total, true) : fmtInt(r.total)}
                     </text>
                   </g>
                 );

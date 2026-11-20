@@ -12,7 +12,7 @@ import type { Alert, OverviewData } from "../../lib/types";
 
 const KEYS = ["month"];
 const AREA_LINK: Record<string, Href> = { orders: "/production", overdue: "/production", stock: "/fabricators", po: "/fabric-po", samples: "/samples" };
-const AREA_NAME: Record<string, string> = { orders: "Production", overdue: "Delivery", stock: "Fabricator stock", po: "Fabric PO", samples: "Samples", none: "Data" };
+const AREA_NAME: Record<string, string> = { orders: "Production", overdue: "Delivery", stock: "Fabricator stock", po: "Fabric PO", samples: "Samples", promises: "FLO Future", none: "Data" };
 const SEVERITY: Record<string, number> = { error: 0, warning: 1, info: 2, success: 3 };
 
 function AlertCard({ a }: { a: Alert }) {

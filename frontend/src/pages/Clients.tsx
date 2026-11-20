@@ -69,7 +69,7 @@ export default function Clients() {
                   <div className="span-12">
                     <Panel>
                       {cat.series.length ? (
-                        <Heatmap rows={cat.series.map((s) => s.name)} columns={cat.categories.map(shortMonth)} values={cat.series.map((s) => s.values)} label="Order pcs per category per month" />
+                        <Heatmap rows={cat.series.map((s) => s.name)} columns={cat.categories.map(shortMonth)} values={cat.series.map((s) => s.values)} label="Order pcs per category per month" full />
                       ) : (
                         <div className="state">No category data for these filters.</div>
                       )}

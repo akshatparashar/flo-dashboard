@@ -256,7 +256,7 @@ def test_gemini_only_when_rules_fail(client):
     r = a.answer("purchase paperwork tally?")
     assert r["engine"] == "gemini" and kpi(client, "/api/fabric-po", "Total POs") in bold(r["answer"])
     question, catalog = fake.calls[0]
-    sent = json.dumps(catalog)
+    sent = json.dumps(catalog, ensure_ascii=False)          # keep "≤" as text, not an escape code
     assert "Total POs" in sent and not re.search(r"\d{3,}", sent.replace("-26", "").replace("-27", ""))
 
 
@@ -304,3 +304,77 @@ def test_gemini_off_without_key(monkeypatch):
 def test_hinglish_target_left(client):
     r = ask(client, "target kitna bacha hai")
     assert r["answer"].startswith("Remaining target")
+
+
+# ------------------------------------------------------------------------------------------------ FLO Future
+def test_flo_future_overdue_count(client):
+    r = ask(client, "how many promised samples are overdue")
+    assert r["page"] == "/flo-future"
+    assert kpi(client, "/api/flo-future", "Overdue (Date Passed)") in r["answer"]
+
+
+def test_flo_future_pending_hinglish_and_team(client):
+    r = ask(client, "kitne samples pending hai flo future me")
+    assert r["page"] == "/flo-future" and kpi(client, "/api/flo-future", "Pending") in r["answer"]
+    team = client.get("/api/flo-future").json()["options"]["team"][0]
+    r = ask(client, f"{team} pending samples")
+    assert kpi(client, "/api/flo-future", "Pending", team=team) in r["answer"]
+
+
+def test_flo_future_rank_by_pending_not_promised(client):
+    body = client.get("/api/flo-future").json()
+    t = body["tables"]["designers"]
+    ci = [c["label"] for c in t["columns"]].index("Pending")
+    best = max((r for r in t["rows"] if r[0] != "TOTAL"), key=lambda r: r[ci])
+    r = ask(client, "which designer has most pending promises")
+    assert r["intent"] == "rank" and best[0].upper() in r["answer"].upper() and "Pending" in r["answer"]
+
+
+def test_flo_future_lists_overdue_items(client):
+    body = client.get("/api/flo-future").json()
+    late = [a for a in body["follow_up"] if a["bucket"] == "Overdue"]
+    late += [r for r in body["tables"]["outsource"]["rows"] if r[11] == "Overdue"]
+    r = ask(client, "which samples are overdue")
+    assert r["intent"] == "items" and r["page"] == "/flo-future"
+    assert bold(r["answer"])[0] == str(len(late))
+    if late:
+        assert late[0]["item"] in r["answer"]
+
+
+def test_flo_future_does_not_take_over_production(client):
+    assert ask(client, "how many pending pcs")["page"] == "/production"
+    assert ask(client, "total samples")["page"] == "/samples"
+    assert ask(client, "keerti pending")["page"] == "/production"
+
+
+# ------------------------------------------------------------------------------------------------ Vendor Rate
+def _rates(client):
+    t = client.get("/api/vendor-rate").json()["tables"]["master"]
+    ix = {c["label"]: i for i, c in enumerate(t["columns"])}
+    return t["rows"], ix
+
+
+def test_vendor_rate_cheapest_by_category(client):
+    rows, ix = _rates(client)
+    cat = rows[0][ix["Category"]]
+    priced = [r for r in rows if r[ix["Category"]] == cat and isinstance(r[ix['60"']], (int, float))]
+    best = min(priced, key=lambda r: (r[ix['60"']], r[ix["Vendor"]]))
+    r = ask(client, f"{cat.lower()} ka sabse sasta vendor kaun hai")
+    assert r["page"] == "/vendor-rate" and r["intent"] == "rates"
+    assert bold(r["answer"])[0] == best[ix["Vendor"]] and fmt.inr(best[ix['60"']]) in r["answer"]
+
+
+def test_vendor_rate_list_for_a_vendor(client):
+    rows, ix = _rates(client)
+    vendor = rows[-1][ix["Vendor"]]
+    r = ask(client, f"{vendor} ki rate list")
+    mine = [x for x in rows if x[ix["Vendor"]] == vendor]
+    assert r["intent"] == "rates" and f"({len(mine)} fabric" in r["answer"]
+    assert all(x[ix["Fabric"]] in r["answer"] for x in mine[:5])
+
+
+def test_vendor_rate_kpi_and_other_pages_unchanged(client):
+    r = ask(client, "lowest 60 inch rate")
+    assert r["page"] == "/vendor-rate" and kpi(client, "/api/vendor-rate", 'Lowest 60" Rate') in r["answer"]
+    assert ask(client, "fabric pending")["page"] == "/fabric-po"
+    assert ask(client, "approval rate")["page"] == "/samples"

@@ -232,6 +232,7 @@ export interface OverviewData extends Envelope {
     };
     samples?: { kpis: Kpi[]; table: TableData; chart: SeriesChart };
     designers?: { table: TableData };
+    flo_future?: FloHighlights;
   };
 }
 
@@ -259,4 +260,106 @@ export interface Health {
   source: "google" | "demo";
   ttl: number;
   auth_required: boolean;
+}
+
+export interface PromiseItem {
+  level: "error" | "warning";
+  bucket: string;
+  reason: string;
+  item: string;
+  designer: string;
+  team: string;
+  vendor: string;
+  status: string;
+  pending: number;
+  qty: number;
+  due: string | null;
+  days_left: number | null;
+}
+
+export interface CountSlice extends Slice {
+  items: number;
+}
+
+export interface FloVisits {
+  totals: { done: number; required: number; missed: number; not_planned: number };
+  summary: TableData;
+  detail: TableData;
+  chart: SeriesChart & { flags: string[] };
+}
+
+export interface FloFutureData extends Envelope {
+  empty?: boolean;
+  no_match?: boolean;
+  period: string;
+  today: string;
+  options: Options;
+  notices: Notice[];
+  checks?: Notice[];
+  kpis: Kpi[];
+  visits: FloVisits;
+  summary?: {
+    items: number;
+    target: number;
+    completed: number;
+    pending: number;
+    done_pct: number;
+    items_done: number;
+    overdue_items: number;
+    overdue_pcs: number;
+    due_soon: number;
+    due_soon_pcs: number;
+    no_due_date: number;
+    most_pending: { designer: string; pending: number } | null;
+    longest_overdue: { designer: string; item: string; days: number } | null;
+    visits: { done: number; required: number; missed: number; not_planned: number };
+  };
+  follow_up?: PromiseItem[];
+  tables?: { designers: TableData; teams: TableData; items: TableData; outsource: TableData };
+  charts?: {
+    designers: SeriesChart & {
+      labels: { designer: string; team: string; done_pct: number; completed: number; target: number; items: number; overdue_items: number; nearest: string }[];
+    };
+    due_status: CountSlice[];
+    status: CountSlice[];
+  };
+}
+
+export interface FloHighlights {
+  period: string;
+  kpis: Kpi[];
+  designers: { label: string; value: number; pending: number; target: number }[];
+  urgent: PromiseItem[];
+}
+
+export interface RateCompare {
+  category: string;
+  widths: string[];
+  vendors: number;
+  tiles: { width: string; rate: number; vendor: string; fabric: string }[];
+  chart: { vendors: string[]; series: { name: string; values: (number | null)[]; best: boolean[] }[] } | null;
+  table: TableData | null;
+  pieces: TableData | null;
+}
+
+export interface VendorCard {
+  vendor: string;
+  items: number;
+  pending: number;
+  table: TableData;
+}
+
+export interface VendorRateData extends Envelope {
+  empty?: boolean;
+  no_match?: boolean;
+  source?: string;
+  options: Options;
+  notices: Notice[];
+  checks?: Notice[];
+  kpis: Kpi[];
+  compare?: { categories: string[]; default: string; data: Record<string, RateCompare> };
+  tables?: { benchmark: TableData; master: TableData };
+  vendor_cards?: VendorCard[];
+  sheet_tables?: { vendor: string; items: number; table: TableData }[];
+  vendor_fabric?: { widths: string[]; data: Record<string, { categories: string[]; series: { name: string; values: (number | null)[]; best: boolean[] }[] }> };
 }

@@ -23,13 +23,15 @@ from . import calc, fmt
 from .orders import OrderAnalyst
 from .pages import (DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
+from ..dashboards.vendor_rate import category_in_text
 from .text import (BOTTOM, CONTEXT_WORDS, GENERIC_NAME_WORDS, HOWMANY, MARKERS, MONTH_ALIASES, STOP, TOP, TREND, WORDS,
                    label_tokens, language_of, name_key, norm, raw_tokens, similar, tokens)
 
 Fetch = Callable[[str, dict], dict]
 
 THRESHOLD = 1.0           # below this, the rules are not sure what was asked
-SOFT = {"new", "yearly", "annual", "fy", "all", "sheet", "overall", "qty", "mtr", "day"}
+SOFT = {"new", "yearly", "annual", "fy", "all", "sheet", "overall", "qty", "mtr", "day",
+        "date", "pass", "promis"}           # FLO Future labels: "Overdue (Date Passed)", "Target Qty (Promised)"
 SKIP_KEYS = {"meta", "options", "charts", "matrix", "heatmap", "lines", "top_repeat", "gauge", "schedule"}
 SPECIAL_ROW = re.compile(r"^\(.*\)$|^(total|grand total)$", re.I)
 MAX_QUESTION = 500
@@ -227,6 +229,21 @@ _PLURAL_DIMS = "|".join(DIMENSION_PLURALS)
 _EACH = re.compile(rf"\b(?:of|for|by|across|among) (?:all |each |every |the |all the )?(?:{_PLURAL_DIMS})\b|"
                    rf"\b(?:each|every|har|sabhi|sab|all) (?:{_PLURAL_DIMS}|{'|'.join(DIMENSION_WORDS)})\b")
 _QUALITY = re.compile(r"\b(best|worst|reliable|unreliable)\b")
+_PROMISED = set(tokens("promised"))
+_PROMISE_MEASURES = set(tokens("pending overdue completed due notupdated unplanned rate"))
+# "which samples are overdue" / "kaun se items due hai": a list of promised items, not one figure
+_WHICH = re.compile(r"\b(which|what are|kaun|kon|konse|kaunse|konsa|kaunsa|list|kya kya|show|dikhao|names?)\b")
+_ITEM_MODES = [("overdue", r"\b(overdue|late|delay(ed)?|der)\b"),
+               ("notupdated", r"\b(not updated|update nahi|no status)\b"),
+               ("due", r"\b(due|this week|is hafte|next 7 days|aane wale|upcoming)\b"),
+               ("pending", r"\b(pending|baki|baaki|bache|open)\b")]
+_DUE_SOON = {"Due Today", "Due in 1-3 Days", "Due in 4-7 Days"}
+# Vendor Rate: price questions ("crepe ka rate", "sabse sasta vendor", "44 inch", "kitne ka milta hai")
+_RATE_WORDS = re.compile(r"\b(rates?|price[sd]?|pricing|cost|costs|costly|cheap\w*|sasta|sasti|saste|mehenga|mehngi|"
+                         r"mehnga|expensive|dear\w*|kitne ka|kitne me|kitne mein|per (mtr|meter|metre)|rate list|"
+                         r"rate card|inch|width|44|60|36)\b")
+_CHEAP = re.compile(r"\b(cheap\w*|sasta|sasti|saste|lowest|best|kam|minimum|min|lagbhag)\b")
+_DEAR = re.compile(r"\b(costly|mehenga|mehngi|mehnga|expensive|dearest|highest|maximum|max|zyada|jyada)\b")
 
 
 def _month_index(word: str) -> int | None:
@@ -352,7 +369,9 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     rest = " ".join(w for j, w in enumerate(words) if not used[j])
     q.toks = tokens(rest)
     q.dims = list(dict.fromkeys(DIMENSION_WORDS[x] for x in q.toks if x in DIMENSION_WORDS))
-    m = re.search(r"\b(?:top|bottom|best|worst|highest|lowest)\s*(\d{1,2}|three|five|ten)\b", t) or \
+    # "lowest 60 inch rate" names a width, not "the 60 lowest"
+    m = re.search(r"\b(?:top|bottom|best|worst|highest|lowest)\s*(\d{1,2}|three|five|ten)\b(?!\s*(?:inch|inches|width|mtr))",
+                  t) or \
         re.search(r"\b(\d{1,2})\s*(?:top|best|highest|lowest|worst)\b", t)
     if m:
         q.n = {"three": 3, "five": 5, "ten": 10}.get(m.group(1)) or int(m.group(1))
@@ -369,9 +388,31 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     if (re.search(r"\bfabric\b", t) and re.search(r"\b(po|pos|purchase|ordered|order)\b", t) or
             re.search(r"\b(po|pos|fpo|purchase orders?)\b", t)) and "fabric-po" not in q.pages:
         q.pages.append("fabric-po")
+    # Pending / overdue / due / done *samples* are this month's promises (the Samples page has no such figures)
+    if re.search(r"\bsamples?\b", t) and re.search(r"\b(pending|baki|baaki|bache|bacha|overdue|late|due|promis\w*|"
+                                                   r"vaada|vada|wada|completed?|done|not updated)\b", t) \
+            and "flo-future" not in q.pages:
+        q.pages.append("flo-future")
+    # "promised samples" are FLO Future's, not the Samples page's approvals
+    if re.search(r"\b(promis\w*|vaada|vada|wada|commit\w*)\b", t) and "samples" in q.pages:
+        q.pages.remove("samples")
+        if "flo-future" not in q.pages:
+            q.pages.append("flo-future")
+    # "pending promises": "promise" only names the page; the measure is the other word
+    if "flo-future" in q.pages and set(q.toks) & _PROMISE_MEASURES and set(q.toks) & _PROMISED and \
+            not re.search(r"\b(promised (samples?|qty|pcs|quantity)|kitne .*promise|promise kiy)", t):
+        q.toks = [x for x in q.toks if x not in _PROMISED]
+    # Rates / prices of fabric (or a fabric category named with a price word) are the Vendor Rate page
+    rate_q = bool(_RATE_WORDS.search(t)) and not re.search(r"\b(approv\w*|reject\w*|on.?time|received|rcvd|"
+                                                         r"completion|done|achieve\w*|percent\w*)\b", t)
+    if rate_q and (any(e.type in ("fabric", "vendor") for e in q.entities) or
+                   re.search(r"\b(fabric|kapda|vendor|inch|width)s?\b", t) or "vendor-rate" in q.pages or
+                   category_in_text(t)):
+        if "vendor-rate" not in q.pages:
+            q.pages.append("vendor-rate")
     # "fabric pending / received / ordered" is the Fabric PO sheet; fabric *issued* to fabricators is not
-    if re.search(r"\b(fabric|kapda|cloth)\b", t) and not re.search(r"\b(issue|issued|fabricators?|karigar|stock)\b", t) \
-            and "fabric-po" not in q.pages:
+    elif re.search(r"\b(fabric|kapda|cloth)\b", t) and not re.search(r"\b(issue|issued|fabricators?|karigar|stock)\b",
+                                                                    t) and "fabric-po" not in q.pages:
         q.pages.append("fabric-po")
 
     # intent --------------------------------------------------------------------
@@ -633,7 +674,9 @@ class Assistant:
         return f
 
     def _page_bonus(self, page: str, q: Query) -> float:
-        return (0.5 if page in q.pages else 0.0) - 0.01 * PAGES[page].order - (0.3 if page == "overview" else 0.0)
+        # Overview repeats other pages; FLO Future's generic labels ("Pending", "Completed") answer only when the
+        # question is about promises / FLO Future (or names a team, which only FLO Future has)
+        return (0.5 if page in q.pages else 0.0) - 0.01 * PAGES[page].order - (0.3 if page == "overview" else 0.0)             - (0.45 if page == "flo-future" and page not in q.pages else 0.0)
 
     def _candidates(self, q: Query, snap: Snapshot) -> list[Candidate]:
         out: list[Candidate] = []
@@ -740,6 +783,12 @@ class Assistant:
             page = next(iter(q.pages), None)
             if page:
                 return self._page_about(page, snap)
+        items = self._promise_items(q, snap)
+        if items:
+            return items
+        rates = self._rate_lookup(q, snap)
+        if rates:
+            return rates
         features = self._feature(q)
         if features and (_HOWTO.search(norm(q.text)) or not q.metric_toks):
             return self._reply(features, intent="help")
@@ -794,7 +843,12 @@ class Assistant:
         else:
             scope = q.scope()
             sentence = f"{best.label}{(' ' + scope) if scope else ''} is **{val}**."
-        if not q.months and best.kind == "kpi" and not best.label.lower().startswith(("top", "most")):
+        if best.page == "vendor-rate":
+            sentence = sentence[:-1] + " (current rate list)."
+        elif best.page == "flo-future":
+            period = (best.payload or {}).get("period")
+            sentence = sentence[:-1] + (f" ({period} promises)." if period else " (this month's promises).")
+        elif not q.months and best.kind == "kpi" and not best.label.lower().startswith(("top", "most")):
             sentence = sentence[:-1] + " (all months so far)."
         if elsewhere and best.page not in q.pages:
             sentence = sentence[:-1] + f" (from the {PAGES[best.page].label} page)."
@@ -1290,6 +1344,139 @@ class Assistant:
                     return self._reply(f"**{timing or r[0]}**", page, {"page": page}, intent="record")
                 return self._reply(f"**{r[0]}**\n" + "\n".join(parts), page, {"page": page}, intent="record")
         return None
+
+    def _rate_lookup(self, q: Query, snap: Snapshot) -> dict | None:
+        """Vendor Rate: the rates themselves - cheapest / dearest vendor for a fabric, a vendor's rate list, or one
+        vendor's rate for one fabric. Reads the Vendor Rate page's own rate list."""
+        if "vendor-rate" not in PAGES or "vendor-rate" not in q.pages:
+            return None
+        t = norm(q.text)
+        cats = [e for e in q.entities if e.type == "fabric"]
+        vendors = [e for e in q.entities if e.type == "vendor" and "vendor-rate" in e.raw]
+        t_cat = t
+        for v in vendors:                          # "NEELAM SILKS" names a vendor, not the fabric "silk"
+            t_cat = t_cat.replace(v.display.lower(), " ")
+        cat = cats[0].display if cats else category_in_text(t_cat)
+        if not cat and not vendors:
+            return None
+        if not cat and not re.search(r"\b(rates?|rate list|rate card|price|prices|kitne ka)\b", t):
+            return None
+        try:
+            data = snap.get("vendor-rate")
+        except DataUnavailable as err:
+            return self._reply(f"I can't read the vendor rate sheet right now ({err}).", "vendor-rate",
+                               understood=False)
+        tbl = (data.get("tables") or {}).get("master") or {}
+        cols = [c["label"] for c in tbl.get("columns") or []]
+        if "Category" not in cols:
+            return None
+        ix = {c: i for i, c in enumerate(cols)}
+        width = '44"' if re.search(r"\b44\b", t) else '36"' if re.search(r"\b36\b", t) else \
+            "Per Pc" if re.search(r"\b(per (pc|piece)|pc rate|piece)\b", t) else '60"'
+        wname = "per pc" if width == "Per Pc" else width
+        rows = [r for r in tbl["rows"] if (not cat or r[ix["Category"]] == cat)
+                and (not vendors or r[ix["Vendor"]] in {v.raw["vendor-rate"] for v in vendors})]
+        ctx = {"page": "vendor-rate", "metric": None, "intent": "rates", "entities": [e.ref() for e in q.entities],
+               "months": []}
+        who = " and ".join(v.display for v in vendors)
+        what = f"{cat} for {who}" if cat and who else (cat or who)
+        if not rows:
+            return self._reply(f"The rate list has no {what} rates.", "vendor-rate", ctx, intent="rates")
+
+        def money(v):
+            return fmt.inr(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else (str(v) if v else "—")
+
+        def line(r, show_vendor=True, all_widths=False):
+            head = f"**{r[ix['Fabric']]}**" + (f" ({r[ix['Vendor']]})" if show_vendor else "")
+            if all_widths:
+                parts = [f"{n} {money(r[ix[c]])}" for c, n in (('44"', '44"'), ('60"', '60"'), ('36"', '36"'),
+                                                               ('44/36"', '44/36"'), ("Per Pc", "per pc"))
+                         if c in ix and r[ix[c]] not in (None, "")]
+                return f"• {head}: " + (", ".join(parts) if parts else "no rate")
+            return f"• {head}: {money(r[ix[width]])} at {wname}"
+
+        priced = [r for r in rows if isinstance(r[ix[width]], (int, float)) and not isinstance(r[ix[width]], bool)]
+        dear = bool(_DEAR.search(t))
+        if _CHEAP.search(t) or dear:
+            if not priced:
+                return self._reply(f"No {what} has a {wname} rate on the rate list.", "vendor-rate", ctx,
+                                   intent="rates")
+            priced.sort(key=lambda r: (-r[ix[width]] if dear else r[ix[width]], r[ix["Vendor"]]))
+            best = priced[0]
+            word = "dearest" if dear else "cheapest"
+            if q.style == "terse":
+                return self._reply(f"**{best[ix['Vendor']]}** ({money(best[ix[width]])})", "vendor-rate", ctx,
+                                   intent="rates")
+            lines = [f"The {word} {what} at {wname} width is **{best[ix['Vendor']]}**: "
+                     f"{best[ix['Fabric']]} at **{money(best[ix[width]])}** per mtr."]
+            if len(priced) > 1:
+                lines.append(f"All {len(priced)} {wname} rates, {word} first:")
+                lines += [line(r) for r in priced[:10 if q.style != "detail" else 30]]
+                if len(priced) > 10 and q.style != "detail":
+                    lines.append(f"• … and {len(priced) - 10} more on the Vendor Rate page.")
+            return self._reply("\n".join(lines), "vendor-rate", ctx, intent="rates")
+        cap = 30 if q.style == "detail" else 15
+        lines = [f"Rates for {what} ({len(rows)} fabric{'s' if len(rows) != 1 else ''}, ₹ per mtr):"]
+        lines += [line(r, show_vendor=len(vendors) != 1, all_widths=True) for r in rows[:cap]]
+        if len(rows) > cap:
+            lines.append(f"• … and {len(rows) - cap} more on the Vendor Rate page.")
+        return self._reply("\n".join(lines), "vendor-rate", ctx, intent="rates")
+
+    def _promise_items(self, q: Query, snap: Snapshot) -> dict | None:
+        """FLO Future: names the promised items that are overdue / due soon / not updated / pending."""
+        t = norm(q.text)
+        if "flo-future" not in PAGES or not _WHICH.search(t):
+            return None
+        if "flo-future" not in q.pages and not re.search(r"\b(samples?|collections?|items?|projects?|promis\w*)\b", t):
+            return None
+        named = {e.type for e in q.entities}
+        if any(d not in named and d != "category" for d in q.dims):      # "which designer has most overdue" ranks
+            return None
+        mode = next((m for m, pat in _ITEM_MODES if re.search(pat, t)), None)
+        f = self._filters("flo-future", replace(q, months=[]))
+        if not mode or f is None:
+            return None
+        try:
+            data = snap.get("flo-future", f)
+        except DataUnavailable as err:
+            return self._reply(f"I can't read the FLO Future sheet right now ({err}).", "flo-future", understood=False)
+        found = []
+        for tname, kind in (("items", ""), ("outsource", " (outsource)")):
+            tbl = (data.get("tables") or {}).get(tname) or {}
+            cols = [c["label"] for c in tbl.get("columns") or []]
+            if not {"Days Left", "Designer", "Pending", "Status", "Due Status"} <= set(cols):
+                continue
+            ix = {c: i for i, c in enumerate(cols)}
+            for r in tbl["rows"]:
+                if SPECIAL_ROW.match(str(r[0])):
+                    continue
+                when, pend, status = str(r[ix["Days Left"]] or ""), r[ix["Pending"]] or 0, r[ix["Status"]]
+                bucket = r[ix["Due Status"]]
+                ok = {"overdue": bucket == "Overdue", "due": bucket in _DUE_SOON,
+                      "notupdated": status == "Not Updated" and bucket != "Completed",
+                      "pending": pend > 0 and bucket != "Completed"}[mode]
+                if ok:
+                    found.append((str(r[0]) + kind, r[ix["Designer"]], pend, when))
+        what = {"overdue": "overdue", "due": "due in the next 7 days", "notupdated": "still marked Not Updated",
+                "pending": "still pending"}[mode]
+        scope = q.scope()
+        scope = f" {scope}" if scope else ""
+        ctx = {"page": "flo-future", "metric": None, "intent": "items",
+               "entities": [e.ref() for e in q.entities], "months": []}
+        if not found:
+            return self._reply(f"No promised items are {what}{scope}.", "flo-future", ctx, intent="items")
+        pcs = sum(x[2] for x in found)
+        if q.style == "terse":
+            return self._reply(f"**{len(found)}**", "flo-future", ctx, intent="items")
+        cap = 25 if q.style == "detail" else 10
+        lines = [f"**{len(found)}** promised item{'s' if len(found) != 1 else ''} {what}{scope} "
+                 f"({fmt.fmt_int(pcs)} pcs):"]
+        one = sum(e.type == "designer" for e in q.entities) == 1
+        for name, who, pend, when in found[:cap]:
+            lines.append(f"• **{name}**: {'' if one else who + ', '}{fmt.fmt_int(pend)} pcs, {when.lower()}")
+        if len(found) > cap:
+            lines.append(f"• … and {len(found) - cap} more on the FLO Future page.")
+        return self._reply("\n".join(lines), "flo-future", ctx, intent="items")
 
     def _list(self, q: Query, vocab: Vocabulary) -> dict:
         dim = q.dims[0]

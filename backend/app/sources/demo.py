@@ -31,7 +31,13 @@ SHEET_TABS = {
     "1hP9Bkvu2F-qj4tXYhOCb4alfJOZZtAsMQNOjVQyWoo4": [("FABRICATOR DASHBOARD", 2), ("MONTHWISE SUMMARY", 164418035)],
     "1CvNPrdV4rQBR3_r8oIoPsW1ak123BGj88-qYbUU1y4I": [("INDEX", 418084418), ("DASHBOARD", 3)],
     "14USlaIteR3xlHjwzJOhZjLoyAZi-xAiF4LMXUE_UR2Y": [("DASHBOARD", 4), ("NEW", 5), ("REPEAT", 6)],
+    "1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw": [("Samples", 7), ("Designer Wise", 8), ("Outsource Projects", 9),
+                                                     ("Visits & Meetings", 10), ("Designer Summary", 11)],
 }
+FLO_FUTURE_ID = "1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw"
+VENDOR_RATE_ID = "1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg"
+SHEET_TABS[VENDOR_RATE_ID] = [("Vendor Rate Dashboard", 20), ("NEW RATE SHEET", 21), ("SAMPLE", 22), ("RV 1498", 23),
+                              ("Rate_Data", 24)]
 EPOCH = date(1899, 12, 30)
 FY_START = date(FY_START_YEAR, 4, 1)
 FY_END = date(FY_START_YEAR + 1, 3, 31)
@@ -93,6 +99,9 @@ class DemoSheetSource:
                 grids.update(self._fabricator(rng, now))
                 grids.update(self._fabric_po(rng, now))
                 grids.update(self._target(rng, now))
+                # own random stream, so adding this sheet leaves the other demo sheets' numbers unchanged
+                grids.update(self._flo_future(np.random.RandomState(self.seed + 7), now))
+                grids.update(self._vendor_rate(np.random.RandomState(self.seed + 11)))
                 self._grids, self._day = grids, now
             return self._grids
 
@@ -362,3 +371,103 @@ class DemoSheetSource:
 
         return {(sid, "NEW", False): tab(new_lines, "NEW", True), (sid, "REPEAT", False): tab(rep_lines, "REPEAT",
                                                                                                False)}
+
+    def _flo_future(self, rng, now):
+        """FLO Future sheet for the current month, with the real sheet's quirks: a blank qty, blank due dates,
+        'Not Updated' rows, an item listed under two designers, upper-case statuses and empty visit blocks."""
+        sid = FLO_FUTURE_ID
+        teams = {d: f"Team {'ABC'[i % 3]}" for i, d in enumerate(KNOWN_DESIGNERS)}
+        ideas = ["Indigo Muslin Co-ord", "Patola Crepe 3 Pc", "Kalamkari Series", "Mughal Print Kurta", "Hand Block K2P",
+                 "Chanderi Festive Set", "Ikat Long Dress", "Bandhani Kaftan", "Linen Summer Shirt", "Floral Print Set",
+                 "Khadi Co-ord Set", "Ajrakh Collection", "Embroidered Neck Top", "Kota Doriya Set"]
+        statuses = ["Complete", "In Progress", "In-House Process", "Sampling Ordered", "Corrections", "CAD In Queue",
+                    "CAD In Process", "Not Started", "Not Updated", "NOT UPDATED", "IN-HOUSE  PROCESS", ""]
+        vendors = ["Lotus Sampling", "Chandni Studio", "Rangrez Works", "Sutra Lab"]
+        header = ["Designer", "Team", "Collection / Sample", "Vendor", "Season", "Qty Promised", "Completed", "Pending",
+                  "Status", "Due Date", "Overdue", "Promised To", "Contact", "Remark", "Key (auto)"]
+        rows = []
+        for di, des in enumerate(KNOWN_DESIGNERS[:9]):
+            name = des.title()
+            for k in range(int(rng.randint(2, 7))):
+                qty = int(rng.choice([2, 3, 4, 5, 6, 7, 8, 11]))
+                status = statuses[rng.randint(len(statuses))]
+                due = now + timedelta(days=int(rng.randint(-6, 12)))
+                done = qty if status == "Complete" else (int(rng.randint(0, qty)) if rng.rand() < 0.2 else 0)
+                if status == "Complete":
+                    due = now - timedelta(days=int(rng.randint(0, 8)))
+                item = f"{ideas[(di * 3 + k) % len(ideas)]} {di + 1}"
+                rows.append([name, teams[des], item, vendors[rng.randint(len(vendors))],
+                             rng.choice(["Summer", "Winter", "", ""]), qty, done, qty - done, status,
+                             serial(due) if rng.rand() > 0.12 else "", "", "Rai Sir" if di < 3 else "Ayushi", "", "",
+                             f"{name}|{k + 1}"])
+        rows[3][5], rows[3][13] = "", "Qty missing in source"                       # blank qty
+        rows.append([KNOWN_DESIGNERS[1].title(), teams[KNOWN_DESIGNERS[1]], rows[0][2], rows[0][3], "Summer", 6, 0, 6,
+                     "Sampling Ordered", serial(now + timedelta(days=5)), "", "Ayushi", "",
+                     "Same item also listed under " + rows[0][0], ""])               # same item, two designers
+        outsource = [["Designer", "Project / Collection", "Outsource Vendor", "Season", "Qty Promised", "Completed",
+                      "Pending", "Status", "Due Date", "Overdue", "Promised To", "Remark"]]
+        for k, (des, proj, ven, st) in enumerate([
+                (0, "Studio Edit 3 Pcs", "Kala Kendra", "PP Sample In Process"),
+                (2, "Resort Wear Capsule", "Kala Kendra", "CAD In Process"),
+                (4, "Wedding Guest Set", "Sutra Lab", "Fabric Sourcing"),
+                (5, "Mirror Work Jacket", "Sutra Lab", "Complete")]):
+            q = 3 + k * 2
+            outsource.append([KNOWN_DESIGNERS[des].title(), proj, ven, "Summer", q, q if st == "Complete" else 0,
+                              0 if st == "Complete" else q, st, serial(now + timedelta(days=int(rng.randint(-3, 10)))),
+                              "", "Ayushi", ""])
+        sat = now - timedelta(days=(now.weekday() - 5) % 7 + 7)
+        visits = [["VISITS & MEETINGS"]]
+
+        def block(title, freq, lines):
+            visits.append(["Causative Milestone", title])
+            visits.append(["Sr", "Promised Action ", freq, "QTY.", "", "(Promised) By Whom", "(Promised) to Whom",
+                           "(Promised) By When-Date", "Complete (marked as ‘X’ )", "STATUS", "REMARK"])
+            for i, ln in enumerate(lines + [[]] * 3, start=1):
+                visits.append([i] + ln)
+        block("WE HAVE DONE MARKET VISIT FOR ACCESSORIES ONCE IN A MONTH", "SEASON WISE", [])
+        block("FACTORY/STORE VISIT SCHEDULE", "TWICE IN MONTH",
+              [["NOOR STUDIO", "", "", "", "MANSI", "Rai Sir", serial(now - timedelta(days=9)), "X", "Done"],
+               ["VASTRA HOUSE", "", "", "", "REKHA", "Rai Sir", serial(now + timedelta(days=6)), "", ""]])
+        block("MEETING", "",
+              [[t, "EVERY SATURDAY", "", "", who, "Rai Sir", serial(sat + timedelta(days=7 * w)),
+                "X" if w == 0 and t.startswith("FLO") else "", ""]
+               for w in range(3) for t, who in (("FLO JURY + FLO FUTURE MEETING", "AYUSHI"),
+                                                ("PRODUCTION / DESIGNER MEETING", "AARTI"))])
+        return {(sid, "Samples", False): [header] + rows, (sid, "Outsource Projects", False): outsource,
+                (sid, "Visits & Meetings", False): visits}
+
+    def _vendor_rate(self, rng):
+        """FABRIC PO 11 rate tabs with the real quirks: a 0 rate, a rate typed as text, a fabric with no rate, rates
+        given as "₹205" text, a helper block to the right of Rate_Data, and one fabric added on the rate card only."""
+        sid = VENDOR_RATE_ID
+        base = {"Crepe": 230, "Mul Chanderi": 215, "Silk": 205, "Russian Silk": 225, "Chinon": 220, "Muslin": 190,
+                "Organza": 200, "Cotton": 175, "Linen": 260, "Other": 240}
+        names = {"Crepe": ["CREPE", "NATURAL CREPE", "SAND CREPE"], "Mul Chanderi": ["MUL CHANDERI"],
+                 "Silk": ["BASIC SILK", "REMI SILK"], "Russian Silk": ["RUSSIAN SILK"], "Chinon": ["CHINON"],
+                 "Muslin": ["MUSLIN", "VISCOSE MUSLIN"], "Organza": ["PLAIN ORGANZA", "ORGANZA PRINTED"],
+                 "Cotton": ["DIG. COTTON"], "Linen": ["FLEX LINEN"], "Other": ["DOBBY"]}
+        vendors = ["SURYA TEX", "KAMAL FAB", "NEELAM SILKS", "PRAGATI MILLS", "ASHOKA FABRICS", "VIDHI TEXTILE"]
+        rd = [["Vendor", "S. No.", "Fabric (Original)", "Fabric Category", '44" Width Rate', '60" Width Rate',
+               '36" Width Rate', "Per Pc / Special Rate", "", "Metric", "Value"]]
+        cards = [[], []]
+        for vi, v in enumerate(vendors):
+            cats = list(base)
+            pick = [cats[int(i)] for i in rng.choice(len(cats), size=4 + vi % 3, replace=False)]
+            block = [[v], ["S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH"]]
+            for n, cat in enumerate(pick, start=1):
+                fab = names[cat][int(rng.randint(len(names[cat])))]
+                r60 = int(base[cat] * rng.uniform(0.82, 1.22) / 5) * 5
+                r44 = int(r60 * rng.uniform(0.78, 0.88) / 5) * 5 if rng.rand() > 0.2 else ""
+                r60c = r60 if rng.rand() > 0.12 else ""
+                rd.append([v, n, fab, cat, f"₹{r44}" if r44 else "", f"₹{r60c}" if r60c else "", "", "",
+                           "", "Total Vendors" if len(rd) == 1 else "", len(vendors) if len(rd) == 1 else ""])
+                block.append([n, fab, r44, r60c])
+            cards.append(block)
+        rd[1][4] = 0                                          # a 0 rate
+        rd.append([vendors[1], 9, "HAND WORK PR PC", "Hand Work / Dupatta", "", "", "", "120/125"])   # text rate
+        rd.append([vendors[2], 9, "GAJJI SILK", "Silk", "", "", "", ""])                            # no rate
+        cards[2].append([99, "SILK SATIN", 300, 350])         # on the rate card only
+        flat = []
+        for blk in cards[2:]:
+            flat.extend(blk + [[]])
+        return {(sid, "Rate_Data", False): rd, (sid, "NEW RATE SHEET", False): flat}

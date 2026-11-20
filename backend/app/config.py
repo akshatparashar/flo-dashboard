@@ -45,7 +45,39 @@ SHEET_REGISTRY: dict[str, dict] = {
         "repeat_tabs": ["REPEAT"],  # REPEAT orders -> revenue only
         "annual_target_cr": 50.2,  # yearly NEW target in crore
     },
+    "flo_future": {
+        "name": "FLO Future",
+        # The monthly "FLO_Future <Mon YYYY>" sheet. A new month's copy is picked up by setting FLO_FUTURE_SHEET_ID
+        # (no code change); share it with the service account as Viewer first.
+        "id": "1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw",
+        "id_env": "FLO_FUTURE_SHEET_ID",
+        # Same tab rules as the old Streamlit FLO Future tab: "Samples" (by name, else a tab named sample(s)),
+        # "Visits & Meetings" (by name, else any tab with "visit" / "meeting" in its name). "Outsource Projects" is
+        # read too and shown in its own section.
+        "source_tabs": ["Samples"],
+        "visits_tabs": ["Visits & Meetings"],
+        "outsource_tabs": ["Outsource Projects", "Outsource"],
+    },
+    "vendor_rate": {
+        "name": "Vendor Rate",
+        # FABRIC PO 11: "Rate_Data" (the tidy rate list the sheet's own Vendor Rate Dashboard reads) and
+        # "NEW RATE SHEET" (the hand-filled vendor rate cards, used as a cross-check). The file also holds one tab
+        # per PO; only these two tabs are read.
+        "id": "1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg",
+        "id_env": "VENDOR_RATE_SHEET_ID",
+        "source_tabs": ["Rate_Data", "Rate Data"],
+        "card_tabs": ["NEW RATE SHEET", "Rate Sheet"],
+    },
 }
+
+
+def sheet_id(kind: str) -> str:
+    """The Google Sheet id for a source; a source with "id_env" can be pointed at another sheet from the env."""
+    cfg = SHEET_REGISTRY[kind]
+    override = os.getenv(cfg.get("id_env", ""), "").strip() if cfg.get("id_env") else ""
+    if override and get_settings().data_source == "google":
+        return override
+    return cfg["id"]
 
 
 @dataclass(frozen=True)

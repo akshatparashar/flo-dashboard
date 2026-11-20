@@ -46,6 +46,21 @@ PAGES: dict[str, Page] = {p.key: p for p in [
     Page("client", "Clients", "/clients", ("clients page", "client page", "client dashboard"),
          "Orders per client: order quantity, in production, received and pending pcs by month and category.",
          {"month": "month", "client": "client", "category": "category"}, 7),
+    Page("flo-future", "FLO Future", "/flo-future",
+         ("flo future", "future page", "promised", "promises", "promise", "commitment", "commitments", "vaada",
+          "outsource", "outsourced", "visits", "meetings", "meeting"),
+         "This month's promised samples from the FLO Future sheet (target qty, completed, pending, completion %, "
+         "overdue and due-in-3-days items, per designer and team), visits & meetings against what is required each "
+         "month, and outsource projects. Pending = Qty Promised − Completed; an item is overdue when its due date has "
+         "passed and it is not complete.",
+         {"team": "team", "designer": "designer"}, 9),
+    Page("vendor-rate", "Vendor Rate", "/vendor-rate",
+         ("vendor rate", "vendor rates", "rate list", "rate card", "rate sheet", "fabric rate", "fabric rates",
+          "price list"),
+         "Fabric rates per vendor from the FABRIC PO 11 sheet: 44\", 60\" and 36\" width rates (₹ per mtr) and "
+         "per-piece rates, the cheapest vendor for each fabric category, vendor averages (0 and blank rates left "
+         "out) and how much dearer each offering is than the cheapest.",
+         {"vendor": "vendor", "fabric": "fabric"}, 10),
     Page("overview", "Overview", "/", ("overview", "home page", "summary page", "main page"),
          "A summary of every sheet: orders, fabricator stock, fabric POs and samples, plus the alerts that need "
          "attention.",
@@ -54,32 +69,33 @@ PAGES: dict[str, Page] = {p.key: p for p in [
 
 # Option lists in the API -> entity type. Other option lists (status, order type, risk...) are not used as names.
 OPTION_TYPES = {"designer": "designer", "client": "client", "order_by": "client", "vendor": "vendor",
-                "fabricator": "fabricator", "category": "category", "item": "category", "month": "month"}
+                "fabricator": "fabricator", "category": "category", "item": "category", "month": "month",
+                "team": "team", "fabric": "fabric"}
 
 # First column of a table -> what each row is.
 ROW_TYPES = {"designer": "designer", "vendor": "vendor", "fabricator": "fabricator", "month": "month",
              "category": "category", "item name": "category", "item": "category", "order by": "client",
-             "client": "client", "po no.": "po", "po no": "po"}
+             "client": "client", "po no.": "po", "po no": "po", "team": "team", "fabric category": "fabric"}
 
 DIMENSION_WORDS = {"designer": "designer", "vendor": "vendor", "client": "client", "fabricator": "fabricator",
-                   "month": "month", "category": "category", "po": "po"}
+                   "month": "month", "category": "category", "po": "po", "team": "team"}
 
 # Plural words that ask about every row of a kind ("on-time rate of vendors", "har designer ka revenue").
 DIMENSION_PLURALS = {"designers": "designer", "vendors": "vendor", "suppliers": "vendor", "mills": "vendor",
                      "clients": "client", "customers": "client", "parties": "client", "buyers": "client",
                      "fabricators": "fabricator", "karigars": "fabricator", "categories": "category",
-                     "items": "category", "products": "category"}
+                     "items": "category", "products": "category", "teams": "team"}
 
 # "Best" / "worst" with no measure named: what makes a vendor or fabricator good (higher is better).
 QUALITY = {"vendor": "on-time rate", "fabricator": "on-time rate"}
 
 TYPE_NAMES = {"designer": "designer", "vendor": "vendor", "client": "client", "fabricator": "fabricator",
-              "category": "category", "month": "month", "po": "PO"}
-PLURALS = {"category": "categories", "PO": "POs"}
+              "category": "category", "month": "month", "po": "PO", "team": "team", "fabric": "fabric"}
+PLURALS = {"category": "categories", "PO": "POs", "fabric": "fabric categories"}
 
 # The page that "owns" a kind of row, used when a ranking names no measure ("top designer").
 HOME_PAGE = {"designer": "designer", "vendor": "fabric-po", "fabricator": "fabricator", "client": "target",
-             "category": "production", "month": "production"}
+             "category": "production", "month": "production", "team": "flo-future", "fabric": "vendor-rate"}
 
 # Questions about how to use the screen. Each entry: trigger words -> answer.
 FEATURES = [
@@ -105,5 +121,7 @@ FEATURES = [
 ]
 
 HELP = ("I answer questions about the numbers and pages of this dashboard, in English or Hinglish. Ask about POs, "
-        "pending or received pcs, revenue and target, samples, a designer, client, vendor, fabricator or month. "
+        "pending or received pcs, revenue and target, samples, this month's FLO Future promises (overdue, due "
+        "soon, outsource, meetings), fabric rates (cheapest vendor for crepe, a vendor's rate list), a designer, "
+        "team, client, vendor, fabricator or month. "
         "Add “in one word” for just the number, or “in detail” for a breakdown.")

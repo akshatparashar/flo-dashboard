@@ -23,6 +23,38 @@ https://expo.dev/accounts/flo-ais-team/projects/flo/builds/c35a3aba-8160-4280-bc
 > bar shows a *Demo data* badge, and e.g. Total POs reads 170 instead of the real figure). That is not a calculation
 > bug. Check `GET /api/health` → `"source": "google"` before comparing numbers with the sheets.
 
+### In progress: branch `feature/flo-future` (not merged; the owner tests and merges it)
+
+New **FLO Future** page (`/flo-future`, API `GET /api/flo-future`) for the monthly "FLO_Future Nov 2026" sheet
+(`1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw`, shared with the dashboard's service account). It is the FLO Future
+tab of the old Streamlit dashboard (github.com/design355/sample-production-dashboard) rebuilt here with the same
+rules: that repo's `app.py` is now `legacy/streamlit_app.py` (it is the old legacy file + the FLO Future tab), and
+`tests/test_parity_flo_future.py` runs it next to the API and compares every KPI, table cell and sort order.
+Also run by hand on the real November rows for 4 "today" dates × 9 filter sets: identical (310 promised / 40 done /
+270 pending / 2 overdue on 19 Nov). Extras that change no old number: a follow-up list, a team table, sheet checks
+and the Outsource Projects tab in its own section. Overview has a FLO Future alert + highlights section; the chatbot
+answers its figures and lists items ("which samples are overdue").
+
+- Ignored on purpose: "FLO Future – Nov 2026 Promised Actions (Clean)", an earlier copy whose Designer Summary tab is
+  `#REF!`. Only the live sheet is read.
+- Next month: share the new copy with the service account and set `FLO_FUTURE_SHEET_ID` (no code change).
+- Not done yet: a FLO Future screen in the phone app (`mobile/`).
+
+### In progress: branch `feature/vendor-rate` (built on `feature/flo-future`; not merged)
+
+New **Vendor Rate** page (`/vendor-rate`, API `GET /api/vendor-rate`) for the rate tabs of **FABRIC PO 11**
+(`1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg`, newly shared with the service account). It is the Vendor Rate tab of the
+old Streamlit dashboard (github.com/design355/sample-production-dashboard; `legacy/streamlit_app.py`) rebuilt on the
+sheet's data: `Rate_Data` is read, `NEW RATE SHEET` marks vendors with a "44/36 WIDTH" column and is cross-checked.
+`tests/test_vendor_rate.py` runs the old vr_* functions next to the API (every filter set, every category).
+Page: Vendor / Fabric category / Width / search filters, the 5 KPIs, "Compare fabric category" with the
+"<category>: vendor-wise cheapest rate (★ = Best Price)" chart + table + per-piece table, the vendor benchmark, one
+table per vendor, the master rate sheet, and sheet checks. Chatbot answers rate questions.
+- Not verified on the live sheet through the API yet (no key in `backend/.env`); built from the sheet's own
+  dashboard tab. The NEW RATE SHEET block layout in particular should be checked once the key is added.
+- FABRIC PO 11 also holds the newer PO tabs (RV 1498 …); the Fabric PO page still reads FABRIC PO 10's INDEX.
+
+
 ## Part A — Deploy the dashboard on Vercel ✅ done 17 Nov
 
 Kept for redeploys. Env vars were imported from a local, git-ignored `.env.vercel` (built from `backend/.env`).

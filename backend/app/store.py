@@ -9,22 +9,29 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from .config import SHEET_REGISTRY, Settings
+from .config import SHEET_REGISTRY, Settings, sheet_id
 from .core import find_tab, idx_to_col, pick_default_tab, today_ist
 from .dashboards import fabric_po as fpo
 from .dashboards import fabricator as fab
+from .dashboards import flo_future as ffu
 from .dashboards import master as mst
 from .dashboards import samples as smp
 from .dashboards import target as tgt
+from .dashboards import vendor_rate as vrt
 from .sources.google import SheetAccessError
 
-KINDS = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue"]
+KINDS = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future",
+         "vendor_rate"]
+# Kinds whose numbers depend on today's date (overdue / due soon), so their parsed copy is redone each day.
+DATED_KINDS = {"fabric_po", "flo_future"}
+FLO_FUTURE_PARTS = ("samples", "visits", "outsource")
 
 
 def _now() -> float:
@@ -134,13 +141,29 @@ class DataStore:
     # -- tab choice (same rules as the original dashboards) ----------------------------------------------------
     def source_tabs(self, kind) -> list:
         cfg = SHEET_REGISTRY[kind]
-        meta = self.tabs(cfg["id"])
+        meta = self.tabs(sheet_id(kind))
         if not meta:
             raise SheetAccessError("No tabs found on the sheet.")
         if kind == "tracker":
             titles = [t for t, _ in meta]
             src = next((t for t in (find_tab(titles, c) for c in cfg["source_tabs"]) if t), None)
             return [src or next((t for t in titles if "DASHBOARD" not in t.upper()), titles[0])]
+        if kind == "flo_future":
+            titles = [t for t, _ in meta]
+            samples = pick_default_tab(meta, cfg["source_tabs"], None, ffu.SAMPLE_TAB_REGEX)
+            visits = next((t for t in (find_tab(titles, n) for n in cfg["visits_tabs"]) if t), None) or \
+                next((t for t in titles if re.search(ffu.VISIT_TAB_REGEX, t, re.I)), None)
+            outsource = next((t for t in (find_tab(titles, n) for n in cfg["outsource_tabs"]) if t), None)
+            return [samples, visits, outsource]
+        if kind == "vendor_rate":
+            titles = [t for t, _ in meta]
+            rates = next((t for t in (find_tab(titles, n) for n in cfg["source_tabs"]) if t), None) or \
+                next((t for t in titles if re.search(vrt.RATE_TAB_REGEX, t, re.I)), None)
+            cards = next((t for t in (find_tab(titles, n) for n in cfg["card_tabs"]) if t), None) or \
+                next((t for t in titles if re.search(vrt.CARD_TAB_REGEX, t, re.I)), None)
+            if rates is None and cards is None:
+                raise SheetAccessError("The Vendor Rate sheet has no 'Rate_Data' or 'NEW RATE SHEET' tab.")
+            return [rates, cards]
         if kind == "target_revenue":
             titles = [t for t, _ in meta]
             return [next((x for x in (find_tab(titles, n) for n in cfg.get(key, [default])) if x), None)
@@ -149,12 +172,12 @@ class DataStore:
 
     def _entries(self, kind) -> tuple[list, list]:
         """Fetches every grid a dataset needs (in parallel). Returns (tabs, entries)."""
-        sid = SHEET_REGISTRY[kind]["id"]
+        sid = sheet_id(kind)
         tabs = self.source_tabs(kind)
         jobs = []
         if kind == "overview_fabricators":
             jobs = [(tabs[0], True), (tabs[0], False)]
-        elif kind == "target_revenue":
+        elif kind in ("target_revenue", "flo_future", "vendor_rate"):
             jobs = [(t, False) for t in tabs if t]
         else:
             jobs = [(tabs[0], False)]
@@ -180,6 +203,14 @@ class DataStore:
             return fab.parse_fabricator(entries[0].value, entries[1].value)
         if kind == "fabric_po":
             return fpo.parse_fabric_po(entries[0].value, today_ist())
+        if kind == "flo_future":
+            grids = iter(entries)
+            return ffu.parse_flo_future({part: (next(grids).value if t else [])
+                                         for part, t in zip(FLO_FUTURE_PARTS, tabs)}, today_ist())
+        if kind == "vendor_rate":
+            grids = iter(entries)
+            return vrt.parse_vendor_rate({part: (next(grids).value if t else [])
+                                          for part, t in zip(("rates", "cards"), tabs)})
         if kind == "target_revenue":
             present = [t for t in tabs if t]
             grids = dict(zip(present, entries[:len(present)]))
@@ -197,7 +228,7 @@ class DataStore:
             return Dataset(kind, None, None, "", error=str(e))
         except Exception as e:
             return Dataset(kind, None, None, "", error=f"{type(e).__name__}: {e}")
-        version = _digest([e.version for e in entries] + ([str(today_ist().date())] if kind == "fabric_po" else []))
+        version = _digest([e.version for e in entries] + ([str(today_ist().date())] if kind in DATED_KINDS else []))
         fetched = min(e.fetched_at for e in entries)
         stale_err = next((e.error for e in entries if e.error), None)
         with self._parsed_lock:
