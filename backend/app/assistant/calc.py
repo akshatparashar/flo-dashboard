@@ -154,7 +154,7 @@ def _metric_op(t: str) -> Spec | None:
 
 # ------------------------------------------------------------------------------------------------ growth / difference / sum / average
 GROWTH = re.compile(r"\b(growth|grew|grow|growing|grown|increase[ds]?|decrease[ds]?|decline[ds]?|dropp?(?:ed)?|fell|"
-                    r"improve[ds]?|improvement|badh\w*|barh\w*|vridhi|vruddhi|gir\w*|ghat\w*|girawat)\b")
+                    r"improve[ds]?|improvement|badh\w*|barh\w*|vridhi|vruddhi|gir\w*|ghat\w*|girawat|loss|nuksa?an)\b")
 DIRECTION = re.compile(r"\b(more|less|higher|lower|zyada|jyada|kam|upar|neeche|change|difference|fark|up|down)\b")
 DIFF = re.compile(r"\b(difference|differences|diff|fark|farak|antar|gap|kitna\s+(?:zyada|jyada|kam|adhik)|"
                   r"how much\s+(?:more|less|higher|lower|extra)|more than|less than)\b")

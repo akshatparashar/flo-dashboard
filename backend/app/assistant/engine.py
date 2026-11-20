@@ -20,6 +20,7 @@ import calendar
 from datetime import date
 
 from . import calc, fmt
+from .orders import OrderAnalyst
 from .pages import (DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
 from .text import (BOTTOM, CONTEXT_WORDS, GENERIC_NAME_WORDS, HOWMANY, MARKERS, MONTH_ALIASES, STOP, TOP, TREND, WORDS,
@@ -506,6 +507,7 @@ class Assistant:
                 return self._polish(question, result, "normal")
 
         q = parse(question, vocab, self.today_month())
+        self._ctx_in = context if isinstance(context, dict) else None
         self._inherit(q, context, vocab)
         if _DEVANAGARI.search(question):
             if self.interpreter is None:
@@ -713,6 +715,9 @@ class Assistant:
     def _solve(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
         if q.intent == "record":
             return self._record(q, snap)
+        res = self._orders(q, snap, vocab)
+        if res:
+            return res
         if q.intent in ("list", "count"):
             return self._list(q, vocab)
         res = self._calc(q, snap, vocab)
@@ -989,6 +994,19 @@ class Assistant:
     def _numeric(*cands) -> bool:
         return all(c is not None and isinstance(c.value, (int, float)) and not isinstance(c.value, bool)
                    for c in cands)
+
+    def _orders(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
+        """Orders per customer (designer): counts, new vs repeat, rankings, comparisons and month-to-month change."""
+        analyst = OrderAnalyst(snap.get, self._running_note, self.today_month)
+        try:
+            spec = analyst.parse(q, self._ctx_in, vocab)
+            out = analyst.answer(spec, q.text) if spec else None
+        except (DataUnavailable, KeyError, ZeroDivisionError):
+            return None
+        if out is None:
+            return None
+        text, ctx = out
+        return self._reply(text, "designer", ctx, intent="orders")
 
     def _calc(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
         """Growth, difference, sums, averages, shares and plain arithmetic. The figures still come from the

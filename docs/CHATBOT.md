@@ -66,3 +66,19 @@ dashboard's numbers and pages, in English, Hinglish or Hindi, and quotes exactly
 | Tests | `backend/tests/test_assistant.py`, `backend/tests/test_assistant_calc.py`, `frontend/src/components/assistant/Assistant.test.tsx` |
 
 The API endpoints listed in `/api/openapi.json` are unchanged.
+
+## Order questions per designer ("customer")
+
+`backend/app/assistant/orders.py` answers order questions with plain Python arithmetic over the Designers page
+(`/api/designer`, with its `month`, `designer` and `order_type` filters). No AI service is used for these answers and
+nothing is sent outside the server.
+
+* **Order** = one design row with quantity above 0 (the page's "Design Count"). **New / Repeat** = the sheet's own
+  `order_type` (NEW / REPEAT tabs). **Customer** = the designer named on the row; clients keep their existing answers.
+* Supported: orders / new / repeat per designer, order details (new, repeat, share of all pcs, pcs by category and month),
+  highest/lowest designer, customer-wise table, compare designers, repeat share (%), total repeat orders, change between
+  two months (difference, percentage, shown formula), and follow-ups ("And November?", "How much decrease?", "What is the
+  percentage?"). English and Hinglish ("Ayushi ke kitne order hai?", "kitna loss hua?").
+* Numbers you type yourself are checked against the dashboard; if they differ the answer says so and uses the dashboard.
+* Not supported: order lists row by row (the dashboard has no order-level list), orders per client with new/repeat
+  design counts, and any field the sheets don't contain.
