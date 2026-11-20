@@ -48,7 +48,7 @@ export default function VendorRate() {
           const k = Object.fromEntries(d.kpis.map((x) => [x.id, x]));
           const cmpCat = picked && d.compare.data[picked] ? picked : d.compare.default;
           const cmp = d.compare.data[cmpCat];
-          const cards = d.vendor_cards ?? [];
+          const tables = d.sheet_tables?.length ? d.sheet_tables : (d.vendor_cards ?? []).map((c) => ({ vendor: c.vendor, items: c.items, table: c.table }));
           return (
             <>
               <PageHead
@@ -129,12 +129,15 @@ export default function VendorRate() {
                     </Panel>
                   </Section>
 
-                  <Section title="Vendor rate tables" sub={`One table per vendor, like the blocks of the NEW RATE SHEET · ${cards.length} vendor${cards.length === 1 ? "" : "s"} · all filters apply`}>
+                  <Section
+                    title="NEW RATE SHEET: vendor tables"
+                    sub={`The rate cards exactly as in the sheet, one table per vendor · ${tables.length} vendor${tables.length === 1 ? "" : "s"} · the Vendor filter applies`}
+                  >
                     <div className="grid">
-                      {cards.map((c) => (
+                      {tables.map((c) => (
                         <div className="span-6" key={c.vendor}>
-                          <Panel title={c.vendor} sub={`${c.items} item${c.items === 1 ? "" : "s"}${c.pending ? ` · ${c.pending} pending rate${c.pending === 1 ? "" : "s"}` : ""}`} flush>
-                            <DataTable table={c.table} name={`vendor_rate_${c.vendor.replace(/\W+/g, "_")}`} maxRows={20} titleCaseFirst={false} />
+                          <Panel title={c.vendor} sub={`${c.items} item${c.items === 1 ? "" : "s"}`} flush>
+                            <DataTable table={c.table} name={`new_rate_sheet_${c.vendor.replace(/\W+/g, "_")}`} maxRows={20} titleCaseFirst={false} csv />
                           </Panel>
                         </div>
                       ))}

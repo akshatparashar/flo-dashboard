@@ -208,3 +208,54 @@ def test_api_route(monkeypatch):
     assert kpis(one)["vendors"]["value"] == 1 and [x["vendor"] for x in one["vendor_cards"]] == [v]
     none = c.get("/api/vendor-rate", params={"q": "zzzz"}).json()
     assert none["no_match"] and store.status()["vendor_rate"]["ok"]
+
+
+# ------------------------------------------------------------------------------------------------ NEW RATE SHEET tables
+CARD_GRID = [
+    ["RV", "", "", "", "", "", "VARSHA", "", "", "", "", "VINAYAK"],
+    ["S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH", "36 WIDTH", "", "S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH", "",
+     "S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH", "36 WIDTH"],
+    [1, "CREPE", 205, 250, "", "", 1, " MUSLINE", 165, 200, "", 1, "CREPE", 210, 250, ""],
+    [2, "PLAIN CREPE", 0, 125, "", "", 2, "HAND WORK PR PC", 120, "", "", 7, "DIG.VISCOS ORGENZA", "", 220, 225],
+    ["", "", "", "", "", ""],
+    ["EKTA FABRIC"],
+    ["S. NO.", "FABRIC", "44/36 WIDTH", "60 WIDTH"],
+    [1, "CHANDERI DIG.TOP/DUP.", 390, ""],
+    ["GOKUL"],
+    ["S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH"],
+    [4, "RFD CREPE ", 120, ""],
+]
+
+
+def test_sheet_tables_keep_each_blocks_own_columns():
+    cards = vr.parse_rate_cards(CARD_GRID)
+    t = {x["vendor"]: x for x in vr.sheet_tables(cards, [])}
+    assert list(t) == ["RV", "VARSHA", "VINAYAK", "EKTA FABRIC", "GOKUL"]
+    cols = {v: [c["label"] for c in x["table"]["columns"]] for v, x in t.items()}
+    assert cols["RV"] == ["S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH", "36 WIDTH"]
+    assert cols["VARSHA"] == ["S. NO.", "FABRIC", "44 WIDTH", "60 WIDTH"]
+    assert cols["EKTA FABRIC"][2] == "44/36 WIDTH"
+    assert t["RV"]["table"]["rows"][1] == [2, "PLAIN CREPE", 0, 125, None]
+    assert t["VINAYAK"]["table"]["rows"][1][1:] == ["DIG.VISCOS ORGENZA", None, 220, 225]
+    assert t["GOKUL"]["table"]["rows"][0][1:] == ["RFD CREPE", 120, None]          # 44 WIDTH, as the sheet has it
+    only = vr.sheet_tables(cards, ["VARSHA", "GOKUL"])
+    assert [x["vendor"] for x in only] == ["VARSHA", "GOKUL"]
+
+
+def test_api_sheet_tables_follow_vendor_filter(parsed):
+    p = vr.parse_vendor_rate({"rates": sheet_grids(vr.vr_build and [])["rates"], "cards": CARD_GRID})
+    assert [x["vendor"] for x in vr.vendor_rate_dashboard(p, {})["sheet_tables"]][:2] == ["RV", "VARSHA"]
+    d = vr.vendor_rate_dashboard(p, {"vendor": ["RV"]})
+    assert [x["vendor"] for x in d["sheet_tables"]] == ["RV"]
+
+
+def test_real_new_rate_sheet_tables():
+    """The NEW RATE SHEET of FABRIC PO 11 as read from the sheet: 11 vendor blocks, 56 fabrics, own column heads."""
+    from tests.real_rate_cards import grid
+    t = vr.sheet_tables(vr.parse_rate_cards(grid()), [])
+    assert [(x["vendor"], x["items"]) for x in t] == [
+        ("RV", 13), ("VARSHA", 8), ("VINAYAK", 7), ("VIPUL", 5), ("SHREE SANTINATH", 3), ("SWAGAT", 3),
+        ("VEDANSHI", 2), ("EKTA FABRIC", 5), ("BSK", 2), ("GOKUL", 4), ("K THREE PLUS", 4)]
+    heads = {x["vendor"]: [c["label"] for c in x["table"]["columns"]] for x in t}
+    assert heads["EKTA FABRIC"][2] == "44/36 WIDTH" and heads["VEDANSHI"][2] == "36 WIDTH"
+    assert heads["K THREE PLUS"][-1] == "36 WIDTH" and "36 WIDTH" not in heads["GOKUL"]

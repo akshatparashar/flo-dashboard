@@ -360,4 +360,5 @@ export interface VendorRateData extends Envelope {
   compare?: { categories: string[]; default: string; data: Record<string, RateCompare> };
   tables?: { benchmark: TableData; master: TableData };
   vendor_cards?: VendorCard[];
+  sheet_tables?: { vendor: string; items: number; table: TableData }[];
 }

@@ -271,6 +271,8 @@ def parse_rate_cards(values):
             if "fabric" not in cols:
                 continue
             extra = j if j < width and not str(row[j]).strip() else None     # unlabelled column after the headers
+            col_idx = [c] + list(range(c + 1, j))                            # the block's own columns, as headed
+            heads = [str(row[i]).strip() for i in col_idx]
             vendor = ""
             for up in (r - 1, r - 2):
                 if up >= 0:
@@ -287,7 +289,8 @@ def parse_rate_cards(values):
                 rates = [line[i] for f, i in cols.items() if f != "fabric"] + ([line[extra]] if extra else [])
                 nums = sorted(x for x in (_vr_num(v)[0] for v in rates) if x)
                 out.append({"vendor": vendor.upper(), "fabric": fabric, "nums": nums,
-                            "wide4436": '44/36"' in cols})
+                            "wide4436": '44/36"' in cols, "head": heads,
+                            "cells": [None if str(line[i]).strip() == "" else line[i] for i in col_idx]})
     return out
 
 
@@ -362,6 +365,24 @@ def vendor_cards(x):
         cards.append({"vendor": vendor, "items": int(len(g)), "pending": int(g["Pending Cells"].sum()),
                       "table": _tbl(t, {c: INR for c in VR_PRICE_COLS})})
     return cards
+
+
+def sheet_tables(cards, vendors):
+    """The NEW RATE SHEET as laid out in the sheet: one table per vendor block, with that block's own columns."""
+    blocks: dict = {}
+    for cd in cards:
+        if vendors and cd["vendor"] not in vendors:
+            continue
+        b = blocks.setdefault((cd["vendor"], tuple(cd["head"])), [])
+        b.append(cd["cells"])
+    out = []
+    for (vendor, head), rows in blocks.items():
+        cols = [h or f"Column {i + 1}" for i, h in enumerate(head)]
+        df = pd.DataFrame([[None if v is None else (str(v).strip() if isinstance(v, str) else v) for v in r]
+                           for r in rows], columns=cols)
+        fmt = {c: INR for c in cols[2:]}
+        out.append({"vendor": vendor, "items": len(rows), "table": _tbl(df, fmt)})
+    return out
 
 
 def checks(d, cards, source):
@@ -441,4 +462,5 @@ def vendor_rate_dashboard(parsed, f):
             "master": _tbl(x[cols].reset_index(drop=True), RATE_FMT) if len(x) else table(None),
         },
         "vendor_cards": vendor_cards(x) if len(x) else [],
+        "sheet_tables": sheet_tables(cards, f.get("vendor") or []),
     }
