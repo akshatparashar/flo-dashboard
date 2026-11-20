@@ -989,6 +989,9 @@ class Assistant:
                 hits.append((pg, name, tbl))
         if len(hits) != 1:
             return None
+        cands = self._candidates(q, snap)
+        if cands and cands[0].score >= THRESHOLD:        # a dashboard figure already answers it (e.g. Total POs)
+            return None
         pg, name, tbl = hits[0]
         n = sum(1 for r in tbl["rows"] if not SPECIAL_ROW.match(str(r[0])))
         return self._reply(f"There are **{n}** entries in the {name.replace('_', ' ')} list on the {PAGES[pg].label} page.", pg,

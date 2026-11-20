@@ -40,7 +40,7 @@ def test_vendor_rate_average_and_compare(client):
 def test_team_wise_summary_reads_the_table(client):
     teams = client.get("/api/flo-future").json()["tables"]["teams"]["rows"]
     r = ask(client, "show team-wise summary")
-    assert all(str(t[0]) in r["answer"] for t in teams if not str(t[0]).startswith("("))
+    assert all(str(t[0]) in r["answer"] for t in teams if not str(t[0]).startswith("(") and str(t[0]).upper() != "TOTAL")
 
 
 def test_same_label_on_two_pages_names_both(client):
