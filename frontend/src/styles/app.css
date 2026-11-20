@@ -1806,3 +1806,71 @@ a.alert:hover {
   font-size: 11px;
   fill: var(--neg);
 }
+
+/* ============================================================================ Vendor Rate: price map */
+.vd-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+.vd-key button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-pill);
+  background: var(--sheet);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 560;
+  cursor: default;
+  transition: opacity 140ms var(--ease-out);
+}
+.vd-key button i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.vd-key button.dim {
+  opacity: 0.35;
+}
+.vd-band {
+  fill: var(--well);
+}
+.vd-grid {
+  stroke: var(--grid);
+  stroke-dasharray: 3 4;
+}
+.vd-tick {
+  font-size: 11px;
+  fill: var(--muted);
+}
+.vd-cat {
+  font-size: 12.5px;
+  font-weight: 600;
+  fill: var(--ink);
+}
+.vd-range {
+  stroke: var(--accent);
+  stroke-opacity: 0.16;
+  stroke-width: 14;
+  stroke-linecap: round;
+}
+.vd-dot {
+  stroke: var(--sheet);
+  stroke-width: 2;
+  transition: opacity 140ms var(--ease-out);
+}
+.vd-ring {
+  fill: none;
+  stroke: var(--pos);
+  stroke-width: 2;
+}
+.vd-best {
+  font-size: 12px;
+  font-weight: 650;
+  fill: var(--pos-ink);
+}
