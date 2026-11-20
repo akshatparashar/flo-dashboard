@@ -44,7 +44,7 @@ for (const p of PAGES) {
     await page.goto(`${p.path}?nointro`);
     // the first read of the real sheets on a cold server can take ~15 s
     await expect(page.getByRole("heading", { level: 1, name: p.h1 })).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator(".kpi-value").first()).not.toHaveText("");
+    await expect(page.locator(".kpi-value, .ff-tile-value").first()).not.toHaveText("");
     await expect(page.locator(".skel")).toHaveCount(0);
     await page.waitForLoadState("networkidle");
     expect(problems).toEqual([]);
@@ -172,14 +172,14 @@ test("FLO Future: follow-up list, and a team filter narrows the target qty", asy
   const promised = (b: { kpis: { id: string; value: number }[] }) => b.kpis.find((k) => k.id === "target")!.value;
   await page.goto("/flo-future?nointro");
   await expect(page.getByRole("heading", { level: 1, name: "FLO Future" })).toBeVisible();
-  if (all.follow_up.length) await expect(page.getByRole("list", { name: "Promised samples to follow up" }).first()).toBeVisible();
+  await expect(page.locator(".ff-tile").first()).toBeVisible();
   const team = all.options.team[0];
   const one = await (await request.get(`${API}/api/flo-future?team=${encodeURIComponent(team)}`, { headers })).json();
   await page.getByRole("toolbar", { name: "Filters" }).getByRole("button", { name: /^Team/ }).click();
   await page.getByRole("option", { name: team }).click();
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL(/[?&]team=/);
-  await expect(page.locator(".kpi").first()).toContainText(promised(one).toLocaleString("en-US"));
+  await expect(page.locator(".ff-tile").first()).toContainText(promised(one).toLocaleString("en-US"));
   expect(promised(one)).toBeLessThanOrEqual(promised(all));
 });
 

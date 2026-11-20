@@ -310,6 +310,9 @@ export interface FloFutureData extends Envelope {
     due_soon: number;
     due_soon_pcs: number;
     no_due_date: number;
+    most_pending: { designer: string; pending: number } | null;
+    longest_overdue: { designer: string; item: string; days: number } | null;
+    visits: { done: number; required: number; missed: number; not_planned: number };
   };
   follow_up?: PromiseItem[];
   tables?: { designers: TableData; teams: TableData; items: TableData; outsource: TableData };
