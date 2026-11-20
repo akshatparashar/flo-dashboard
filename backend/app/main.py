@@ -293,7 +293,7 @@ def _assistant_fetch(page: str, filters: dict) -> dict:
 @lru_cache(maxsize=1)
 def get_assistant() -> Assistant:
     return Assistant(_assistant_fetch, today_month=lambda: MONTHNO_TO_LABEL.get(now_ist().month),
-                     interpreter=GeminiInterpreter.from_env())
+                     today=lambda: now_ist().date(), interpreter=GeminiInterpreter.from_env())
 
 
 class ChatIn(BaseModel):

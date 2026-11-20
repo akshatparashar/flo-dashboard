@@ -280,9 +280,10 @@ All settings live in `backend/.env` (copy `backend/.env.example`). The file is g
 | `TOKEN_SECRET` | derived from the service-account key (else `dev-only-secret`) | Signs sign-in tokens. **Set a long random value in production** |
 | `TOKEN_HOURS` | `336` | How long a sign-in lasts (14 days) |
 | `CORS_ORIGINS` | — | Extra browser origins allowed to call the API (comma separated) |
-| `GEMINI_API_KEY` | — | Optional. Lets FLO Assistant ask a small Gemini model what a question means when its rules can't tell. The model sees the question and the dashboard's labels, never any figures |
+| `GEMINI_API_KEY` | — | Optional. Lets FLO Assistant ask a small Gemini model to read questions the rules can't place (English / Hinglish / Hindi), chat, and rewrite answers fluently in the question's language. Reading a question sends only the question and the dashboard's labels; rewriting an answer sends the answer text (figures) |
 | `GEMINI_MODEL` | `gemini-flash-lite-latest` | Gemini model used for that fallback |
-| `ASSISTANT_GEMINI` | `on` | `off` turns the Gemini fallback off even when a key is set |
+| `ASSISTANT_GEMINI` | `on` | `off` turns Gemini off entirely even when a key is set |
+| `ASSISTANT_GEMINI_PHRASING` | `on` | `off` stops answers (and so figures) being sent to Gemini for rewriting; the rules' own wording is used |
 
 Sheet IDs and tab names are in [`backend/app/config.py`](backend/app/config.py) (`SHEET_REGISTRY`). Each entry lists
 the data tab names to try in order, with fallbacks, exactly as the original app did.
@@ -379,13 +380,13 @@ Send `Authorization: Bearer <token>` when a passcode is set.
 | **Parity on real sheets** | `PARITY_SOURCE=google pytest tests/test_parity.py` | The same comparison on a frozen snapshot of the live Google Sheets |
 | **Filters** (9) | `pytest tests/test_api_filters.py` | Every filter of every endpoint reaches its calculation over HTTP |
 | **API** (27) | `pytest tests/test_api.py` | Routes, sign-in and rate limit, refresh cooldown, one read per minute, stale-if-error, messy-cell parsing |
-| **Assistant** (31) | `pytest tests/test_assistant.py` | FLO Assistant quotes the dashboard's own figures, English + Hinglish, follow-ups, read-only, sign-in, sheet-down message, Gemini fallback |
+| **Assistant** (31 + 48) | `pytest tests/test_assistant.py tests/test_assistant_calc.py` | FLO Assistant quotes the dashboard's own figures, English + Hinglish, follow-ups, read-only, sign-in, sheet-down message, Gemini fallback; growth / difference / sums / shares / arithmetic checked against the API's own numbers; Gemini rewrite keeps every figure |
 | **Frontend unit** (19) | `npm test` | Rupee and number formatting, CSV escaping, URL filters, live-sync pulses, table behaviour, chat widget |
 | **Phone app** (3) | `cd mobile && npm test` | Number formatting and API helpers (plus `npm run typecheck`, `npm run lint`, `npx expo-doctor`) |
 | **Browser** (31 + device-specific) | `npx playwright test` | Every page in Chrome on desktop and phone, no console errors or failed calls, on-screen numbers equal the API, filters, sign-in, theme, intro, sidebar rail, CSV export |
 
 ```powershell
-cd backend;  .venv\Scripts\python -m pytest          # 128 tests
+cd backend;  .venv\Scripts\python -m pytest          # 176 tests
 cd frontend; npm run typecheck; npm test; npm run build
 cd frontend; npx playwright test                     # starts both servers if they aren't running
 ```

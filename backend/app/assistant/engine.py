@@ -16,11 +16,14 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Callable
 
-from . import fmt
+import calendar
+from datetime import date
+
+from . import calc, fmt
 from .pages import (DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
 from .text import (BOTTOM, CONTEXT_WORDS, GENERIC_NAME_WORDS, HOWMANY, MARKERS, MONTH_ALIASES, STOP, TOP, TREND, WORDS,
-                   label_tokens, name_key, norm, raw_tokens, similar, tokens)
+                   label_tokens, language_of, name_key, norm, raw_tokens, similar, tokens)
 
 Fetch = Callable[[str, dict], dict]
 
@@ -29,6 +32,13 @@ SOFT = {"new", "yearly", "annual", "fy", "all", "sheet", "overall", "qty", "mtr"
 SKIP_KEYS = {"meta", "options", "charts", "matrix", "heatmap", "lines", "top_repeat", "gauge", "schedule"}
 SPECIAL_ROW = re.compile(r"^\(.*\)$|^(total|grand total)$", re.I)
 MAX_QUESTION = 500
+PHRASE_INTENTS = {"value", "rank", "trend", "compare", "calc", "record", "count", "list", "explain", "where", "page",
+                  "help", "unknown"}
+# words that can sit in a question without naming a different figure
+HARMLESS = {"more", "less", "much", "many", "extra", "also", "else", "still", "yet", "only",
+            "per", "each", "every", "give", "make", "know", "want", "whole", "overall", "entire", "full"}
+_DEVANAGARI = re.compile(r"[\u0900-\u097f]")
+_SMALLTALK = re.compile(r"\b(how are you|how r u|kaise ho|kaisa hai|kaisi ho|kya haal|what's up|whats up|sup bro)\b")
 
 
 class DataUnavailable(Exception):
@@ -234,6 +244,9 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     # "target kitna bacha / baki hai" asks for the remaining target, not pending pcs
     if re.search(r"\btarget\b", t):
         t = re.sub(r"\b(bacha|bachi|bache|baki|baaki|left)\b", "remaining", t)
+    # "kitne PO aaye / bane" counts POs; the Hindi "came / made" must not turn into "received"
+    if re.search(r"\bpos?\b|purchase orders?", t):
+        t = re.sub(r"\b(aaye|aaya|aayi|aya|aye|bane|bana|banaye|hue|hui|raise|raised|placed)\b", " ", t)
 
     words = raw_tokens(t)
     used = [False] * len(words)
@@ -374,7 +387,7 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
         q.intent = "explain"
     elif _WHERE.search(t) and q.metric_toks:
         q.intent = "where"
-    elif TREND in q.toks:
+    elif TREND in q.toks and "require" not in q.toks:
         q.intent = "trend"
     elif re.search(r"\b(designer|vendor|client|party|customer|fabricator|category|item|product)s?[- ]?wise\b|"
                    r"\b(by|per|har) (designer|vendor|client|party|customer|fabricator|category|item|product)s?\b",
@@ -463,9 +476,11 @@ class Candidate:
 class Assistant:
     """Answers one question at a time. ``fetch(page, filters)`` returns that dashboard page's API payload."""
 
-    def __init__(self, fetch: Fetch, today_month: Callable[[], str | None] = lambda: None, interpreter=None):
+    def __init__(self, fetch: Fetch, today_month: Callable[[], str | None] = lambda: None, interpreter=None,
+                 today: Callable[[], date] | None = None):
         self.fetch = fetch
         self.today_month = today_month
+        self.today = today                      # today's date, for "this month is still running" notes
         self.interpreter = interpreter          # optional Gemini helper (see gemini.py)
 
     # -------------------------------------------------------------------------------------------- public
@@ -485,21 +500,87 @@ class Assistant:
         if _THANKS.match(t) and len(t.split()) <= 4:
             return self._reply("You're welcome! Ask me anything else about the dashboard.", intent="thanks")
 
+        if _SMALLTALK.search(t) and not _HELP.search(t):
+            result = self._smalltalk(question)
+            if result:
+                return self._polish(question, result, "normal")
+
         q = parse(question, vocab, self.today_month())
         self._inherit(q, context, vocab)
-        result = self._solve(q, snap, vocab)
-        if result is None and self.interpreter is not None:
-            hint = self.interpreter.interpret(question, self._catalog(vocab))
+        if _DEVANAGARI.search(question):
+            if self.interpreter is None:
+                return self._reply("Please write your question in English or Hinglish (Hindi in English letters), "
+                                   "for example: \"is mahine ki sales kitni hai\".", understood=False, intent="unknown")
+            result = None                        # the rules read Roman letters only; Gemini reads this one
+        else:
+            result = self._solve(q, snap, vocab)
+        if self.interpreter is not None and (result is None or self._shaky(q, result)):
+            catalog = self._catalog(vocab)
+            if isinstance(context, dict) and context.get("metric"):
+                catalog["previous"] = str(context["metric"])[:80]
+            hint = self.interpreter.interpret(question, catalog)
             if hint:
+                chat = self._chat_reply(hint, result)
+                if chat is not None:
+                    return chat
                 q2 = self._from_hint(hint, question, vocab)
                 if q2 is not None:
                     q2.style = q.style
-                    result = self._solve(q2, snap, vocab)
-                    if result is not None:
+                    self._inherit(q2, context, vocab)
+                    again = self._solve(q2, snap, vocab)
+                    if again is not None and (result is None or self._better(q, again, result)):
+                        result = again
                         result["engine"] = "gemini"
-        if result is not None:
+        if result is None:
+            result = self._not_understood(q, snap, vocab)
+        return self._polish(question, result, q.style)
+
+    # -------------------------------------------------------------------------------------------- Gemini helpers
+    @staticmethod
+    def _label(result: dict) -> str:
+        return str((result.get("context") or {}).get("metric") or "")
+
+    @staticmethod
+    def _unexplained(q: Query, label: str) -> set:
+        """Words of the question that the figure named ``label`` does not account for."""
+        explained = label_tokens(label) | CONTEXT_WORDS | SOFT | HARMLESS | {"avg", "number", "po"}
+        return {t for t in q.metric_toks if t not in explained and len(t) > 2}
+
+    def _shaky(self, q: Query, result: dict) -> bool:
+        """The rules answered, but part of the question matched nothing in that answer: let Gemini double-check."""
+        label = self._label(result)
+        return bool(label and result.get("intent") in ("value", "rank", "trend") and self._unexplained(q, label))
+
+    def _better(self, q: Query, again: dict, result: dict) -> bool:
+        """Gemini's reading replaces the rules' answer only if it is a different figure that explains at least as
+        much of the question as the rules' own answer did."""
+        a, b = self._label(again), self._label(result)
+        return bool(a) and a != b and len(self._unexplained(q, a)) <= len(self._unexplained(q, b))
+
+    def _chat_reply(self, hint: dict, result):
+        """Small talk or a question that is not about the dashboard: Gemini's short reply (it never holds figures)."""
+        reply = str(hint.get("reply") or "").strip()
+        if hint.get("intent") in ("chat", "unknown") and reply and result is None:
+            return self._reply(reply[:400], understood=hint.get("intent") == "chat", intent="chat", engine="gemini")
+        return None
+
+    def _smalltalk(self, question: str):
+        hing = bool(re.search(r"\b(kaise|kaisa|kaisi|haal|kya chal|bhai|yaar)\b", norm(question)))
+        text = ("Main badhiya hoon, shukriya! Dashboard ke numbers ke baare mein kuch bhi poochiye."
+                if hing else "I'm doing well, thanks for asking! Ask me anything about the dashboard's numbers.")
+        return self._reply(text, intent="chat")
+
+    def _polish(self, question: str, result: dict, style: str) -> dict:
+        """Gemini rewrites the finished answer as a natural reply in the person's own language. The figures in it
+        are checked against the original, and the plain answer is kept if anything differs."""
+        phrase = getattr(self.interpreter, "phrase", None)
+        if (phrase is None or not getattr(self.interpreter, "phrasing", False) or style == "terse"
+                or result.get("intent") not in PHRASE_INTENTS or not result.get("answer")):
             return result
-        return self._not_understood(q, snap, vocab)
+        better = phrase(question, result["answer"], language_of(question))
+        if better:
+            result = {**result, "answer": better, "phrased": True}
+        return result
 
     # -------------------------------------------------------------------------------------------- pieces
     @staticmethod
@@ -634,6 +715,13 @@ class Assistant:
             return self._record(q, snap)
         if q.intent in ("list", "count"):
             return self._list(q, vocab)
+        res = self._calc(q, snap, vocab)
+        if res:
+            return res
+        if q.intent == "compare" and len(set(q.months)) >= 2 and not self._entity_groups(q, 2):
+            res = self._calc_period(q, calc.Spec("diff"), snap, vocab)       # two months: show the change
+            if res:
+                return res
         if q.intent == "compare":
             res = self._compare(q, snap)
             if res:
@@ -693,6 +781,7 @@ class Assistant:
         val = best.text()
         if q.style == "terse":
             return self._reply(f"**{val}**", best.page, self._ctx(q, best), intent="value")
+        elsewhere = any(c.label == best.label and c.page != best.page and c.text() != val for c in cands[:8])
         if best.kind == "cell":
             scope = q.scope(skip_type=best.entity.type if best.entity else None)
             who = best.row
@@ -702,6 +791,8 @@ class Assistant:
             sentence = f"{best.label}{(' ' + scope) if scope else ''} is **{val}**."
         if not q.months and best.kind == "kpi" and not best.label.lower().startswith(("top", "most")):
             sentence = sentence[:-1] + " (all months so far)."
+        if elsewhere and best.page not in q.pages:
+            sentence = sentence[:-1] + f" (from the {PAGES[best.page].label} page)."
         lines = [sentence]
         same = label_tokens(best.label) & set(q.toks)
         for alt in cands[1:4]:
@@ -835,7 +926,9 @@ class Assistant:
         nums = [(name, c.value) for name, c in results if isinstance(c.value, (int, float))]
         if len(nums) == 2 and nums[0][1] != nums[1][1]:
             hi, lo = sorted(nums, key=lambda x: -x[1])
-            lines.append(f"**{hi[0]}** is higher by **{fmt.diff(hi[1], lo[1], first.fmt, first.unit)}**.")
+            more = fmt.more_pct(hi[1], lo[1]) if first.fmt != "pct" else ""
+            lines.append(f"**{hi[0]}** is higher by **{fmt.diff(hi[1], lo[1], first.fmt, first.unit)}**"
+                         + (f" ({more} than {lo[0]})." if more else "."))
         elif len(nums) > 2:
             hi = max(nums, key=lambda x: x[1])
             lines.append(f"Highest: **{hi[0]}**.")
@@ -876,10 +969,283 @@ class Assistant:
                      f"• {a.label}: **{a.text()}**", f"• {b.label}: **{b.text()}**"]
             if isinstance(a.value, (int, float)) and isinstance(b.value, (int, float)) and a.value != b.value:
                 hi, lo = (a, b) if a.value > b.value else (b, a)
-                lines.append(f"**{hi.label}** is higher by **{fmt.diff(hi.value, lo.value, hi.fmt, hi.unit)}**.")
+                more = fmt.more_pct(hi.value, lo.value) if hi.fmt != "pct" else ""
+                lines.append(f"**{hi.label}** is higher by **{fmt.diff(hi.value, lo.value, hi.fmt, hi.unit)}**"
+                             + (f" ({more} than {lo.label})." if more else "."))
             text = "\n".join(lines)
         ctx = self._ctx(q, a, "compare")
         return self._reply(text, a.page, ctx, intent="compare")
+
+    # -------------------------------------------------------------------------------------------- calculations
+    @staticmethod
+    def _entity_groups(q: Query, at_least: int) -> bool:
+        counts: dict[str, int] = {}
+        for e in q.entities:
+            if e.type not in ("month", "po"):
+                counts[e.type] = counts.get(e.type, 0) + 1
+        return any(v >= at_least for v in counts.values())
+
+    @staticmethod
+    def _numeric(*cands) -> bool:
+        return all(c is not None and isinstance(c.value, (int, float)) and not isinstance(c.value, bool)
+                   for c in cands)
+
+    def _calc(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
+        """Growth, difference, sums, averages, shares and plain arithmetic. The figures still come from the
+        dashboard; only the arithmetic is done here."""
+        spec = calc.detect(q.text)
+        if spec is None:
+            return None
+        handlers = {"arithmetic": self._calc_arith, "n_of": self._calc_n_of, "share": self._calc_share,
+                    "metric_op": self._calc_metric_op, "growth": self._calc_period, "diff": self._calc_period,
+                    "sum": self._calc_sum, "average": self._calc_average}
+        try:
+            return handlers[spec.kind](q, spec, snap, vocab)
+        except ZeroDivisionError:
+            return self._reply("That would mean dividing by zero, which isn't possible.", intent="calc")
+
+    def _calc_arith(self, q: Query, spec, snap, vocab):
+        try:
+            value = calc.evaluate(spec.expr)
+        except ZeroDivisionError:
+            raise
+        except (ValueError, SyntaxError, OverflowError):
+            return None
+        text = f"**{calc.num(value)}**" if q.style == "terse" else f"{spec.disp} = **{calc.num(value)}**"
+        return self._reply(text, intent="calc")
+
+    def _phrase_value(self, q: Query, phrase: str, snap: Snapshot, vocab: Vocabulary, like: Candidate | None = None):
+        """The dashboard figure a phrase like "pending pcs" or "total revenue" points at, with the question's months
+        and names applied."""
+        sub = parse(phrase, vocab, self.today_month())
+        have = {(e.type, e.key) for e in sub.entities}
+        sub.entities = sub.entities + [e for e in q.entities if (e.type, e.key) not in have]
+        sub.months = list(q.months) or sub.months
+        sub.intent = "value"
+        sub.pages = list(dict.fromkeys(([like.page] if like else []) + sub.pages + q.pages))
+        if not sub.metric_toks:
+            return None
+        cands = [c for c in self._candidates(sub, snap) if c.kind in ("kpi", "cell", "mcell")]
+        if not cands or cands[0].score < THRESHOLD or not self._numeric(cands[0]):
+            return None
+        return cands[0]
+
+    def _calc_n_of(self, q: Query, spec, snap, vocab):
+        b = self._phrase_value(q, spec.b, snap, vocab)
+        if b is None:
+            return None
+        value = b.value * spec.n / 100
+        out = fmt.value(value, b.fmt, b.unit)
+        if q.style == "terse":
+            return self._reply(f"**{out}**", b.page, self._ctx(q, b, "calc"), intent="calc")
+        return self._reply(f"{calc.num(spec.n)}% of **{b.label}**{self._in(q)} (**{b.text()}**) is **{out}**.",
+                           b.page, self._ctx(q, b, "calc"), intent="calc")
+
+    def _in(self, q: Query) -> str:
+        scope = q.scope()
+        return f" {scope}" if scope else ""
+
+    def _calc_share(self, q: Query, spec, snap, vocab):
+        a = self._phrase_value(q, spec.a, snap, vocab)
+        b = self._phrase_value(q, spec.b, snap, vocab, like=a)
+        if a is None or b is None or a.label == b.label:
+            return None
+        if a.fmt == "pct" or b.fmt == "pct" or (a.unit != b.unit and "inr" not in (a.fmt, b.fmt)):
+            return None
+        if b.value == 0:
+            return self._reply(f"**{b.label}** is 0{self._in(q)}, so a share of it can't be calculated.",
+                               b.page, self._ctx(q, a, "calc"), intent="calc")
+        share = a.value / b.value * 100
+        if q.style == "terse":
+            return self._reply(f"**{fmt.value(share, 'pct')}**", a.page, self._ctx(q, a, "calc"), intent="calc")
+        return self._reply(f"**{a.label}** is **{fmt.value(share, 'pct')}** of **{b.label}**{self._in(q)}: "
+                           f"{a.text()} out of {b.text()}.", a.page, self._ctx(q, a, "calc"), intent="calc")
+
+    def _calc_metric_op(self, q: Query, spec, snap, vocab):
+        a = self._phrase_value(q, spec.a, snap, vocab)
+        if a is None:
+            return None
+        n, v = spec.n, a.value
+        words = {"/": f"divided by {calc.num(n)}", "*": f"multiplied by {calc.num(n)}",
+                 "+": f"plus {fmt.value(n, a.fmt, a.unit) if a.fmt == 'inr' else calc.num(n)}",
+                 "-": f"minus {fmt.value(n, a.fmt, a.unit) if a.fmt == 'inr' else calc.num(n)}",
+                 "pct+": f"increased by {calc.num(n)}%", "pct-": f"reduced by {calc.num(n)}%"}[spec.op]
+        result = {"/": v / n if n else None, "*": v * n, "+": v + n, "-": v - n,
+                  "pct+": v * (1 + n / 100), "pct-": v * (1 - n / 100)}[spec.op]
+        if result is None:
+            raise ZeroDivisionError
+        out = fmt.value(result, a.fmt, a.unit)
+        if q.style == "terse":
+            return self._reply(f"**{out}**", a.page, self._ctx(q, a, "calc"), intent="calc")
+        return self._reply(f"**{a.label}**{self._in(q)} is **{a.text()}**; {words} that is **{out}**.", a.page,
+                           self._ctx(q, a, "calc"), intent="calc")
+
+    def _running_note(self, month: str) -> str:
+        """A warning when a month being compared has not finished yet."""
+        if self.today is None:
+            return ""
+        d = self.today()
+        if month != f"{d.strftime('%B')}-{d.year % 100:02d}":
+            return ""
+        last = calendar.monthrange(d.year, d.month)[1]
+        if d.day >= last:
+            return ""
+        return f"Note: {month} is still running (day {d.day} of {last}), so this is not a full-month comparison."
+
+    def _month_value(self, q: Query, snap: Snapshot, month: str, like: Candidate | None = None):
+        sub = replace(q, entities=list(q.entities), months=[month], pages=list(q.pages), intent="value")
+        if like is not None:
+            sub.pages = list(dict.fromkeys([like.page] + sub.pages))
+        cands = [c for c in self._candidates(sub, snap) if c.kind in ("kpi", "cell", "mcell")]
+        if like is not None:
+            cands = [c for c in cands if c.label == like.label and c.page == like.page]
+        if not cands or cands[0].score < THRESHOLD or not self._numeric(cands[0]):
+            return None
+        return cands[0]
+
+    def _calc_period(self, q: Query, spec, snap, vocab):
+        """Change between two months: the difference and the percentage growth. Defaults to last month -> this month."""
+        fy = vocab.months
+        months = sorted(set(q.months), key=fy.index)
+        if self._entity_groups(q, 2) or (q.dims and not q.entities):
+            return None
+        if spec.kind == "diff" and not months:
+            return None
+        today_m = self.today_month()
+        if len(months) >= 2:
+            base_m, cur_m = months[0], months[-1]
+        else:
+            cur_m = months[0] if months else (today_m if today_m in fy else None)
+            i = fy.index(cur_m) if cur_m in fy else 0
+            base_m = fy[i - 1] if cur_m and i > 0 else None
+        if cur_m is None:
+            return None
+        if base_m is None:
+            return self._reply(f"{cur_m} is the first month of the year, so there is no earlier month to compare with.",
+                               intent="calc")
+        qq = replace(q, toks=list(q.toks) + ([] if q.metric_toks else ["revenue"]))
+        cur = self._month_value(qq, snap, cur_m)
+        base = self._month_value(qq, snap, base_m, like=cur) if cur else None
+        if cur is None or base is None:
+            return None
+        delta = cur.value - base.value
+        pct = fmt.pct_change(base.value, cur.value) if cur.fmt != "pct" else None
+        names = [e.display for e in q.entities if e.type not in ("month", "po")]
+        scope = f" for {' and '.join(names)}" if names else ""
+        if q.style == "terse":
+            out = fmt.pct_text(pct) if pct is not None and spec.kind == "growth" else fmt.diff(
+                cur.value, base.value, cur.fmt, cur.unit)
+            sign = "+" if delta > 0 else "-" if delta < 0 else ""
+            return self._reply(f"**{sign}{out}**", cur.page, self._ctx(replace(q, months=[base_m, cur_m]), cur, "calc"),
+                               intent="calc")
+        head = (f"**{cur.label}**{scope} is **{cur.text()}** in **{cur_m}**, against **{base.text()}** in "
+                f"**{base_m}**.")
+        if delta == 0:
+            tail = " There is no change."
+        else:
+            word = "higher" if delta > 0 else "lower"
+            amount = fmt.diff(cur.value, base.value, cur.fmt, cur.unit)
+            if pct is not None:
+                tail = (f" That is **{amount} {word}**, a **{fmt.pct_text(pct)} {'growth' if delta > 0 else 'decline'}**"
+                        f" compared with {base_m}.")
+            elif cur.fmt == "pct":
+                tail = f" That is **{amount} {word}**."
+            else:
+                tail = f" That is **{amount} {word}**; {base_m} was 0, so a percentage can't be worked out."
+        note = self._running_note(cur_m)
+        text = head + tail + (f"\n{note}" if note else "")
+        return self._reply(text, cur.page, self._ctx(replace(q, months=[base_m, cur_m]), cur, "calc"), intent="calc")
+
+    def _each(self, q: Query, snap: Snapshot, items):
+        """The same figure for each named thing: [(type, Entity), ...] -> (first candidate, [(name, candidate)])."""
+        results, first = [], None
+        for etype, item in items:
+            sub = replace(q, entities=list(q.entities), months=list(q.months), pages=list(q.pages), intent="value")
+            sub.entities = [e for e in q.entities if e.type != etype] + [item]
+            if first is not None:
+                sub.pages = list(dict.fromkeys([first.page] + sub.pages))
+            cands = [c for c in self._candidates(sub, snap) if c.kind in ("kpi", "cell", "mcell")]
+            if first is not None:
+                cands = [c for c in cands if c.label == first.label and c.page == first.page] or cands
+            if not cands or cands[0].score < THRESHOLD or not self._numeric(cands[0]):
+                return None
+            first = first or cands[0]
+            results.append((item.display, cands[0]))
+        return first, results
+
+    def _calc_sum(self, q: Query, spec, snap, vocab):
+        """Several named designers / clients / vendors added together ("Rekha aur Anamika ki revenue milake")."""
+        groups: dict[str, list] = {}
+        for e in q.entities:
+            if e.type not in ("month", "po"):
+                groups.setdefault(e.type, []).append(e)
+        if not groups:
+            return None
+        etype, ents = max(groups.items(), key=lambda kv: len(kv[1]))
+        if len(ents) < 2:
+            return None
+        got = self._each(q, snap, [(etype, e) for e in ents])
+        if got is None:
+            return None
+        first, results = got
+        if first.fmt in ("pct", "dec1") or first.unit == "days":
+            return self._reply(f"**{first.label}** is a rate or an average, so adding the values together would not "
+                               f"mean anything.", first.page, self._ctx(q, first, "calc"), intent="calc")
+        total = sum(c.value for _, c in results)
+        out = fmt.value(total, first.fmt, first.unit)
+        if q.style == "terse":
+            return self._reply(f"**{out}**", first.page, self._ctx(q, first, "calc"), intent="calc")
+        parts = " + ".join(f"{name} {c.text()}" for name, c in results)
+        return self._reply(f"**{first.label}**{self._in(q)}, added together: {parts} = **{out}**.", first.page,
+                           self._ctx(q, first, "calc"), intent="calc")
+
+    def _calc_average(self, q: Query, spec, snap, vocab):
+        """Average per month (completed months) or per designer / vendor / client / fabricator / category."""
+        t = norm(q.text)
+        per_month = bool(re.search(r"\b(monthly|per month|each month|every month|har mahine|mahine ka|month wise|"
+                                   r"monthwise|month)\b", t))
+        if not per_month and not q.dims:
+            return None
+        sub = replace(q, toks=[x for x in q.toks if x not in ("avg",)], intent="trend" if per_month else "rank",
+                      entities=list(q.entities), months=[], pages=list(q.pages))
+        cands = [c for c in self._candidates(sub, snap) if c.kind in ("trend", "rank")]
+        if per_month:
+            cands = [c for c in cands if c.row == "month"]
+        if not cands or cands[0].score < THRESHOLD:
+            return None
+        c = cands[0]
+        if c.fmt in ("pct", "dec1") or c.unit == "days":
+            return None
+        if per_month:
+            fy = vocab.months
+            today_m = self.today_month()
+            upto = fy.index(today_m) if today_m in fy else len(fy) - 1
+            rows = [(m, v) for m, v in c.rows if m in fy and fy.index(m) <= upto and isinstance(v, (int, float))]
+            if not rows:
+                return None
+            running = bool(self._running_note(rows[-1][0])) and len(rows) > 1
+            done = rows[:-1] if running else rows
+            avg = sum(v for _, v in done) / len(done)
+            out = fmt.value(avg, c.fmt, c.unit)
+            if q.style == "terse":
+                return self._reply(f"**{out}**", c.page, self._ctx(q, c, "calc"), intent="calc")
+            text = (f"Average monthly **{c.label}** over the {len(done)} completed month{'s' if len(done) != 1 else ''}"
+                    f" ({done[0][0]} to {done[-1][0]}) is **{out}**.")
+            if running:
+                with_run = sum(v for _, v in rows) / len(rows)
+                text += (f" Counting {rows[-1][0]} too, which is still running, the average is "
+                         f"**{fmt.value(with_run, c.fmt, c.unit)}**.")
+            return self._reply(text, c.page, self._ctx(q, c, "calc"), intent="calc")
+        rows = [(n, v) for n, v in c.rows if isinstance(v, (int, float))]
+        if not rows:
+            return None
+        avg = sum(v for _, v in rows) / len(rows)
+        what = TYPE_NAMES.get(c.row, c.row)
+        out = fmt.value(avg, c.fmt, c.unit)
+        if q.style == "terse":
+            return self._reply(f"**{out}**", c.page, self._ctx(q, c, "calc"), intent="calc")
+        return self._reply(f"Average **{c.label}** per {what}, across {len(rows)} {PLURALS.get(what, what + 's')}, "
+                           f"is **{out}**.", c.page, self._ctx(q, c, "calc"), intent="calc")
 
     def _record(self, q: Query, snap: Snapshot) -> dict | None:
         e = next(e for e in q.entities if e.type == "po")
@@ -978,9 +1344,7 @@ class Assistant:
     def _from_hint(self, hint: dict, question: str, vocab: Vocabulary) -> Query | None:
         """Turns the model's reading of the question back into words the rules understand, then re-parses."""
         intent = str(hint.get("intent") or "")
-        metric = str(hint.get("metric") or "")
-        if metric and metric not in vocab.labels:
-            return None
+        metric = str(hint.get("metric") or "")       # an exact label, or a plain word ("sales") the rules can read
         bits = []
         if intent in ("top", "bottom"):
             bits.append("highest" if intent == "top" else "lowest")
@@ -992,13 +1356,37 @@ class Assistant:
             bits.append("where is")
         if intent == "count":
             bits.append("how many")
+        operation = str(hint.get("operation") or "")
+        metric2 = str(hint.get("metric2") or "")
+        number = hint.get("number")
+        if operation == "growth":
+            bits.append("growth percent")
+            if not hint.get("months"):
+                bits.append("this month vs last month")
+        elif operation == "difference":
+            bits.append("difference")
+            if not hint.get("months"):
+                bits.append("this month vs last month")
+        elif operation == "sum":
+            bits.append("added together")
+        elif operation == "average":
+            bits.append("average monthly")
+        elif operation == "percent_of" and metric2:
+            bits = [metric, "as percent of", metric2] + [str(x) for x in hint.get("months") or [] if isinstance(x, str)]
+            metric = ""
+        elif operation in ("divide", "multiply") and isinstance(number, (int, float)):
+            bits = [metric, "divided by" if operation == "divide" else "multiplied by", str(number)]
+            metric = ""
         if hint.get("dimension") in DIMENSION_WORDS.values():
             bits.append(str(hint["dimension"]))
         bits.append(metric)
-        bits += [str(x) for x in hint.get("names") or [] if isinstance(x, str)][:4]
-        bits += [str(x) for x in hint.get("months") or [] if isinstance(x, str)][:12]
-        q = parse(" ".join(b for b in bits if b), vocab, self.today_month())
+        if operation not in ("percent_of", "divide", "multiply"):
+            bits += [str(x) for x in hint.get("names") or [] if isinstance(x, str)][:4]
+            bits += [str(x) for x in hint.get("months") or [] if isinstance(x, str)][:12]
+        canonical = " ".join(b for b in bits if b)
+        q = parse(canonical, vocab, self.today_month())
         if hint.get("page") in PAGES:
             q.pages = [hint["page"]]
-        q.text = question
+        q.text = canonical if operation in ("growth", "difference", "sum", "average", "percent_of", "divide",
+                                            "multiply") else question
         return q

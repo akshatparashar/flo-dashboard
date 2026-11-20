@@ -84,3 +84,20 @@ def months(ms: list[str]) -> str:
     if not ms:
         return ""
     return " and ".join(ms) if len(ms) <= 2 else ", ".join(ms[:-1]) + f" and {ms[-1]}"
+
+
+def pct_change(base, cur):
+    """Percentage change from base to cur; None when base is 0 (there is nothing to compare with)."""
+    if not (_num(base) and _num(cur)) or base == 0:
+        return None
+    return (cur - base) / abs(base) * 100
+
+
+def pct_text(p: float) -> str:
+    return f"{abs(p):,.1f}%"
+
+
+def more_pct(hi, lo):
+    """'20.8% more' for hi relative to lo, or '' when it can't be said."""
+    p = pct_change(lo, hi)
+    return f"{abs(p):,.1f}% more" if p is not None else ""

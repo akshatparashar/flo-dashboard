@@ -63,7 +63,8 @@ WORDS = {
     "samples": "sample", "sampling": "sample",
     "orders": "order", "designs": "design",
     "average": "avg", "avg": "avg", "mean": "avg",
-    "required": "require", "needed": "require", "need": "require", "zaroorat": "require",
+    "required": "require", "needed": "require", "need": "require", "zaroorat": "require", "chahiye": "require",
+    "chahie": "require", "chahiyen": "require",
 }
 
 # Words that mostly say which page a question is about. When a question also has a more specific word
@@ -153,3 +154,18 @@ def similar(a: str, b: str) -> float:
 def name_key(s: str) -> str:
     """Comparable form of a name: lower case, letters and digits only, single spaces."""
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9/& ]+", " ", norm(s))).strip()
+
+
+_HINDI_WORDS = frozenset("""
+kitna kitne kitni hai hain ka ki ke ko mein mahine mahina mahine batao bataiye bata dikhao dikha sabse zyada jyada
+aur tak hua hue hui kya kaun konsa kaunsa abhi pichle pichla pichhle fark badhi badha badhe ghata ghati milake
+milakar karo nahi paas wala wali liye maal kamai kapda yeh woh isme usme isse uska iska hamara humara chahiye
+""".split())
+
+
+def language_of(text: str) -> str:
+    """'Hindi (Devanagari)', 'Hinglish (Hindi written in English letters)' or 'English'; used to pick the reply language."""
+    if re.search(r"[\u0900-\u097f]", text or ""):
+        return "Hindi in Devanagari script"
+    words = set(raw_tokens(text))
+    return "Hinglish (Hindi written in English letters)" if words & _HINDI_WORDS else "English"

@@ -99,8 +99,10 @@ iPhone.
   The demo-data test run (128 tests) is unaffected.
 - **Sign-in is one shared passcode**, not personal logins. The 10-tries-a-minute lock is per server instance, so on
   Vercel keep the passcode long.
-- **Chatbot** is rule based; `GEMINI_API_KEY` adds a fallback that only maps a question to dashboard labels (it
-  never sees figures). Ambiguous wording ("supplier") can pick fabricators instead of fabric vendors.
+- **Chatbot** is rule based and does growth %, differences, sums, averages, shares and basic arithmetic on dashboard
+  figures (`docs/CHATBOT.md`). `GEMINI_API_KEY` adds Gemini for understanding Hindi / Hinglish / Devanagari and small
+  talk (labels only) and for rewriting answers fluently (**this step sends the answer's figures to Google**; turn it
+  off with `ASSISTANT_GEMINI_PHRASING=off`). Ambiguous wording ("supplier") can pick fabricators instead of fabric vendors.
 - `legacy/` (old Streamlit app) is kept only for the parity tests; remove once the old dashboard is retired.
 
 ## How to run everything locally
