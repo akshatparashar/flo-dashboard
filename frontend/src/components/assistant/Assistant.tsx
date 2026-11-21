@@ -3,7 +3,9 @@
    - The round launcher sits bottom-right; its robot waves every 15 seconds.
    - Its small × tucks it into a tab on the screen edge; the tab brings it back.
    - The panel answers from POST /api/chat, which reads only the dashboard's own numbers (read-only).
-   - The conversation is kept for the browser tab (sessionStorage), so it survives page changes and reloads. */
+   - The conversation is kept for the browser tab (sessionStorage), so it survives page changes and reloads.
+   - The server remembers the last 15 messages of each chat by its conversation id (used for follow-ups);
+     "New chat" starts a new id. */
 import { ArrowUpRight, RotateCcw, SendHorizontal, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -20,7 +22,10 @@ export type ChatReply = {
   understood: boolean;
   intent: string;
   engine: string;
+  conversation_id?: string;
 };
+
+type History = { conversation_id: string; messages: { role: "user" | "assistant"; text: string; page: string | null; page_label: string | null }[] };
 
 type Msg = { id: number; role: "user" | "bot"; text: string; page?: string | null; pageLabel?: string | null; error?: boolean; retry?: string };
 
@@ -29,22 +34,24 @@ const DOCK_KEY = "flo-assistant-dock";
 const MAX_LEN = 500;
 const WELCOME = "Hi! I'm **FLO Assistant**. Ask me anything about this dashboard: any number, name or month, in English or Hinglish.";
 
-function load(): { msgs: Msg[]; ctx: Record<string, unknown> | null } {
+type ChatState = { msgs: Msg[]; ctx: Record<string, unknown> | null; conv: string | null };
+
+function load(): ChatState {
   try {
     const raw = sessionStorage.getItem(CHAT_KEY);
     if (raw) {
       const v = JSON.parse(raw);
-      if (Array.isArray(v.msgs)) return { msgs: v.msgs, ctx: v.ctx ?? null };
+      if (Array.isArray(v.msgs)) return { msgs: v.msgs, ctx: v.ctx ?? null, conv: typeof v.conv === "string" ? v.conv : null };
     }
   } catch {
     /* storage blocked or corrupt: start fresh */
   }
-  return { msgs: [], ctx: null };
+  return { msgs: [], ctx: null, conv: null };
 }
 
-function save(msgs: Msg[], ctx: Record<string, unknown> | null) {
+function save(msgs: Msg[], ctx: Record<string, unknown> | null, conv: string | null) {
   try {
-    sessionStorage.setItem(CHAT_KEY, JSON.stringify({ msgs: msgs.slice(-60), ctx }));
+    sessionStorage.setItem(CHAT_KEY, JSON.stringify({ msgs: msgs.slice(-60), ctx, conv }));
   } catch {
     /* ignore */
   }
@@ -61,7 +68,7 @@ function dockedAway(): boolean {
 export function Assistant() {
   const [open, setOpen] = useState(false);
   const [tucked, setTucked] = useState(dockedAway);
-  const [{ msgs, ctx }, setState] = useState(load);
+  const [{ msgs, ctx, conv }, setState] = useState<ChatState>(load);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -70,7 +77,24 @@ export function Assistant() {
   const nextId = useRef(msgs.reduce((m, x) => Math.max(m, x.id), 0) + 1);
   const loc = useLocation();
 
-  useEffect(() => save(msgs, ctx), [msgs, ctx]);
+  useEffect(() => save(msgs, ctx, conv), [msgs, ctx, conv]);
+  // A chat id without its messages (e.g. storage was cleared): show what the server remembers.
+  useEffect(() => {
+    if (!conv || msgs.length) return;
+    api<History>(`/chat/${conv}`)
+      .then((h) =>
+        setState((s) =>
+          s.msgs.length
+            ? s
+            : {
+                ...s,
+                msgs: h.messages.map((m) => ({ id: nextId.current++, role: m.role === "assistant" ? "bot" : "user", text: m.text, page: m.page, pageLabel: m.page_label })),
+              },
+        ),
+      )
+      .catch(() => setState((s) => ({ ...s, conv: null })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
@@ -102,8 +126,12 @@ export function Assistant() {
     requestAnimationFrame(() => launcherRef.current?.focus());
   };
 
-  const push = (m: Omit<Msg, "id">, newCtx?: Record<string, unknown> | null) =>
-    setState((s) => ({ msgs: [...s.msgs, { ...m, id: nextId.current++ }], ctx: newCtx === undefined ? s.ctx : newCtx }));
+  const push = (m: Omit<Msg, "id">, newCtx?: Record<string, unknown> | null, newConv?: string) =>
+    setState((s) => ({
+      msgs: [...s.msgs, { ...m, id: nextId.current++ }],
+      ctx: newCtx === undefined ? s.ctx : newCtx,
+      conv: newConv ?? s.conv,
+    }));
 
   const send = async (text: string) => {
     const message = text.trim().slice(0, MAX_LEN);
@@ -112,8 +140,11 @@ export function Assistant() {
     setDraft("");
     setBusy(true);
     try {
-      const r = await api<ChatReply>("/chat", undefined, { method: "POST", body: JSON.stringify({ message, context: ctx }) });
-      push({ role: "bot", text: r.answer, page: r.page, pageLabel: r.page_label }, r.understood ? r.context : ctx);
+      const r = await api<ChatReply>("/chat", undefined, {
+        method: "POST",
+        body: JSON.stringify({ message, context: ctx, conversation_id: conv ?? undefined }),
+      });
+      push({ role: "bot", text: r.answer, page: r.page, pageLabel: r.page_label }, r.understood ? r.context : ctx, r.conversation_id);
     } catch (e) {
       push({ role: "bot", text: (e as Error).message || "Something went wrong. Please try again.", error: true, retry: message });
     } finally {
@@ -145,7 +176,7 @@ export function Assistant() {
   };
 
   const reset = () => {
-    setState({ msgs: [], ctx: null });
+    setState({ msgs: [], ctx: null, conv: null });
     inputRef.current?.focus();
   };
 

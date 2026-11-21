@@ -112,6 +112,7 @@ _TOKEN = re.compile(r"[a-z0-9%]+(?:[/'.-][a-z0-9]+)*|₹")
 def norm(text: str) -> str:
     """Lower case, unify quotes and spaces."""
     t = (text or "").lower().replace("’", "'").replace("‘", "'").replace("–", "-").replace("—", "-")
+    t = re.sub(r"(?<=[a-z])'s\b", "", t)                       # possessive: "Kirti's" -> "Kirti"
     return re.sub(r"\s+", " ", t).strip()
 
 
@@ -161,6 +162,16 @@ def label_tokens(label: str) -> set[str]:
 
 def similar(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
+
+
+def sound_key(s: str) -> str:
+    """How a name sounds, so Indian spellings match: Kirti / Keerti / Keerthi, Pooja / Puja, Jyoti / Jyothi."""
+    s = re.sub(r"[^a-z]", "", s.lower())
+    for a, b in (("ee", "i"), ("oo", "u"), ("aa", "a"), ("th", "t"), ("dh", "d"), ("bh", "b"), ("kh", "k"),
+                 ("w", "v"), ("ph", "f"), ("z", "j"), ("y", "i")):
+        s = s.replace(a, b)
+    s = re.sub(r"(.)\1+", r"\1", s)
+    return s.rstrip("h")
 
 
 def name_key(s: str) -> str:

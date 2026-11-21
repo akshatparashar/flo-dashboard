@@ -1,4 +1,5 @@
-/* Renders the assistant's plain-text answers: **bold**, line breaks, "• " bullets and "1. " numbered lines.
+/* Renders the assistant's plain-text answers: **bold**, line breaks, "• " bullets, "1. " numbered lines and
+   simple "| a | b |" tables (a "|---|" line under the header).
    Builds React elements only (no innerHTML), so nothing in an answer can inject markup. */
 import { Fragment, type ReactNode } from "react";
 
@@ -18,7 +19,35 @@ export function RichText({ text }: { text: string }) {
     out.push(list.ordered ? <ol key={out.length}>{items}</ol> : <ul key={out.length}>{items}</ul>);
     list = null;
   };
+  let table: string[][] | null = null;
+  const flushTable = () => {
+    if (!table) return;
+    const [head, ...body] = table;
+    out.push(
+      <div className="fa-table" key={out.length}>
+        <table>
+          <thead>
+            <tr>{head.map((c, i) => <th key={i}>{inline(c)}</th>)}</tr>
+          </thead>
+          <tbody>
+            {body.map((r, i) => (
+              <tr key={i}>{r.map((c, j) => <td key={j}>{inline(c)}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>
+      </div>,
+    );
+    table = null;
+  };
   for (const line of lines) {
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      flush();
+      if (/^\s*\|[\s|:-]+\|\s*$/.test(line)) continue; // the |---| divider
+      const cells = line.trim().slice(1, -1).split("|").map((c) => c.trim());
+      (table ??= []).push(cells);
+      continue;
+    }
+    flushTable();
     const bullet = line.match(/^\s*•\s+(.*)$/);
     const num = line.match(/^\s*\d+\.\s+(.*)$/);
     if (bullet || num) {
@@ -34,5 +63,6 @@ export function RichText({ text }: { text: string }) {
     if (line.trim()) out.push(<p key={out.length}>{inline(line)}</p>);
   }
   flush();
+  flushTable();
   return <>{out}</>;
 }

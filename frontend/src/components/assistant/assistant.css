@@ -364,3 +364,9 @@
     font-size: 16px; /* stops iOS zooming into the field */
   }
 }
+
+/* small tables in answers (designer comparisons) */
+.fa-table { overflow-x: auto; margin: 6px 0; }
+.fa-table table { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+.fa-table th, .fa-table td { border: 1px solid var(--rule); padding: 4px 8px; text-align: left; white-space: nowrap; }
+.fa-table th { font-weight: 600; }

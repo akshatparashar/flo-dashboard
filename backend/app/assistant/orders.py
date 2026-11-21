@@ -36,6 +36,9 @@ LOW_W = re.compile(r"\b(lowest|least|fewest|minimum|min|sabse kam)\b")
 DETAIL_W = re.compile(r"\b(details?|detail|breakdown|show|list|dikhao|dikhaye|batao full|full)\b")
 SHARE_W = re.compile(r"(%|\bpercent\w*|\bpct\b|\bprati?shat\b|\bfisadi\b)")
 COMPARE_W = re.compile(r"\b(compare|comparison|vs|versus|mukabla|between)\b")
+GLOBAL_W = re.compile(r"\b(total|overall|all|everyone|company|flo|sab|sabhi|kul|entire|whole|each|every|har|"
+                      r"customers|designers)\b")
+PRONOUN_W = re.compile(r"\b(her|his|their|she|he|they|them|its|uska|uski|uske|unka|unki|iska|inka|are|is)\b")
 FOLLOW_OK = re.compile(r"\b(how much|how many|kitna|kitne|kitni|what|and|aur|also|loss|nuksan|nuksaan|change|"
                        r"difference|fark|percent\w*|growth)\b|%")
 
@@ -118,8 +121,15 @@ class OrderAnalyst:
             follow = True
         elif OTHER_METRIC.search(t):
             return None
+        elif octx and not designers and octx.get("designers") and not GLOBAL_W.search(t) and (
+                len(q.toks) <= 5 or PRONOUN_W.search(t)):
+            # "How many are repeat orders?" right after "Ayushi's orders" is still about Ayushi
+            designers = self._remembered(octx, vocab)
+            if not q.months:
+                q.months = [m for m in ((ctx or {}).get("months") or []) if m in fy_months]
 
-        kind = "REPEAT" if REPEAT_W.search(t) else "NEW" if NEW_W.search(t) else None
+        kind = None if (REPEAT_W.search(t) and NEW_W.search(t)) else \
+            "REPEAT" if REPEAT_W.search(t) else "NEW" if NEW_W.search(t) else None
         unit = "pcs" if PCS_W.search(t) and not DESIGN_W.search(t) else "designs"
         noun = "designs" if DESIGN_W.search(t) else "orders"
         months = sorted(set(q.months), key=fy_months.index)
@@ -139,7 +149,11 @@ class OrderAnalyst:
             spec.prior = [m for m in octx.get("months_seen", []) if m in fy_months]
         two_months = len(months) >= 2
         wise = bool(CUSTOMERWISE.search(t))
-        if pct and (kind or "repeat" in t) and not growth and (has_order and not follow):
+        if follow and pct and not growth and len(months) < 2:
+            spec.mode = "share"                 # "show percentage" after a repeat / new order answer
+            spec.kind = spec.kind or "REPEAT"
+            spec.months = [m for m in ((ctx or {}).get("months") or []) if m in fy_months]
+        elif pct and (kind or "repeat" in t) and not growth and (has_order and not follow):
             spec.mode = "share"
             spec.kind = spec.kind or "REPEAT"
         elif growth or (COMPARE_W.search(t) and two_months) or (follow and pct):
@@ -438,6 +452,6 @@ class OrderAnalyst:
     @staticmethod
     def _stated(text: str) -> list[float]:
         """Numbers the person typed in themselves (months like 'October-26' and years are ignored)."""
-        s = re.sub(r"[a-z]+[\s-]*'?\d{2}\b", " ", text.lower())
+        s = re.sub(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s-]*'?\d{2}\b", " ", text.lower())
         s = re.sub(r"\b(?:19|20)\d{2}\b", " ", s)
         return [float(x.replace(",", "")) for x in re.findall(r"(?<![\d.])\d[\d,]*(?:\.\d+)?", s) if "," not in x or len(x) > 3]

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from .assistant import Assistant
 from .assistant.gemini import GeminiInterpreter
+from .assistant.memory import ConversationStore
 from .config import SHEET_REGISTRY, get_settings
 from .core import FY_LABEL, FY_MONTH_LABELS, MONTHNO_TO_LABEL, now_ist
 from .dashboards import fabric_po as fpo
@@ -330,12 +331,40 @@ def get_assistant() -> Assistant:
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     context: dict | None = None
+    conversation_id: str | None = Field(default=None, max_length=64)
+
+
+@lru_cache(maxsize=1)
+def get_conversations() -> ConversationStore:
+    return ConversationStore()
 
 
 @app.post("/api/chat", dependencies=[Depends(require_auth)])
 def chat(body: ChatIn):
-    """FLO Assistant: answers a question from the dashboard's own numbers (read-only)."""
-    return get_assistant().answer(body.message, body.context)
+    """FLO Assistant: answers a question from the dashboard's own numbers (read-only).
+
+    With ``conversation_id`` the server remembers the chat (last 15 messages) and uses it for follow-ups; without one
+    a new conversation is started and its id is returned. ``context`` (the older, browser-held memory) still works."""
+    store = get_conversations()
+    conv = body.conversation_id if ConversationStore.valid(body.conversation_id) else ConversationStore.new_id()
+    history = store.contexts(conv)
+    context = history[-1] if history else body.context
+    reply = get_assistant().answer(body.message, context, history)
+    store.add(conv, "user", body.message)
+    store.add(conv, "assistant", reply["answer"], reply.get("context") if reply.get("understood") else None,
+              {"page": reply.get("page"), "page_label": reply.get("page_label")})
+    return {**reply, "conversation_id": conv}
+
+
+@app.get("/api/chat/{conversation_id}", dependencies=[Depends(require_auth)])
+def chat_history(conversation_id: str):
+    """The remembered messages of one conversation (for showing it again after a reload)."""
+    if not ConversationStore.valid(conversation_id):
+        raise HTTPException(status_code=404, detail="Unknown conversation.")
+    msgs = get_conversations().messages(conversation_id)
+    return {"conversation_id": conversation_id,
+            "messages": [{"role": m["role"], "text": m["text"], "page": m.get("page"), "page_label": m.get("page_label")}
+                         for m in msgs]}
 
 
 # ------------------------------------------------------------------------------------------------ static (optional)

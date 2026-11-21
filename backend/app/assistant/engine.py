@@ -19,13 +19,16 @@ from typing import Callable
 import calendar
 from datetime import date
 
-from . import calc, fmt
+from collections import Counter
+
+from . import calc, fmt, planner
 from .orders import OrderAnalyst
+from .status import StatusAnalyst
 from .pages import (NEW_PAGES, DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
 from ..dashboards.vendor_rate import category_in_text
 from .text import (BOTTOM, CONTEXT_WORDS, GENERIC_NAME_WORDS, HOWMANY, MARKERS, MONTH_ALIASES, STOP, TOP, TREND, WORDS,
-                   canon, label_tokens, language_of, name_key, norm, raw_tokens, similar, tokens)
+                   canon, label_tokens, language_of, name_key, sound_key, norm, raw_tokens, similar, tokens)
 
 Fetch = Callable[[str, dict], dict]
 
@@ -35,7 +38,7 @@ SOFT = {"new", "yearly", "annual", "fy", "all", "sheet", "overall", "qty", "mtr"
 SKIP_KEYS = {"meta", "options", "charts", "matrix", "heatmap", "lines", "top_repeat", "gauge", "schedule"}
 SPECIAL_ROW = re.compile(r"^\(.*\)$|^(total|grand total)$", re.I)
 MAX_QUESTION = 500
-PHRASE_INTENTS = {"value", "rank", "trend", "compare", "calc", "record", "count", "list", "explain", "where", "page",
+PHRASE_INTENTS = {"status", "value", "rank", "trend", "compare", "calc", "record", "count", "list", "explain", "where", "page",
                   "help", "unknown"}
 # words that can sit in a question without naming a different figure
 HARMLESS = {"more", "less", "much", "many", "extra", "also", "else", "still", "yet", "only",
@@ -190,6 +193,8 @@ class Query:
     pages: list[str] = field(default_factory=list)   # pages named in the question
     intent: str = "value"
     inherited: bool = False
+    explicit: list[str] = field(default_factory=list)   # pages the question itself names
+    range: bool = False                                  # "between June and July" = those months together
 
     @property
     def markers(self):
@@ -355,9 +360,9 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
             continue
         best, score = None, 0.0
         for key, ents in vocab.by_key.items():
-            if " " in key or ents[0].type == "po" or abs(len(key) - len(w)) > 2 or key[0] != w[0]:
+            if " " in key or ents[0].type == "po" or abs(len(key) - len(w)) > 3 or key[0] != w[0]:
                 continue
-            s = similar(w, key)
+            s = 1.0 if sound_key(w) == sound_key(key) else similar(w, key)
             if s > score:
                 best, score = ents[0], s
         if best and score >= 0.84:
@@ -381,6 +386,7 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     for page in PAGES.values():
         if any(re.search(rf"\b{re.escape(w)}\b", t) for w in page.words):
             q.pages.append(page.key)
+    named = list(q.pages)               # pages the question names in words (the rest below are guesses)
     if re.search(r"\bsamples?\b", t) and "samples" not in q.pages:
         q.pages.append("samples")
     if re.search(r"\b(target|revenue|sales)\b", t) and "target" not in q.pages:
@@ -450,6 +456,7 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     # "best vendor" / "worst fabricator" with no measure: rank by on-time rate, not by size
     if q.intent == "rank" and q.dims and q.dims[0] in QUALITY and not q.metric_toks and _QUALITY.search(t):
         q.toks += tokens(QUALITY[q.dims[0]])
+    q.explicit = [p for p in named if p in q.pages]
     return q
 
 
@@ -526,7 +533,9 @@ class Assistant:
         self.interpreter = interpreter          # optional Gemini helper (see gemini.py)
 
     # -------------------------------------------------------------------------------------------- public
-    def answer(self, question: str, context: dict | None = None) -> dict:
+    def answer(self, question: str, context: dict | None = None, history: list[dict] | None = None) -> dict:
+        """One chat message -> one reply. ``history`` is the working context after each earlier answer in this chat
+        (oldest first, from the conversation memory); ``context`` is the latest one."""
         question = (question or "").strip()[:MAX_QUESTION]
         if not question:
             return self._reply("Please type a question about the dashboard.", understood=False)
@@ -535,7 +544,195 @@ class Assistant:
         if len(vocab.errors) == len(PAGES):
             return self._reply("I can't read the dashboard data right now (" + next(iter(vocab.errors.values())) +
                                "). Please try again in a minute.", understood=False)
+        history = [c for c in (history or []) if isinstance(c, dict)]
+        if context is None and history:
+            context = history[-1]
+        self._ctx_in, self._history = context, history
+        try:
+            whole_status = self._status_ask(question, [], vocab, snap)[1]
+        except (DataUnavailable, KeyError):
+            whole_status = None
+        parts = [question] if whole_status else self._plan(question, vocab)
+        if len(parts) > 1:
+            return self._multi(question, parts, context, history, snap, vocab)
+        return self._one(question, context, history, snap, vocab)
 
+    # -------------------------------------------------------------------------------------------- planning
+    def _asks(self, part: str, vocab: Vocabulary) -> bool:
+        """Is this clause a question of its own (it names a figure or a calculation)?"""
+        if planner.BOTH.search(part) or planner.TOTAL_ONLY.match(part):
+            return True
+        qp = parse(part, vocab, self.today_month())
+        filler = {"tell", "give", "show", "batao", "bataiye", "please", "also", "me", "dikhao", "compare", "between",
+                  "difference", "diff", "change", "growth", "percent", "increase", "decrease", "decline"}
+        own = qp.metric_toks - filler - HARMLESS - {"new", "yearly", "annual", "fy", "all", "sheet", "overall"}
+        return bool(own) or qp.intent in ("record", "list", "count")
+
+    def _plan(self, question: str, vocab: Vocabulary) -> list[str]:
+        """Splits a message into its questions; clauses that only name someone or a month, or that state figures,
+        are joined to the clause after them (with the same "and" / comma they had)."""
+        raw = planner.split_questions(question)
+        if len(raw) < 2:
+            return [question]
+        if _COMPARE.search(norm(question)) and len([1 for s, _ in raw if s == "\n"]) < 2 and \
+                not any(s == ", " for s, _ in raw):
+            return [question]                     # "compare Ayushi and Charu orders" is one question
+        merged, carry, glue = [], "", ""
+        for sep, p in raw:
+            if _GREET.match(norm(p)) or _THANKS.match(norm(p)):
+                continue
+            if carry:
+                p = carry + (glue if glue.strip() else " ") + p if sep == "\n" else carry + sep + p
+            carry = ""
+            if planner.STATEMENT.search(p) and not re.search(r"\b(how|what|kitna|kitne|kitni|kya)\b", p, re.I):
+                carry, glue = p, " "
+                continue
+            if not self._asks(p, vocab):
+                carry, glue = p, sep
+                continue
+            merged.append(p)
+        if carry:
+            if merged:
+                merged[-1] = f"{merged[-1]} {carry}"
+            else:
+                merged = [carry]
+        return merged if len(merged) > 1 else [question]
+
+    def _multi(self, question, parts, context, history, snap, vocab) -> dict:
+        """Several questions in one message: shared names, months and page are carried to every part, each part is
+        answered from the dashboard on its own, and the answers are put together in order."""
+        tm = self.today_month()
+        whole = parse(question, vocab, tm)
+        people, months = [], []                  # carried forward: a part inherits from the parts before it
+        aug = []
+        for p in parts:
+            qp = parse(p, vocab, tm)
+            own = [e for e in qp.entities if e.type not in ("month", "po")]
+            extra = []
+            if own:
+                people = own
+            elif people:
+                extra.append("for " + " and ".join(e.display for e in people))
+            if qp.months:
+                months = list(qp.months)
+            elif months and not calc.GROWTH.search(norm(p)):
+                extra.append("in " + " and ".join(months))
+            aug.append(p + (" " + " ".join(extra) if extra else ""))
+        pins = [None] * len(aug)
+        if whole.explicit:
+            pins = [None if parse(a, vocab, tm).explicit else whole.explicit[0] for a in aug]
+        else:
+            pins = self._same_page(aug, snap, vocab)
+        ctx, hist, results = context, list(history), []
+        for a, pin in zip(aug, pins):
+            r = self._one(a, ctx, hist, snap, vocab, polish=False, pin=pin)
+            results.append(r)
+            if r.get("understood") and r.get("context"):
+                ctx = r["context"]
+                hist.append(ctx)
+        lines = []
+        for i, (p, r) in enumerate(zip(parts, results), 1):
+            body = r["answer"] if r.get("understood") else (
+                "I couldn't match this part to a figure on the dashboard, so I can't answer it.")
+            lines.append(f"**{i}. {p[:1].upper() + p[1:]}**\n{body}")
+        pages = Counter(r.get("page") for r in results if r.get("page"))
+        top = pages.most_common(1)[0][0] if pages else None
+        key = next((k for k, p in PAGES.items() if p.path == top), None)
+        ok = any(r.get("understood") for r in results)
+        return self._reply("\n\n".join(lines), key, ctx if ok else (context or {}), understood=ok, intent="multi",
+                           engine="gemini" if any(r.get("engine") == "gemini" for r in results) else "rules")
+
+    def _same_page(self, aug: list[str], snap: Snapshot, vocab: Vocabulary) -> list[str]:
+        """When the parts of one message could each come from several pages, read them all from the one page that
+        can answer most of them (e.g. Kirti's total, pending, completed and completion % -> FLO Future), so the
+        figures belong together. A page is only added to a part that page can really answer."""
+        from .orders import ORDER_W
+        tm = self.today_month()
+        per = []
+        for a in aug:
+            if ORDER_W.search(norm(a)):
+                per.append(set())
+                continue
+            qa = parse(a, vocab, tm)
+            per.append({c.page for c in self._candidates(qa, snap) if c.score >= THRESHOLD})
+        counts = Counter(pg for s in per for pg in s)
+        if not counts:
+            return [None] * len(aug)
+        # a part only one page can answer ("completion %" -> FLO Future) decides; otherwise the page most parts share
+        anchors = Counter(next(iter(s)) for s in per if len(s) == 1)
+        pick = [(counts[pg], -PAGES[pg].order, pg) for pg in anchors if counts[pg] >= 2]
+        if pick:
+            best = max(pick)[2]
+        else:
+            best, n = max(counts.items(), key=lambda x: (x[1], -PAGES[x[0]].order))
+            if n < 2 or n * 2 <= len(aug):
+                return [None] * len(aug)
+        calc_only = {"rate", "change", "growth", "increase", "decrease", "difference", "diff", "percent", "decline"}
+        out = []
+        for a, s in zip(aug, per):
+            qa = parse(a, vocab, tm)
+            skip = ORDER_W.search(norm(a)) or qa.explicit or not (qa.metric_toks - calc_only) or (
+                s and best not in s and len(s) == 1)
+            out.append(None if skip else best)
+        return out
+
+    def _rewrite(self, question: str, ctx: dict | None, history: list[dict], vocab: Vocabulary) -> str | None:
+        """Short follow-ups that only make sense with the earlier questions -> a full question.
+        "compare both" / "which is higher", "compare with Charu", "give me the total", "designer-wise"."""
+        if not ctx or ctx.get("status"):
+            return None                          # status follow-ups are handled by status.py with all their figures
+        q0 = parse(question, vocab, self.today_month())
+        people = [e for e in q0.entities if e.type not in ("month", "po")]
+        metric = planner.metric_of(ctx)
+        if not metric:
+            return None
+        page = ctx.get("page")
+        pw = "" if ctx.get("orders") or page not in PAGES or page == "designer" else PAGES[page].words[0]
+        months = ctx.get("months") or []
+        when = f" in {' and '.join(months)}" if months and not q0.months else ""
+        own = {x for x in q0.metric_toks if "wise" not in x} - {"compare", "show", "give", "tell", "detail", "details",
+                                                               "summary", "both", "dono", "one", "higher", "lower",
+                                                               "more", "less", "bigger", "smaller", "better"}
+        if planner.BOTH.search(question) and not people and not own:
+            seen = []
+            for c in reversed(history or [ctx]):
+                for nm in planner.names_of(c):
+                    if nm not in seen:
+                        seen.append(nm)
+                if len(seen) >= 2:
+                    break
+            if len(seen) >= 2:
+                return f"compare {seen[1]} and {seen[0]} {metric}{when} {pw}".strip()
+            seen_m = []
+            for c in reversed(history or [ctx]):
+                for m in c.get("months") or []:
+                    if m not in seen_m:
+                        seen_m.append(m)
+            if len(seen_m) >= 2:
+                who = " ".join(planner.names_of(ctx))
+                return f"compare {seen_m[1]} and {seen_m[0]} {metric} {who} {pw}".strip()
+            return None
+        if planner.COMPARE_WITH.search(question) and len(people) == 1 and not own:
+            prev = [nm for nm in planner.names_of(ctx) if name_key(nm) != people[0].key]
+            if prev:
+                return f"compare {prev[0]} and {people[0].display} {metric}{when} {pw}".strip()
+        if planner.TOTAL_ONLY.match(question):
+            return f"total {metric}{when} {pw}".strip()
+        m = planner.WISE.search(question)
+        if m and not own:
+            dim = (m.group(1) or m.group(2)).lower()
+            if ctx.get("orders"):
+                return f"{metric} {dim}-wise{when}"
+            return f"top 20 {dim}s by {metric}{when} {pw}".strip()
+        return None
+
+    def _one(self, question: str, context: dict | None, history: list[dict], snap: Snapshot, vocab: Vocabulary,
+             polish: bool = True, pin: str | None = None) -> dict:
+        original = question
+        rewritten = self._rewrite(question, context, history, vocab)
+        if rewritten:
+            question = rewritten
+        self._history = history
         t = norm(question)
         if _GREET.match(t):
             return self._reply("Hi! I'm FLO Assistant. " + HELP, intent="greet")
@@ -545,9 +742,13 @@ class Assistant:
         if _SMALLTALK.search(t) and not _HELP.search(t):
             result = self._smalltalk(question)
             if result:
-                return self._polish(question, result, "normal")
+                return self._polish(original, result, "normal") if polish else result
 
         q = parse(question, vocab, self.today_month())
+        if pin in PAGES and not q.explicit:          # the page chosen for a multi-part question
+            q.explicit = [pin]
+            q.pages = [pin] + [p for p in q.pages if p != pin]
+        self._range(q, vocab)
         self._ctx_in = context if isinstance(context, dict) else None
         self._inherit(q, context, vocab)
         if _DEVANAGARI.search(question):
@@ -576,7 +777,7 @@ class Assistant:
                         result["engine"] = "gemini"
         if result is None:
             result = self._not_understood(q, snap, vocab)
-        return self._polish(question, result, q.style)
+        return self._polish(original, result, q.style) if polish else result
 
     # -------------------------------------------------------------------------------------------- Gemini helpers
     @staticmethod
@@ -618,7 +819,8 @@ class Assistant:
         are checked against the original, and the plain answer is kept if anything differs."""
         phrase = getattr(self.interpreter, "phrase", None)
         if (phrase is None or not getattr(self.interpreter, "phrasing", False) or style == "terse"
-                or result.get("intent") not in PHRASE_INTENTS or not result.get("answer")):
+                or result.get("intent") not in PHRASE_INTENTS or not result.get("answer")
+                or "\n|" in result["answer"]):                  # tables are kept exactly as built
             return result
         better = phrase(question, result["answer"], language_of(question))
         if better:
@@ -638,8 +840,12 @@ class Assistant:
             return
         t = norm(q.text)
         follow = bool(_FOLLOW.search(t)) or len(q.toks) <= 1
-        if not q.metric_toks and ctx.get("metric") and (q.entities or q.months or follow) and q.intent in (
+        calc_only = {"rate", "change", "growth", "increase", "decrease", "difference", "diff", "percent", "decline"}
+        bare = not (q.metric_toks - calc_only) and bool(calc.detect(q.text))
+        if (not q.metric_toks or bare) and ctx.get("metric") and (q.entities or q.months or follow or bare) and q.intent in (
                 "value", "compare", "rank", "trend"):
+            if bare:
+                q.toks = [x for x in q.toks if x not in calc_only]
             q.toks = q.toks + list(label_tokens(str(ctx["metric"])))
             if ctx.get("page") in PAGES and ctx["page"] not in q.pages:
                 q.pages.append(ctx["page"])
@@ -647,7 +853,12 @@ class Assistant:
                 q.intent = ctx["intent"]
                 q.dims = q.dims or ([ctx["dim"]] if ctx.get("dim") else [])
             q.inherited = True
-        if (follow or _PRONOUN.search(t)) and q.metric_toks:
+        short = len(q.toks) <= 4 and not planner.GLOBAL.search(t)
+        if (follow or _PRONOUN.search(t) or short) and q.metric_toks and not q.explicit and \
+                ctx.get("page") in PAGES and q.intent in ("value", "compare", "rank", "trend"):
+            if ctx["page"] not in q.pages:
+                q.pages.append(ctx["page"])              # same section as before, unless the question names another
+        if (follow or _PRONOUN.search(t) or short) and q.metric_toks and not planner.GLOBAL.search(t):
             if not q.entities:
                 for ref in ctx.get("entities") or []:
                     e = vocab.entities.get((ref.get("type"), name_key(str(ref.get("value", "")))))
@@ -655,6 +866,25 @@ class Assistant:
                         q.entities.append(e)
             if not q.months and _PRONOUN.search(t):
                 q.months = [m for m in ctx.get("months") or [] if m in vocab.months]
+
+    def _range(self, q: Query, vocab: Vocabulary):
+        """"How many ... between June and July" asks for the total over those months, not the change."""
+        t = norm(q.text)
+        if len(q.months) == 2 and re.search(r"\b(between|from)\b", t) and (
+                HOWMANY in q.toks or re.search(r"\b(total|kitne|kitna|kitni|how many|how much|sum)\b", t)) and not (
+                calc.GROWTH.search(t) or calc.DIFF.search(t) or re.search(r"\b(compare|vs|versus|change)\b", t)):
+            i, j = sorted(vocab.months.index(m) for m in q.months)
+            q.months = vocab.months[i:j + 1]
+            q.intent = "value"
+            q.range = True
+
+    @staticmethod
+    def _pin(q: Query, cands: list) -> list:
+        """A page named in the question wins outright ("pending in FLO Future" never answers from Production)."""
+        if not q.explicit:
+            return cands
+        pinned = [c for c in cands if c.page in q.explicit]
+        return pinned if pinned and pinned[0].score >= THRESHOLD else cands
 
     def _filters(self, page: str, q: Query, skip_type: str | None = None) -> dict | None:
         """API filters for this page, or None if a named thing can't be applied there."""
@@ -761,21 +991,22 @@ class Assistant:
     def _solve(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
         if q.intent == "record":
             return self._record(q, snap)
-        res = self._orders(q, snap, vocab)
+        res = self._status(q, snap, vocab) or self._orders(q, snap, vocab)
         if res:
             return res
         if q.intent in ("list", "count"):
             return self._list(q, vocab)
-        res = self._calc(q, snap, vocab)
+        if ("vendor-rate" in q.pages or re.search(r"\b(44|60|36)\b.*\brates?\b|\brates?\b.*\b(44|60|36)\b",
+                                                  norm(q.text))) and _RATE_WORDS.search(norm(q.text)):
+            vend = [e for e in q.entities if e.type == "vendor" and "vendor-rate" in e.raw]
+            res = self._rate_average(q, snap, norm(q.text), vend, category_in_text(norm(q.text)) if not vend else None)
+            if res:
+                return res
+        res = None if q.range else self._calc(q, snap, vocab)
         if res:
             return res
         if q.intent == "compare" and len(set(q.months)) >= 2 and not self._entity_groups(q, 2):
             res = self._calc_period(q, calc.Spec("diff"), snap, vocab)       # two months: show the change
-            if res:
-                return res
-        if "vendor-rate" in q.pages and _RATE_WORDS.search(norm(q.text)):
-            vend = [e for e in q.entities if e.type == "vendor" and "vendor-rate" in e.raw]
-            res = self._rate_average(q, snap, norm(q.text), vend, category_in_text(norm(q.text)) if not vend else None)
             if res:
                 return res
         if q.intent == "compare":
@@ -783,7 +1014,7 @@ class Assistant:
             if res:
                 return res
             q.intent = "value"
-        if q.intent == "value" and _COMPARE.search(norm(q.text)):
+        if q.intent == "value" and _COMPARE.search(norm(q.text)) and not q.range:
             res = self._compare_metrics(q, snap, vocab)
             if res:
                 return res
@@ -815,11 +1046,11 @@ class Assistant:
         if _HELP.search(norm(q.text)) and not q.metric_toks:
             return self._reply(HELP, intent="help")
 
-        cands = self._candidates(q, snap)
+        cands = self._pin(q, self._candidates(q, snap))
         if q.intent in ("rank", "trend") and not any(c.kind in ("rank", "trend") and c.score >= THRESHOLD
                                                      for c in cands):
             q.intent = "value"
-            cands = self._candidates(q, snap)
+            cands = self._pin(q, self._candidates(q, snap))
         if not cands or cands[0].score < THRESHOLD:
             return None
         best = cands[0]
@@ -1169,8 +1400,28 @@ class Assistant:
         return all(c is not None and isinstance(c.value, (int, float)) and not isinstance(c.value, bool)
                    for c in cands)
 
+    def _status_ask(self, question: str, explicit: list[str], vocab: Vocabulary, snap: Snapshot):
+        q0 = parse(question, vocab, self.today_month())
+        if explicit:
+            q0.explicit = list(dict.fromkeys(list(explicit) + q0.explicit))
+        analyst = StatusAnalyst(snap.get, {k: p.label for k, p in PAGES.items()})
+        return analyst, analyst.parse(q0, getattr(self, "_ctx_in", None), getattr(self, "_history", []) or [], vocab)
+
+    def _status(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
+        """Total / completed / pending / completion % per designer, Production and FLO Future kept apart."""
+        try:
+            analyst, ask = self._status_ask(q.text, q.explicit, vocab, snap)
+            if ask is None or not ask.pages or not ask.roles:
+                return None
+            text, ctx = analyst.answer(ask)
+        except (DataUnavailable, KeyError):
+            return None
+        return self._reply(text, ask.pages[0], ctx, intent="status")
+
     def _orders(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
         """Orders per customer (designer): counts, new vs repeat, rankings, comparisons and month-to-month change."""
+        if q.explicit and "designer" not in q.explicit:
+            return None                          # "order qty in production" is the Production page's figure
         analyst = OrderAnalyst(snap.get, self._running_note, self.today_month)
         try:
             spec = analyst.parse(q, self._ctx_in, vocab)
@@ -1499,7 +1750,7 @@ class Assistant:
         wname = "per pc" if width == "Per Pc" else width
         rows = [r for r in tbl["rows"] if (not cat or r[ix["Category"]] == cat)
                 and (not vendors or r[ix["Vendor"]] in {v.raw["vendor-rate"] for v in vendors})]
-        ctx = {"page": "vendor-rate", "metric": None, "intent": "rates", "entities": [e.ref() for e in q.entities],
+        ctx = {"page": "vendor-rate", "metric": "rates", "intent": "rates", "entities": [e.ref() for e in q.entities],
                "months": []}
         who = " and ".join(v.display for v in vendors)
         what = f"{cat} for {who}" if cat and who else (cat or who)
@@ -1560,7 +1811,7 @@ class Assistant:
         bench, master = tables.get("benchmark") or {}, tables.get("master") or {}
         width = '44"' if re.search(r"\b44\b", t) else '36"' if re.search(r"\b36\b", t) else '60"' if re.search(
             r"\b60\b", t) else None
-        ctx = {"page": "vendor-rate", "metric": None, "intent": "rates", "entities": [e.ref() for e in q.entities],
+        ctx = {"page": "vendor-rate", "metric": "rates", "intent": "rates", "entities": [e.ref() for e in q.entities],
                "months": []}
         if vendors and bench.get("columns"):
             cols = [c["label"] for c in bench["columns"]]

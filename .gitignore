@@ -43,3 +43,6 @@ graphify-out/cache/
 graphify-out/.graphify_*
 graphify-out/.spec_path
 graphify-out/cost.json
+
+# FLO Assistant conversation memory (local SQLite)
+backend/.chat/
