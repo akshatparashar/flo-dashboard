@@ -181,7 +181,7 @@ def test_master_parsing_matches(legacy, demo, master_df, tabs):
     values = demo.get_values(IDS["tracker"], tabs["tracker"][0])
     raw, _ = legacy.build_raw(values)
     old = legacy.prepare(raw)
-    pd.testing.assert_frame_equal(old, master_df)
+    pd.testing.assert_frame_equal(old, master_df.drop(columns=["due60"]))   # due60 (column AG) is new, not in the old app
     assert legacy.month_list(old) == mst.month_list(master_df)
 
 

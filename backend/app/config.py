@@ -18,6 +18,12 @@ SHEET_REGISTRY: dict[str, dict] = {
         # Data tab the sheet dashboards are built from (first match wins).
         "source_tabs": ["CONFIRMATION SHEET", "ORDER SHEET"],
     },
+    # The "FW ORDER'S" table of the Master Sheet's DASHBOARD tab (Clients Order Status page). Same file as "tracker".
+    "fw_orders": {
+        "name": "FW Orders",
+        "id": "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU",
+        "source_tabs": ["DASHBOARD"],
+    },
     "sample_summary": {
         "name": "Sample Summary",
         "id": "1EfQ08lXGL8YjtoaZ2ygJtNVaED7doDijo2jFvCuS7Kg",

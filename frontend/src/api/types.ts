@@ -96,7 +96,18 @@ export interface ClientData extends Envelope {
   options: Options;
   kpis: Kpi[];
   tables: { monthly: TableData; categories: TableData };
-  charts: { monthly_share: Slice[]; fulfilment: Slice[]; category_by_month: SeriesChart };
+  charts: { monthly_share: Slice[]; client_share: Slice[]; fulfilment: Slice[]; category_by_month: SeriesChart };
+  /** The "FW ORDER'S" table of the master sheet's DASHBOARD tab; null when that tab cannot be read. */
+  fw_orders: {
+    table: TableData;
+    chart: SeriesChart;
+    overall: { categories: string[]; values: number[] };
+    totals: { order: number; dispatched: number; pending: number; overall: number; dispatched_pct: number };
+    checks: Notice[];
+  } | null;
+  fw_orders_error?: string;
+  /** Pending pcs against the 60-day delivery date (sheet column AG); null when nothing is pending. */
+  delivery60: { today: string; kpis: Kpi[]; chart: SeriesChart; tables: { months: TableData; clients: TableData } } | null;
 }
 
 export interface ProductionData extends Envelope {

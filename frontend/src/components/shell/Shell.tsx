@@ -17,9 +17,9 @@ export const NAV = [
   ] },
   { group: "Design and sales", items: [
     { to: "/designers", label: "Designers", icon: Palette },
-    { to: "/clients", label: "Clients", icon: Building2 },
+    { to: "/clients", label: "Clients Order Status", icon: Building2 },
     { to: "/samples", label: "Samples", icon: Shirt },
-    { to: "/target", label: "Target & revenue", icon: Target },
+    { to: "/target", label: "Designer Order Target", icon: Target },
     { to: "/flo-future", label: "FLO Future", icon: ClipboardCheck },
   ] },
 ];

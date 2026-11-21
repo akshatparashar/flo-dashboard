@@ -29,6 +29,7 @@ from .core import FY_LABEL, FY_MONTH_LABELS, MONTHNO_TO_LABEL, now_ist
 from .dashboards import fabric_po as fpo
 from .dashboards import fabricator as fab
 from .dashboards import flo_future as ffu
+from .dashboards import fw_orders as fwo
 from .dashboards import master as mst
 from .dashboards import overview as ovw
 from .dashboards import samples as smp
@@ -208,6 +209,11 @@ def client(month: Multi = [], client: Multi = [], order_type: Multi = [],
     opts = mst.master_options(d)
     body = mst.client_dashboard(d, f)
     body["options"] = {k: opts[k] for k in ("month", "client", "order_type", "category")}
+    # FW ORDER'S (DASHBOARD tab). A problem with that tab must never take the rest of the page down.
+    fw = get_store().dataset("fw_orders")
+    body["fw_orders"] = fwo.fw_orders_dashboard(fw.data) if fw.data is not None else None
+    if fw.data is None and fw.error:
+        body["fw_orders_error"] = fw.error
     return _envelope(body, ds)
 
 

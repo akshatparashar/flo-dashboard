@@ -17,7 +17,7 @@ type Icon = ComponentProps<typeof Ionicons>["name"];
 
 const PAGES: { to: Href; title: string; sub: string; icon: Icon }[] = [
   { to: "/designers", title: "Designers", sub: "New and repeat pcs per designer", icon: "color-palette-outline" },
-  { to: "/clients", title: "Clients", sub: "Orders and fulfilment per client", icon: "people-outline" },
+  { to: "/clients", title: "Clients Order Status", sub: "Orders and fulfilment per client", icon: "people-outline" },
   { to: "/samples", title: "Samples", sub: "Approved, rejected and in process", icon: "shirt-outline" },
   { to: "/fabricators", title: "Fabricators", sub: "Stock with each fabricator, month by month", icon: "construct-outline" },
 ];

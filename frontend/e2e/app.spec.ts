@@ -21,11 +21,11 @@ const PAGES = [
   { path: "/", h1: "Overview", api: "/api/overview" },
   { path: "/production", h1: "Production", api: "/api/production" },
   { path: "/designers", h1: "Designers", api: "/api/designer" },
-  { path: "/clients", h1: "Clients", api: "/api/client" },
+  { path: "/clients", h1: "Clients Order Status", api: "/api/client" },
   { path: "/samples", h1: "Samples", api: "/api/samples" },
   { path: "/fabricators", h1: "Fabricators", api: "/api/fabricator" },
   { path: "/fabric-po", h1: "Fabric PO", api: "/api/fabric-po" },
-  { path: "/target", h1: "Target & revenue", api: "/api/target" },
+  { path: "/target", h1: "Designer Order Target", api: "/api/target" },
   { path: "/flo-future", h1: "FLO Future", api: "/api/flo-future" },
   { path: "/vendor-rate", h1: "Vendor Rate", api: "/api/vendor-rate" },
 ];

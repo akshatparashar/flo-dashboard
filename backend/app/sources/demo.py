@@ -26,7 +26,7 @@ CATEGORY_SPELLINGS = {"CO-ORD SET": ["CO-ORD SET", "Co-ord Sets", "COORD SET"], 
                       "DRESS": ["DRESS", "Dresses"], "KAFTAN": ["KAFTAN"], "KURTA": ["KURTA", "Kurtas"]}
 
 SHEET_TABS = {
-    "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU": [("DASHBOARD", 0), ("CONFIRMATION SHEET", 11)],
+    "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU": [("DASHBOARD ", 0), ("CONFIRMATION SHEET", 11)],
     "1EfQ08lXGL8YjtoaZ2ygJtNVaED7doDijo2jFvCuS7Kg": [("SAMPLE DASHBOARD", 1), ("2026-27", 78218658)],
     "1hP9Bkvu2F-qj4tXYhOCb4alfJOZZtAsMQNOjVQyWoo4": [("FABRICATOR DASHBOARD", 2), ("MONTHWISE SUMMARY", 164418035)],
     "1CvNPrdV4rQBR3_r8oIoPsW1ak123BGj88-qYbUU1y4I": [("INDEX", 418084418), ("DASHBOARD", 3)],
@@ -116,7 +116,7 @@ class DemoSheetSource:
         header = [""] * width
         for letter, name in (("A", "S.NO"), ("B", "ORDER DATE"), ("C", "DESIGNER"), ("D", "TYPE"), ("E", "STYLE NO"),
                              ("F", "CATEGORY"), ("J", "QTY"), ("N", "CLIENT"), ("AA", "FABRICATOR"),
-                             ("AC", "PRODUCTION DATE"), ("AH", "DELAY DAYS"), ("AS", "IN PRODUCTION"),
+                             ("AC", "PRODUCTION DATE"), ("AG", "60 DAYS DELIVERY DATE"), ("AH", "DELAY DAYS"), ("AS", "IN PRODUCTION"),
                              ("AT", "RECEIVED"), ("AU", "PENDING"), ("AX", "STATUS")):
             header[col_to_idx(letter)] = name
         rows = []
@@ -143,6 +143,7 @@ class DemoSheetSource:
             r[col_to_idx("AA")] = FABRICATORS[rng.randint(len(FABRICATORS))] if rng.rand() > 0.04 else ""
             if in_prod:
                 r[col_to_idx("AC")] = serial(prod_day)
+                r[col_to_idx("AG")] = serial(prod_day + timedelta(days=60))
                 due = prod_day + timedelta(days=28)
                 age = (now - prod_day).days
                 frac = min(1.0, max(0.0, age / 38 + rng.normal(0, 0.18)))
@@ -175,7 +176,25 @@ class DemoSheetSource:
         total[col_to_idx("J")] = sum(r[col_to_idx("J")] for r in rows)
         title = ["ORDER CONFIRMATION SHEET 2026-27"]
         grid = [title, ["", "", "GRAND TOTAL"] + [""] * (width - 3), header] + rows + [total]
-        return {(sid, "CONFIRMATION SHEET", False): grid, (sid, "CONFIRMATION SHEET", True): grid}
+        return {(sid, "CONFIRMATION SHEET", False): grid, (sid, "CONFIRMATION SHEET", True): grid,
+                (sid, "DASHBOARD ", False): self._dashboard_tab()}
+
+    @staticmethod
+    def _dashboard_tab():
+        """The master sheet's DASHBOARD tab: a few tables side by side; only FW ORDER'S (columns S:W) is read."""
+        months = [("Jan-2026", 32065, 32065, 0, 23273), ("Feb-2026", 48620, 48620, 0, 31069),
+                  ("Mar-2026", 97365, 87965, 9400, 26027), ("Apr-2026", 54520, 44620, 9900, 39308),
+                  ("May-2026", 37980, 29049, 9171, 41681), ("Jun-2026", 18070, 8454, 9616, 36881),
+                  ("Jul-2026", 4630, 900, 3730, 43690), ("Aug-2026", 20830, 2947, 18483, 50476),
+                  ("Sep-2026", 2610, 0, 2610, 34021), ("Oct-2026", 24638, 0, 24638, 25303),
+                  ("Nov-2026", 18940, 0, 18940, 9753)]
+        pad = [""] * 18
+        head = ["MONTH", "ORDER  PC'S", "DISPATCHED PC'S", "PENDING PC'S", "OVERALL DISPATCHED PC'S"]
+        grid = [["FW", "", "", "", ""] + [""] * 13 + ["FW ORDER'S", "", "", "", ""], pad + head]
+        grid += [pad + [m, a, b, c, d] for m, a, b, c, d in months]
+        grid.append(pad + ["", sum(m[1] for m in months), sum(m[2] for m in months), sum(m[3] for m in months),
+                           sum(m[4] for m in months)])
+        return grid
 
     @staticmethod
     def _live_master(values):

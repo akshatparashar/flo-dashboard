@@ -23,6 +23,7 @@ from .dashboards import fabricator as fab
 from .dashboards import flo_future as ffu
 from .dashboards import master as mst
 from .dashboards import samples as smp
+from .dashboards import fw_orders as fwo
 from .dashboards import target as tgt
 from .dashboards import vendor_rate as vrt
 from .sources.google import SheetAccessError
@@ -148,6 +149,12 @@ class DataStore:
             titles = [t for t, _ in meta]
             src = next((t for t in (find_tab(titles, c) for c in cfg["source_tabs"]) if t), None)
             return [src or next((t for t in titles if "DASHBOARD" not in t.upper()), titles[0])]
+        if kind == "fw_orders":
+            # Exact title (ignoring spaces / case): the sheet also has CLIENT DASHBOARD and DASHBOARD_ tabs.
+            tab = next((t for t, _ in meta if t.strip().upper() == fwo.TAB), None)
+            if tab is None:
+                raise SheetAccessError("The master sheet has no DASHBOARD tab.")
+            return [tab]
         if kind == "flo_future":
             titles = [t for t, _ in meta]
             samples = pick_default_tab(meta, cfg["source_tabs"], None, ffu.SAMPLE_TAB_REGEX)
@@ -197,6 +204,8 @@ class DataStore:
             if err:
                 raise SheetAccessError(err)
             return d
+        if kind == "fw_orders":
+            return fwo.parse_fw_orders(entries[0].value)
         if kind == "sample_summary":
             return smp.parse_samples(entries[0].value)
         if kind == "overview_fabricators":

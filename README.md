@@ -65,7 +65,7 @@ the test suite runs it side by side with the new API on the same sheet data, com
   </tr>
   <tr>
     <td align="center"><sub>Production — pending and overdue at a glance</sub></td>
-    <td align="center"><sub>Target &amp; revenue — the year against the ₹50.2 Cr goal</sub></td>
+    <td align="center"><sub>Designer Order Target — the year against the ₹50.2 Cr goal</sub></td>
   </tr>
 </table>
 
@@ -103,7 +103,7 @@ the test suite runs it side by side with the new API on the same sheet data, com
 | **Designers** | Who designs the most volume, new vs repeat, in which categories? | Master sheet |
 | **Clients** | How much did clients order and how much has been fulfilled? | Master sheet |
 | **Samples** | How many samples are approved, and per designer and vendor? | Sample summary · `2026-27` |
-| **Target & revenue** | Are we on track for the yearly new-order target? Which designs sell again? | Designer target · `NEW` + `REPEAT` |
+| **Designer Order Target** | Are we on track for the yearly new-order target? Which designs sell again? | Designer target · `NEW` + `REPEAT` |
 | **FLO Future** | What did each designer promise this month, what is late, and who needs a nudge? | FLO Future · `Samples` + `Visits & Meetings` (+ `Outsource Projects`) |
 | **Vendor Rate** | Which vendor is cheapest for each fabric, and how do vendors' rates compare? | FABRIC PO 11 · `Rate_Data` (+ `NEW RATE SHEET` cross-check) |
 
@@ -539,7 +539,7 @@ Principles:
 | Light shows *Offline* | The browser cannot reach the API; check that `uvicorn` is running |
 | A page asks for a passcode | `DASHBOARD_PASSCODE` is set — use the team passcode |
 | Numbers differ from the old Streamlit app | Check for the *Demo data* badge first: demo mode shows sample figures. With the real sheets the two match |
-| A number looks wrong | Compare with the sheet; the *Data check* section on *Target & revenue* lists rows whose amounts disagree with the sheet |
+| A number looks wrong | Compare with the sheet; the *Data check* section on *Designer Order Target* lists rows whose amounts disagree with the sheet |
 
 ---
 
