@@ -24,6 +24,7 @@ from collections import Counter
 from . import calc, fmt, planner
 from .orders import OrderAnalyst
 from .status import StatusAnalyst
+from .extras import PageAnswers
 from .pages import (NEW_PAGES, DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
 from ..dashboards.vendor_rate import category_in_text
@@ -271,6 +272,10 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
     if re.search(r"\bpos?\b|purchase orders?", t):
         t = re.sub(r"\b(aaye|aaya|aayi|aya|aye|bane|bana|banaye|hue|hui|raise|raised|placed)\b", " ", t)
 
+    # "kitna difference aaya" / "kitna increase hua": "aaya" here means "came out", not "received"
+    if re.search(r"\b(difference|diff|fark|farak|antar|gap|increase\w*|decrease\w*|growth|badh\w*|ghat\w*|change)\b", t):
+        t = re.sub(r"\b(aaya|aaye|aayi|aya|aye)\b", " ", t)
+
     words = raw_tokens(t)
     used = [False] * len(words)
 
@@ -286,7 +291,8 @@ def parse(question: str, vocab: Vocabulary, today_month: str | None) -> Query:
         rel = {("this", "month"): today_month, ("current", "month"): today_month, ("is", "mahine"): today_month,
                ("last", "month"): fy[i - 1] if i else None, ("previous", "month"): fy[i - 1] if i else None,
                ("pichhle", "mahine"): fy[i - 1] if i else None, ("pichle", "mahine"): fy[i - 1] if i else None,
-               ("pichla", "mahina"): fy[i - 1] if i else None}
+               ("pichla", "mahina"): fy[i - 1] if i else None, ("pichhle", "month"): fy[i - 1] if i else None,
+               ("pichle", "month"): fy[i - 1] if i else None, ("pichla", "month"): fy[i - 1] if i else None}
         for j in range(len(words) - 1):
             m = rel.get((words[j], words[j + 1]))
             if m:
@@ -548,6 +554,7 @@ class Assistant:
         if context is None and history:
             context = history[-1]
         self._ctx_in, self._history = context, history
+        self._vocab = vocab
         try:
             whole_status = self._status_ask(question, [], vocab, snap)[1]
         except (DataUnavailable, KeyError):
@@ -926,6 +933,9 @@ class Assistant:
                     data = None
                 if data:
                     for k in kpi_list(data):
+                        if f and isinstance(k.get("value"), str) and k.get("format") == "text" and \
+                                any(e.type != "month" for e in q.entities):
+                            continue            # "Most pending" once a name is the filter only repeats that name
                         s = mscore(k["label"], q, k.get("unit") or "", k.get("format"))
                         if s <= 0:
                             continue
@@ -991,7 +1001,7 @@ class Assistant:
     def _solve(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
         if q.intent == "record":
             return self._record(q, snap)
-        res = self._status(q, snap, vocab) or self._orders(q, snap, vocab)
+        res = self._status(q, snap, vocab) or self._orders(q, snap, vocab) or self._page_answers(q, snap)
         if res:
             return res
         if q.intent in ("list", "count"):
@@ -1051,6 +1061,9 @@ class Assistant:
                                                      for c in cands):
             q.intent = "value"
             cands = self._pin(q, self._candidates(q, snap))
+        names = {e.display.upper() for e in q.entities}
+        if names:   # "Most pending for FUSION is FUSION": a name-valued KPI says nothing once that name is the filter
+            cands = [c for c in cands if not (isinstance(c.value, str) and c.value.strip().upper() in names)]
         if not cands or cands[0].score < THRESHOLD:
             return None
         best = cands[0]
@@ -1238,14 +1251,21 @@ class Assistant:
         if len(dims) != 1 or q.entities or not re.search(r"\b(wise|summary|breakdown|table|overview)\b", t):
             return None
         rest = {x for x in q.metric_toks if "wise" not in x} - {"summary", "breakdown", "table", "overview", "show",
-                                                              "give"} - set(DIMENSION_WORDS)
-        if rest:
-            return None
+                                                              "give", "all", "list", "batao", "dikhao"} - set(DIMENSION_WORDS)
         dim = dims[0]
+        page_words = {w for p in PAGES.values() for ph in p.words for w in tokens(ph)}
+        if rest and (dim == "month" or rest - page_words):
+            return None                          # "pending category-wise" ranks that figure; only page names pick a table
         pages = sorted(PAGES, key=lambda p: (p not in q.pages, PAGES[p].order))
-        for pg, name, tbl in self._tables(snap, pages):
-            if row_type(tbl) != dim:
-                continue
+        found = [(pg, name, tbl) for pg, name, tbl in self._tables(snap, pages) if row_type(tbl) == dim]
+        if rest:
+            def fit(item):
+                pg, _, tbl = item
+                col_toks = set().union(*[label_tokens(c["label"]) for c in tbl["columns"][1:]] or [set()])
+                page_toks = {w for ph in PAGES[pg].words for w in tokens(ph)}
+                return 2 * len(rest & col_toks) + len(rest & page_toks), len(tbl["columns"])
+            found = [x for x in sorted(found, key=fit, reverse=True) if fit(x)[0] > 0]
+        for pg, name, tbl in found:
             cols = [c["label"] for c in tbl["columns"]]
             rows = [r for r in tbl["rows"] if not SPECIAL_ROW.match(str(r[0]))][:15]
             if not rows:
@@ -1309,8 +1329,7 @@ class Assistant:
             if len(ents) < 2:
                 return None
             items = [(etype, e) for e in ents]
-        results = []
-        first = None
+        per = []
         for etype, item in items:
             sub = replace(q, entities=list(q.entities), months=list(q.months), pages=list(q.pages))
             sub.intent = "value"
@@ -1320,18 +1339,28 @@ class Assistant:
             else:
                 sub.entities = [e for e in q.entities if e.type != etype] + [item]
                 name = item.display
-            if first is not None:
-                sub.pages = list(dict.fromkeys([first.page] + sub.pages))
             cands = [c for c in self._candidates(sub, snap) if c.kind in ("kpi", "cell", "mcell")]
-            if first is not None:
-                cands = [c for c in cands if c.label == first.label and c.page == first.page] or cands
-            if not cands or cands[0].score < THRESHOLD:
-                return None
-            c = cands[0]
-            first = first or c
-            results.append((name, c))
+            per.append((name, cands))
+        # the same figure from the same page for everyone, or no comparison at all
+        common = None
+        for name, cands in per:
+            keys = {}
+            for c in cands:
+                if c.score >= THRESHOLD and (c.page, c.label) not in keys:
+                    keys[(c.page, c.label)] = c.score
+            common = keys if common is None else {k: common[k] + v for k, v in keys.items() if k in common}
+        if not common:
+            if all(c and c[0].score >= THRESHOLD for _, c in per):
+                lines = ["These can't be compared like for like: the figure isn't on one page for all of them."]
+                lines += [f"• {name}: {c[0].label} **{c[0].text()}** ({PAGES[c[0].page].label} page)" for name, c in per]
+                return self._reply("\n".join(lines), per[0][1][0].page, self._ctx(q, per[0][1][0], "compare"),
+                                   intent="compare")
+            return None
+        page, label = max(common, key=lambda k: (common[k], -PAGES[k[0]].order))
+        results = [(name, next(c for c in cands if c.page == page and c.label == label)) for name, cands in per]
+        first = results[0][1]
         lines = [f"{first.label}" + (f" in {fmt.months(q.months)}" if q.months and items[0][0] != "month" else "")
-                 + ":"]
+                 + f" ({PAGES[first.page].label} page):"]
         lines += [f"• {name}: **{c.text()}**" for name, c in results]
         nums = [(name, c.value) for name, c in results if isinstance(c.value, (int, float))]
         if len(nums) == 2 and nums[0][1] != nums[1][1]:
@@ -1417,6 +1446,36 @@ class Assistant:
         except (DataUnavailable, KeyError):
             return None
         return self._reply(text, ask.pages[0], ctx, intent="status")
+
+    def _page_answers(self, q: Query, snap: Snapshot) -> dict | None:
+        """Summary, samples waiting, pending POs, the rate list and target achievement (see extras.py)."""
+        pa = PageAnswers(snap.get, {k: p.filters for k, p in PAGES.items()}, {k: p.label for k, p in PAGES.items()})
+        ents = [e for e in q.entities if e.type not in ("month",)]
+        others = [p for p in q.explicit if p not in ("overview",)]
+        tries = []
+        if not ents and not others:
+            tries.append(lambda: pa.summary(q.text, q.months))
+        if not others or others == ["samples"]:
+            tries.append(lambda: pa.samples_open(q.text, ents, q.months))
+        if not others or others == ["fabric-po"]:
+            tries.append(lambda: pa.po_pending(q.text, ents, q.months))
+        if not others or others == ["vendor-rate"]:
+            tries.append(lambda: pa.rate_list(q.text, ents))
+        if not ents and (not others or others == ["target"]):
+            tries.append(lambda: pa.target_achieved(q.text, q.months))
+        if ents and (not others or others == ["fabricator"]):
+            pnames = [e.raw["production"] for e in self._vocab.of_type("fabricator") if "production" in e.raw] \
+                if getattr(self, "_vocab", None) else []
+            tries.append(lambda: pa.fabricator_work(q.text, ents, q.months, pnames))
+        for fn in tries:
+            try:
+                out = fn()
+            except (DataUnavailable, KeyError, TypeError, ZeroDivisionError):
+                out = None
+            if out:
+                text, ctx = out
+                return self._reply(text, ctx.get("page"), ctx, intent=ctx.get("intent") or "value")
+        return None
 
     def _orders(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
         """Orders per customer (designer): counts, new vs repeat, rankings, comparisons and month-to-month change."""
@@ -1550,10 +1609,24 @@ class Assistant:
         """Change between two months: the difference and the percentage growth. Defaults to last month -> this month."""
         fy = vocab.months
         months = sorted(set(q.months), key=fy.index)
+        ctx = self._ctx_in if isinstance(getattr(self, "_ctx_in", None), dict) else None
+        shifted = planner.previous_window((ctx or {}).get("months") or [], norm(q.text), fy) if ctx else None
+        if shifted:
+            months = shifted
         if self._entity_groups(q, 2) or (q.dims and not q.entities):
             return None
         if spec.kind == "diff" and not months:
             return None
+        if not (q.metric_toks - {"rate", "change", "growth", "increase", "decrease", "difference", "diff", "percent", "decline",
+                                   "compare", "comparison", "point"}) and not q.inherited and months:
+            # no figure named and none talked about before: compare orders, and say so
+            q2 = parse(q.text + " orders", vocab, self.today_month())
+            q2.months = list(months)
+            res = self._orders(q2, snap, vocab)
+            if res:
+                res["answer"] = ("You didn't name a figure, so I compared **orders** (ask for revenue, received or "
+                                 "pending pcs and so on to compare those instead).\n" + res["answer"])
+                return res
         today_m = self.today_month()
         if len(months) >= 2:
             base_m, cur_m = months[0], months[-1]
@@ -1609,8 +1682,8 @@ class Assistant:
                 sub.pages = list(dict.fromkeys([first.page] + sub.pages))
             cands = [c for c in self._candidates(sub, snap) if c.kind in ("kpi", "cell", "mcell")]
             if first is not None:
-                cands = [c for c in cands if c.label == first.label and c.page == first.page] or cands
-            if not cands or cands[0].score < THRESHOLD or not self._numeric(cands[0]):
+                cands = [c for c in cands if c.label == first.label and c.page == first.page]
+            if not cands or (first is None and cands[0].score < THRESHOLD) or not self._numeric(cands[0]):
                 return None
             first = first or cands[0]
             results.append((item.display, cands[0]))
@@ -1934,6 +2007,15 @@ class Assistant:
                 text += "\n" + ", ".join(names)
         else:
             text = f"{len(names)} {whats}: " + ", ".join(names) + "."
+            home = dim if dim in PAGES else HOME_PAGE.get(dim)
+            on_home = sorted({e.display for e in vocab.of_type(dim) if home in e.raw}, key=str.lower) if home else []
+            if on_home and len(on_home) < len(names) and dim != "month":
+                rest = [nm for nm in names if nm not in set(on_home)]
+                where = {nm: sorted({PAGES[pg].label for e in vocab.of_type(dim) if e.display == nm for pg in e.raw
+                                     if pg in PAGES}) for nm in rest}
+                text = (f"**{PAGES[home].label} page: {len(on_home)} {whats}**: " + ", ".join(on_home) + ".\n"
+                        f"Other pages also name {len(rest)} more: " +
+                        ", ".join(f"{nm} ({', '.join(where[nm])})" for nm in rest) + ".")
         return self._reply(text, intent=q.intent, context={"intent": q.intent, "dim": dim})
 
     def _page_about(self, page: str, snap: Snapshot) -> dict:

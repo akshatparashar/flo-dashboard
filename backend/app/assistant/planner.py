@@ -66,3 +66,35 @@ def metric_of(ctx: dict) -> str:
 
 def names_of(ctx: dict) -> list[str]:
     return [str(e.get("value")) for e in (ctx.get("entities") or []) if e.get("type") not in ("month", "po")]
+
+
+# "pichhle month se compare karo" / "pichhle month ke comparison mein ..." / "previous month's change"
+PREV_MONTH = re.compile(r"\b(?:pichh?le?|pichla|previous|prior|last|purane)\s+(?:month|mahine|mahina)\b", re.I)
+PREV_COMPARISON = re.compile(r"\b(?:comparison|compare\w*|change|growth|difference|increase|decrease)\b.*", re.I)
+
+
+def previous_window(ctx_months: list[str], text: str, fy: list[str]) -> list[str] | None:
+    """Months for a "previous month" follow-up, worked out from the months the conversation is comparing.
+
+    * "pichhle month ke comparison mein kitna increase hua?" after comparing October -> November: the comparison
+      one step back, i.e. September -> October.
+    * "pichhle month se compare karo" after one month (or when the comparison is phrased "with last month"): that
+      month against the month before it.
+    Returns None when the text has no such phrase or the conversation has no month to count back from.
+    """
+    if not PREV_MONTH.search(text):
+        return None
+    seen = sorted({m for m in ctx_months if m in fy}, key=fy.index)
+    if not seen:
+        return None
+    first, last = fy.index(seen[0]), fy.index(seen[-1])
+    own = re.search(r"(?:month|mahine|mahina)(?:'?s)?\s+(?:ke\s+|ka\s+|ki\s+)?(?:comparison|change|growth|difference)|"
+                    r"(?:ke|ka|ki)\s+(?:comparison|change|growth|difference)|comparison\s+(?:mein|me)|"
+                    r"(?:comparison|change|growth)\s+of\s+(?:the\s+)?(?:previous|last)", text, re.I)
+    if len(seen) >= 2 and own:
+        if first == 0:
+            return None
+        return [fy[first - 1], fy[first]]
+    if last == 0:
+        return None
+    return [fy[last - 1], fy[last]]

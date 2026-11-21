@@ -48,7 +48,7 @@ WORDS = {
     "business": "revenue", "amount": "revenue",
     "late": "delay", "delayed": "delay", "delays": "delay", "der": "delay", "lateness": "delay",
     "overdue": "overdue",
-    "percent": "rate", "percentage": "rate", "%": "rate", "ratio": "rate", "pct": "rate",
+    "percent": "rate", "percentage": "rate", "percentages": "rate", "percents": "rate", "%": "rate", "ratio": "rate", "pct": "rate",
     "approved": "approv", "approval": "approv", "approve": "approv", "approvals": "approv", "pass": "approv",
     "rejected": "reject", "rejection": "reject", "rejects": "reject", "fail": "reject",
     "kapda": "fabric", "cloth": "fabric", "fabrics": "fabric",
