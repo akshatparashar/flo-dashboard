@@ -26,7 +26,7 @@ CATEGORY_SPELLINGS = {"CO-ORD SET": ["CO-ORD SET", "Co-ord Sets", "COORD SET"], 
                       "DRESS": ["DRESS", "Dresses"], "KAFTAN": ["KAFTAN"], "KURTA": ["KURTA", "Kurtas"]}
 
 SHEET_TABS = {
-    "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU": [("DASHBOARD", 0), ("CONFIRMATION SHEET", 11)],
+    "1wBo0zF2wlqBzY5ZQaX5CPjCOedORwg_1Eh01vje5KFU": [("DASHBOARD ", 0), ("CONFIRMATION SHEET", 11)],
     "1EfQ08lXGL8YjtoaZ2ygJtNVaED7doDijo2jFvCuS7Kg": [("SAMPLE DASHBOARD", 1), ("2026-27", 78218658)],
     "1hP9Bkvu2F-qj4tXYhOCb4alfJOZZtAsMQNOjVQyWoo4": [("FABRICATOR DASHBOARD", 2), ("MONTHWISE SUMMARY", 164418035)],
     "1CvNPrdV4rQBR3_r8oIoPsW1ak123BGj88-qYbUU1y4I": [("INDEX", 418084418), ("DASHBOARD", 3)],
@@ -36,6 +36,8 @@ SHEET_TABS = {
 }
 FLO_FUTURE_ID = "1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw"
 VENDOR_RATE_ID = "1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg"
+IN_OUT_SALE_ID = "1A6I90-kbzHkDRRcGspnln9aUmWm-FXD9EKNyKnudMzg"
+SHEET_TABS[IN_OUT_SALE_ID] = [("ALL PRODUCTION", 30), ("2026-27", 31), ("fabricator targets monthly", 32)]
 SHEET_TABS[VENDOR_RATE_ID] = [("Vendor Rate Dashboard", 20), ("NEW RATE SHEET", 21), ("SAMPLE", 22), ("RV 1498", 23),
                               ("Rate_Data", 24)]
 EPOCH = date(1899, 12, 30)
@@ -102,6 +104,7 @@ class DemoSheetSource:
                 # own random stream, so adding this sheet leaves the other demo sheets' numbers unchanged
                 grids.update(self._flo_future(np.random.RandomState(self.seed + 7), now))
                 grids.update(self._vendor_rate(np.random.RandomState(self.seed + 11)))
+                grids.update(self._in_out_sale(np.random.RandomState(self.seed + 13), now))
                 self._grids, self._day = grids, now
             return self._grids
 
@@ -116,7 +119,7 @@ class DemoSheetSource:
         header = [""] * width
         for letter, name in (("A", "S.NO"), ("B", "ORDER DATE"), ("C", "DESIGNER"), ("D", "TYPE"), ("E", "STYLE NO"),
                              ("F", "CATEGORY"), ("J", "QTY"), ("N", "CLIENT"), ("AA", "FABRICATOR"),
-                             ("AC", "PRODUCTION DATE"), ("AH", "DELAY DAYS"), ("AS", "IN PRODUCTION"),
+                             ("AC", "PRODUCTION DATE"), ("AG", "60 DAYS DELIVERY DATE"), ("AH", "DELAY DAYS"), ("AS", "IN PRODUCTION"),
                              ("AT", "RECEIVED"), ("AU", "PENDING"), ("AX", "STATUS")):
             header[col_to_idx(letter)] = name
         rows = []
@@ -143,6 +146,7 @@ class DemoSheetSource:
             r[col_to_idx("AA")] = FABRICATORS[rng.randint(len(FABRICATORS))] if rng.rand() > 0.04 else ""
             if in_prod:
                 r[col_to_idx("AC")] = serial(prod_day)
+                r[col_to_idx("AG")] = serial(prod_day + timedelta(days=60))
                 due = prod_day + timedelta(days=28)
                 age = (now - prod_day).days
                 frac = min(1.0, max(0.0, age / 38 + rng.normal(0, 0.18)))
@@ -175,7 +179,25 @@ class DemoSheetSource:
         total[col_to_idx("J")] = sum(r[col_to_idx("J")] for r in rows)
         title = ["ORDER CONFIRMATION SHEET 2026-27"]
         grid = [title, ["", "", "GRAND TOTAL"] + [""] * (width - 3), header] + rows + [total]
-        return {(sid, "CONFIRMATION SHEET", False): grid, (sid, "CONFIRMATION SHEET", True): grid}
+        return {(sid, "CONFIRMATION SHEET", False): grid, (sid, "CONFIRMATION SHEET", True): grid,
+                (sid, "DASHBOARD ", False): self._dashboard_tab()}
+
+    @staticmethod
+    def _dashboard_tab():
+        """The master sheet's DASHBOARD tab: a few tables side by side; only FW ORDER'S (columns S:W) is read."""
+        months = [("Jan-2026", 32065, 32065, 0, 23273), ("Feb-2026", 48620, 48620, 0, 31069),
+                  ("Mar-2026", 97365, 87965, 9400, 26027), ("Apr-2026", 54520, 44620, 9900, 39308),
+                  ("May-2026", 37980, 29049, 9171, 41681), ("Jun-2026", 18070, 8454, 9616, 36881),
+                  ("Jul-2026", 4630, 900, 3730, 43690), ("Aug-2026", 20830, 2947, 18483, 50476),
+                  ("Sep-2026", 2610, 0, 2610, 34021), ("Oct-2026", 24638, 0, 24638, 25303),
+                  ("Nov-2026", 18940, 0, 18940, 9753)]
+        pad = [""] * 18
+        head = ["MONTH", "ORDER  PC'S", "DISPATCHED PC'S", "PENDING PC'S", "OVERALL DISPATCHED PC'S"]
+        grid = [["FW", "", "", "", ""] + [""] * 13 + ["FW ORDER'S", "", "", "", ""], pad + head]
+        grid += [pad + [m, a, b, c, d] for m, a, b, c, d in months]
+        grid.append(pad + ["", sum(m[1] for m in months), sum(m[2] for m in months), sum(m[3] for m in months),
+                           sum(m[4] for m in months)])
+        return grid
 
     @staticmethod
     def _live_master(values):
@@ -435,6 +457,86 @@ class DemoSheetSource:
                                                 ("PRODUCTION / DESIGNER MEETING", "AARTI"))])
         return {(sid, "Samples", False): [header] + rows, (sid, "Outsource Projects", False): outsource,
                 (sid, "Visits & Meetings", False): visits}
+
+    def _in_out_sale(self, rng, now):
+        """The "2026-27" tab of the IN/OUT/SALE sheet: a month table (this year vs last year) and fabricator-wise
+        incoming pieces in blocks, laid out like the real tab."""
+        live = (now.year - FY_START_YEAR) * 12 + now.month - 4          # months of the FY already running (0-based)
+        live = max(0, min(live, 11))
+        grid = [[""] * 26 for _ in range(75)]
+
+        def put(r, c, v):
+            grid[r - 1][col_to_idx(c)] = v
+
+        put(1, "A", "2026-27"); put(1, "I", "2025-26")
+        for c, h in zip("ABCDEFGHIJK", ["Sr. No.", "Month", "Order Pieces ", "Pieces Under Production", "Incoming Pieces",
+                                        "Sale pieces", "Sale Amount", "Net Sale", "Sale pieces", "Sale Amount",
+                                        "Net Sale"]):
+            put(2, c, h)
+        tot = [0.0] * 9
+        for i in range(12):
+            r = 3 + i
+            put(r, "A", i + 1)
+            put(r, "B", serial(date(FY_START_YEAR + (1 if i >= 9 else 0), (3 + i) % 12 + 1, 26 if i < 9 else 27)))
+            ly = int(rng.randint(11000, 28000)) if i < 8 else 0
+            vals = [0] * 9
+            if i <= live:
+                pcs = int(rng.randint(26000, 54000)) if i < live else int(rng.randint(9000, 30000))
+                price = float(rng.uniform(1000, 1300))
+                amount = round(pcs * price, 2)
+                vals = [int(rng.randint(5000, 56000)), int(rng.randint(3000, 80000)), int(pcs * rng.uniform(0.75, 1.2)),
+                        pcs, amount, round(amount * float(rng.uniform(0.86, 0.93)), 2)]
+                vals += [ly, round(ly * float(rng.uniform(1300, 1500)), 2), 0.0]
+                vals[8] = round(vals[7] * float(rng.uniform(0.82, 0.92)), 2)
+            if ly and i > live:
+                vals[6] = ly
+                vals[7] = round(ly * float(rng.uniform(1300, 1500)), 2)
+                vals[8] = round(vals[7] * 0.88, 2)
+            if any(vals):
+                for c, v in zip("CDEFGHIJK", vals):
+                    put(r, c, v)
+            tot = [a + b for a, b in zip(tot, vals)]
+        put(15, "A", "TOTAL")
+        for c, v in zip("CDEFGHIJK", tot):
+            put(15, c, v)
+        fabs = ["FUSION STUDIO", "TAANTAV", "ANWAR ZARI ART", "AMBRAEE", "AGAM", "PRATAP OVERSEAS", "RFS (outsource)",
+                "J AND S (outsource)"]
+        share = np.array([0.45, 0.17, 0.07, 0.09, 0.06, 0.05, 0.07, 0.04])
+        names = ["APRIL", "MAY", "JUNE", "JULY", "AUG.", "SEP.", "OCT.", "NOV."]
+        # block 1: April / May (with May's promise) / June (with June's promise); block 2: July..; later months below
+        month_total = [grid[2 + i][col_to_idx("E")] or 0 for i in range(12)]
+
+        def fab_values(m):
+            v = np.round(float(month_total[m]) * share * rng.uniform(0.8, 1.2, len(share)))
+            return [int(x) if m <= live else 0 for x in v]
+
+        def block(row, columns):
+            """columns: [(header, month index, kind)] from column B; kind = incoming | promised | pending."""
+            put(row, "A", "FABRICATOR'S")
+            put(row + 1, "A", "TOTAL")
+            for k, n in enumerate(fabs):
+                put(row + 2 + k, "A", n)
+            inc, prom = {}, []
+            for j, (h, m, kind) in enumerate(columns):
+                c = chr(66 + j)
+                put(row, c, h)
+                if kind == "incoming":
+                    inc[m] = col = fab_values(m)
+                elif kind == "promised":
+                    prom = col = [(int(round(v * 1.15, -3)) or 1000) if v else 0 for v in inc[m]]
+                else:
+                    col = [p - i for p, i in zip(prom, inc[m])]
+                put(row + 1, c, sum(col))
+                for k, v in enumerate(col):
+                    put(row + 2 + k, c, v)
+
+        block(17, [("APRIL INCOMING", 0, "incoming"), ("MAY INCOMING", 1, "incoming"), ("PROMISED", 1, "promised"),
+                   ("PENDING", 1, "pending"), ("JUNE INCOMING", 2, "incoming"), ("PROMISED", 2, "promised"),
+                   ("PENDING", 2, "pending")])
+        block(30, [("JULY INCOMING", 3, "incoming"), ("PROMISED", 3, "promised"), ("PENDING", 3, "pending"),
+                   ("AUG. INCOMING", 4, "incoming"), ("SEP. INCOMING", 5, "incoming")])
+        block(43, [("OCT. INCOMING", 6, "incoming"), ("NOV. INCOMING", 7, "incoming")])
+        return {(IN_OUT_SALE_ID, "2026-27", False): grid, (IN_OUT_SALE_ID, "2026-27", True): grid}
 
     def _vendor_rate(self, rng):
         """FABRIC PO 11 rate tabs with the real quirks: a 0 rate, a rate typed as text, a fabric with no rate, rates

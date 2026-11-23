@@ -21,7 +21,7 @@ export default function Clients() {
   const q = useDashboard<ClientData>("/client", f.values);
   return (
     <Screen
-      title="Clients"
+      title="Clients Order Status"
       inStack
       q={q}
       lede={(d) => {

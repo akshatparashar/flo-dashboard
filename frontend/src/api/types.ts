@@ -96,7 +96,18 @@ export interface ClientData extends Envelope {
   options: Options;
   kpis: Kpi[];
   tables: { monthly: TableData; categories: TableData };
-  charts: { monthly_share: Slice[]; fulfilment: Slice[]; category_by_month: SeriesChart };
+  charts: { monthly_share: Slice[]; client_share: Slice[]; fulfilment: Slice[]; category_by_month: SeriesChart };
+  /** The "FW ORDER'S" table of the master sheet's DASHBOARD tab; null when that tab cannot be read. */
+  fw_orders: {
+    table: TableData;
+    chart: SeriesChart;
+    overall: { categories: string[]; values: number[] };
+    totals: { order: number; dispatched: number; pending: number; overall: number; dispatched_pct: number };
+    checks: Notice[];
+  } | null;
+  fw_orders_error?: string;
+  /** Pending pcs against the 60-day delivery date (sheet column AG); null when nothing is pending. */
+  delivery60: { today: string; kpis: Kpi[]; chart: SeriesChart; tables: { months: TableData; clients: TableData } } | null;
 }
 
 export interface ProductionData extends Envelope {
@@ -362,4 +373,27 @@ export interface VendorRateData extends Envelope {
   vendor_cards?: VendorCard[];
   sheet_tables?: { vendor: string; items: number; table: TableData }[];
   vendor_fabric?: { widths: string[]; data: Record<string, { categories: string[]; series: { name: string; values: (number | null)[]; best: boolean[] }[] }> };
+}
+
+export interface InOutSaleData extends Envelope {
+  empty?: boolean;
+  notices?: Notice[];
+  options: Options;
+  years: { this: string; last: string };
+  kpis: Kpi[];
+  summary: { months: number; sale_pcs: number; net_sale: number; sale_change_pct: number | null };
+  tables: { compare: TableData; flow: TableData; fabricators?: TableData; promises?: TableData };
+  charts: {
+    sale_pcs: SeriesChart;
+    net_sale: SeriesChart;
+    cumulative_net: SeriesChart;
+    flow: SeriesChart;
+    fab_share?: Slice[];
+    fab_split?: Slice[];
+    fab_heat?: { rows: string[]; columns: string[]; values: number[][] };
+    fab_months?: SeriesChart;
+    promise?: SeriesChart;
+  };
+  fabricators: { count: number; incoming?: number; top?: string; top_pct?: number; promised?: number; promise_pending?: number };
+  checks: Notice[];
 }

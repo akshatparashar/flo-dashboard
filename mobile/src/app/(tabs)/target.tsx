@@ -1,4 +1,4 @@
-/* Target & revenue: are we on track for the yearly new-order target, and where does revenue come from? */
+/* Designer Order Target: are we on track for the yearly new-order target, and where does revenue come from? */
 import { useEffect, useState } from "react";
 import { Image, StyleSheet, Text, TextInput, View } from "react-native";
 import { BarList, Bars, StackedList, TargetBar } from "../../components/charts";
@@ -104,7 +104,7 @@ export default function Target() {
   const q = useDashboard<TargetData>("/target", cr === null ? f.values : { ...f.values, annual_target_cr: cr });
   return (
     <Screen
-      title="Target & revenue"
+      title="Designer Order Target"
       q={q}
       lede={(d) => {
         if (d.empty) return null;

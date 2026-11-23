@@ -1,15 +1,44 @@
 import { useDashboard } from "../api/hooks";
 import type { ClientData } from "../api/types";
 import { Bars } from "../components/charts/Bars";
+import { Pie } from "../components/charts/Pie";
+import { Legend } from "../components/charts/common";
 import { Heatmap, Progress } from "../components/charts/Lists";
 import { DataTable } from "../components/DataTable";
 import { FilterBar, MonthFilter, MultiSelect } from "../components/Filters";
-import { KpiStrip, Panel, Section } from "../components/ui";
+import { KpiStrip, Notices, Panel, Section } from "../components/ui";
 import { useFilters } from "../lib/filters";
 import { fmtInt, shortMonth } from "../lib/format";
 import { PageHead, PageState } from "./common";
 
 const KEYS = ["month", "client", "order_type", "category"];
+
+const FW_COLORS = { "Order pcs": "var(--series-ref)", "Dispatched pcs": "var(--accent)", "Pending pcs": "var(--neg)" };
+
+function FwOrders({ fw }: { fw: NonNullable<ClientData["fw_orders"]> }) {
+  const t = fw.totals;
+  return (
+    <>
+      <Notices items={fw.checks} />
+      <div className="grid">
+        <div className="span-12">
+          <Panel
+            title="Orders vs dispatched"
+            sub={`${fmtInt(t.dispatched)} of ${fmtInt(t.order)} pcs dispatched (${t.dispatched_pct.toFixed(1)}% of the orders that are dispatched or pending)`}
+            right={<Legend items={fw.chart.series.map((s) => ({ name: s.name, color: FW_COLORS[s.name as keyof typeof FW_COLORS] }))} />}
+          >
+            <Bars data={fw.chart} months unit="pcs" label="FW orders: order, dispatched and pending pcs by month" colors={FW_COLORS} height={300} />
+          </Panel>
+        </div>
+        <div className="span-12">
+          <Panel title="FW ORDER'S" flush>
+            <DataTable table={fw.table} name="fw_orders" maxRows={13} titleCaseFirst={false} />
+          </Panel>
+        </div>
+      </div>
+    </>
+  );
+}
 
 export default function Clients() {
   const f = useFilters(KEYS);
@@ -27,7 +56,7 @@ export default function Clients() {
           return (
             <>
               <PageHead
-                title="Clients"
+                title="Clients Order Status"
                 meta={d.meta}
                 lede={
                   <>
@@ -48,6 +77,53 @@ export default function Clients() {
                   <Progress value={k.received} max={done} leftLabel={`Received ${fmtInt(k.received)} pcs`} rightLabel={`In production ${fmtInt(done)} pcs`} />
                 </Panel>
               </Section>
+
+              <Section title="Clients" sub="Share of ordered pcs by client">
+                <div className="grid">
+                  <div className="span-12">
+                    <Panel title="Order pcs by client">
+                      <Pie items={d.charts.client_share} unit="pcs" label="Order pcs by client" />
+                    </Panel>
+                  </div>
+                </div>
+              </Section>
+
+              {d.delivery60 && (
+                <Section title="Expected deliveries by month" sub={`Pending pcs (column AU) by the 60 DAYS DELIVERY DATE (column AG): how many pcs are due to arrive in each month · red = date already passed (${d.delivery60.today})`}>
+                  <KpiStrip kpis={d.delivery60.kpis} cols={6} lead={["total"]} />
+                  <div className="grid" style={{ marginTop: 16 }}>
+                    <div className="span-7">
+                      <Panel
+                        title="Pcs due to arrive, by month"
+                        sub="Pending pcs per delivery month"
+                        right={<Legend items={[{ name: "Date passed", color: "var(--neg)" }, { name: "Not yet due", color: "var(--series-ref)" }]} />}
+                      >
+                        <Bars data={d.delivery60.chart} stacked months unit="pcs" label="Pending pcs by 60-day delivery month" colors={{ Overdue: "var(--neg)", "Not yet due": "var(--series-ref)" }} height={320} />
+                      </Panel>
+                    </div>
+                    <div className="span-5">
+                      <Panel title="Month-wise pcs expected" flush>
+                        <DataTable table={d.delivery60.tables.months} name="client_delivery60_months" maxRows={14} titleCaseFirst={false} />
+                      </Panel>
+                    </div>
+                    <div className="span-12">
+                      <Panel title="Client-wise pending and delivery dates" flush>
+                        <DataTable table={d.delivery60.tables.clients} name="client_delivery60_clients" maxRows={14} titleCaseFirst={false} />
+                      </Panel>
+                    </div>
+                  </div>
+                </Section>
+              )}
+
+              {(d.fw_orders || d.fw_orders_error) && (
+                <Section title="FW ORDER'S" sub="Order, dispatched and pending pcs by month · from the DASHBOARD tab of the master sheet">
+                  {d.fw_orders ? (
+                    <FwOrders fw={d.fw_orders} />
+                  ) : (
+                    <Notices items={[{ kind: "warning", text: `FW ORDER'S could not be read: ${d.fw_orders_error}` }]} />
+                  )}
+                </Section>
+              )}
 
               <Section title="Month by month" sub="By order month">
                 <div className="grid">

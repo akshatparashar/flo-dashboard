@@ -36,14 +36,14 @@ PAGES: dict[str, Page] = {p.key: p for p in [
          "Sample status: approved, rejected, on hold and in process, with approval and rejection rates, by month, "
          "designer and sampling vendor.",
          {"month": "month", "designer": "designer", "vendor": "vendor"}, 4),
-    Page("target", "Target & revenue", "/target", ("target page", "revenue page", "target and revenue"),
+    Page("target", "Designer Order Target", "/target", ("target page", "revenue page", "target and revenue", "designer order target"),
          "The yearly NEW-order target against what is achieved, plus NEW and REPEAT revenue by month, designer, "
          "item and who ordered.",
          {"month": "month", "designer": "designer", "item": "category", "order_by": "client"}, 5),
     Page("designer", "Designers", "/designers", ("designers page", "designer page", "designer dashboard"),
          "Order volume per designer: new and repeat pcs, share of total, design count, and pcs by category.",
          {"month": "month", "designer": "designer"}, 6),
-    Page("client", "Clients", "/clients", ("clients page", "client page", "client dashboard"),
+    Page("client", "Clients Order Status", "/clients", ("clients page", "client page", "client dashboard", "clients order status", "client order status"),
          "Orders per client: order quantity, in production, received and pending pcs by month and category.",
          {"month": "month", "client": "client", "category": "category"}, 7),
     Page("flo-future", "FLO Future", "/flo-future",

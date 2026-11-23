@@ -62,7 +62,7 @@ export default function Target() {
     <div className="page">
       <PageState q={q}>
         {(d) => {
-          if (d.empty) return <><PageHead title="Target & revenue" meta={d.meta} /><Notices items={d.notices} /><Empty title="No order data" /></>;
+          if (d.empty) return <><PageHead title="Designer Order Target" meta={d.meta} /><Notices items={d.notices} /><Empty title="No order data" /></>;
           const t = d.tracker;
           const ahead = t.schedule.gap >= 0;
           const monthlyTarget = t.monthly.target[0] ?? 0;
@@ -71,7 +71,7 @@ export default function Target() {
           return (
             <>
               <PageHead
-                title="Target & revenue"
+                title="Designer Order Target"
                 meta={d.meta}
                 lede={
                   <>

@@ -12,14 +12,14 @@ import re
 import numpy as np
 import pandas as pd
 
-from ..core import (CATEGORIES_LIST, FY_MONTH_LABELS, KNOWN_DESIGNERS, clean_delay_days, clean_text, col_to_idx,
+from ..core import (CATEGORIES_LIST, today_ist, FY_MONTH_LABELS, KNOWN_DESIGNERS, clean_delay_days, clean_text, col_to_idx,
                     month_label, month_sort_key, norm_key, num, parse_dates, safe_div_pct)
 from ..tables import add_total, kpi, notice, table
 
 MASTER_COLS = {
     "date_client": "B", "designer": "C", "type": "D", "category": "F", "qty": "J", "client": "N",
     "fabricator": "AA", "date_prod": "AC", "delay": "AH", "production": "AS", "received": "AT",
-    "pending": "AU", "status": "AX",
+    "pending": "AU", "status": "AX", "due60": "AG",
 }
 
 CATEGORY_ALIASES = {norm_key(c): c for c in CATEGORIES_LIST}
@@ -100,6 +100,7 @@ def prepare(raw):
     d["qty"] = num(col("qty"))
     d["client"] = clean_text(col("client")).str.upper().replace("", "(NO CLIENT)")
     d["fabricator"] = clean_text(col("fabricator")).str.upper().replace("", "(NOT ASSIGNED)")
+    d["due60"] = parse_dates(col("due60"))      # "60 DAYS DELIVERY DATE": production date + 60 days
     d["delay"] = clean_delay_days(col("delay"))
     d["production"] = num(col("production"))
     d["received"] = num(col("received"))
@@ -283,7 +284,55 @@ def designer_dashboard(d_all, f):
     }
 
 
-def client_dashboard(d_all, f):
+def delivery60(x, today=None):
+    """Pending pcs against the 60-day delivery date (sheet column AG). Only rows that still have pcs pending count.
+    A design is overdue when its delivery date is before today; rows without a delivery date are listed apart."""
+    if "due60" not in x.columns:
+        return None
+    today = pd.Timestamp(today if today is not None else today_ist()).normalize()
+    p = x[x["pending"] > 0].copy()
+    if p.empty:
+        return None
+    due = p["due60"]
+    days = (due - today).dt.days
+    p["overdue"] = due.notna() & (days < 0)
+    buckets = [("overdue", "Overdue", p["overdue"], "alert"),
+               ("due7", "Due in 7 days", due.notna() & (days >= 0) & (days <= 7), None),
+               ("due30", "Due in 8-30 days", due.notna() & (days > 7) & (days <= 30), None),
+               ("later", "Due later", due.notna() & (days > 30), None),
+               ("nodate", "No delivery date", due.isna(), None)]
+    kpis = [kpi(label, float(p.loc[m, "pending"].sum()), "pcs", id=key, tone=tone,
+                hint=f"{int(m.sum())} designs") for key, label, m, tone in buckets]
+    kpis.insert(0, kpi("Pending", float(p["pending"].sum()), "pcs", id="total", hint=f"{len(p)} designs · sheet column AU"))
+
+    dated = p[due.notna()].copy()
+    dated["due_month"] = month_label(dated["due60"])
+    # every month from the first to the last delivery month, so a month with nothing due shows as 0
+    span = pd.Series(pd.date_range(dated["due60"].min().replace(day=1), dated["due60"].max(), freq="MS"))
+    order = list(month_label(span)) if len(span) else sorted(dated["due_month"].unique(), key=month_sort_key)
+    g = dated.groupby("due_month")
+    pend = g["pending"].sum().reindex(order, fill_value=0)
+    over = dated[dated["overdue"]].groupby("due_month")["pending"].sum().reindex(order, fill_value=0)
+    mt = pd.DataFrame({"Delivery month": order, "Designs": g.size().reindex(order, fill_value=0).to_numpy(),
+                       "Pending pcs": pend.to_numpy(), "Overdue pcs": over.to_numpy()})
+    gc = p.groupby("client")
+    ct = pd.DataFrame({"Client": list(gc.groups)})
+    ct["Designs"] = gc.size().reindex(ct["Client"]).to_numpy()
+    ct["Pending pcs"] = gc["pending"].sum().reindex(ct["Client"]).to_numpy()
+    ct["Overdue pcs"] = p[p["overdue"]].groupby("client")["pending"].sum().reindex(ct["Client"], fill_value=0).to_numpy()
+    oldest = dated.groupby("client")["due60"].min().reindex(ct["Client"])
+    ct["Oldest delivery date"] = [d.strftime("%d/%m/%Y") if pd.notna(d) else "" for d in oldest]
+    return {
+        "today": today.strftime("%d/%m/%Y"),
+        "kpis": kpis,
+        "chart": _series(order, [("Overdue", [float(v) for v in over]),
+                                 ("Not yet due", [float(a - b) for a, b in zip(pend, over)])]),
+        "tables": {"months": table(add_total(mt, "Delivery month"), key_col="Pending pcs", sort=False),
+                   "clients": table(add_total(ct, "Client"), fmt={"Oldest delivery date": "text"}, key_col="Pending pcs")},
+    }
+
+
+def client_dashboard(d_all, f, today=None):
     x = filter_data(d_all, f)
     k = client_kpi_values(x)
     months = month_list(d_all)
@@ -300,6 +349,10 @@ def client_dashboard(d_all, f):
     cat_df.columns = ["Month"] + list(cat_df.columns[1:])
 
     pie = m[m["Order Qty"] > 0]
+    cl = x.groupby("client")["qty"].sum().sort_values(ascending=False)
+    cl = cl[cl > 0]
+    if len(cl) > 8:                       # a pie stays readable with a handful of slices; the rest is one slice
+        cl = pd.concat([cl.iloc[:7], pd.Series({"OTHER CLIENTS": cl.iloc[7:].sum()})])
     cat_months = [mo for mo in months if cat_df.loc[cat_df["Month"] == mo, cats].to_numpy().sum() != 0]
     cat_used = [c for c in cats if cat_df[c].sum() != 0]
     return {
@@ -314,12 +367,14 @@ def client_dashboard(d_all, f):
             kpi("Category total", k["category_qty"], "pcs", id="category_qty",
                 hint="Quantity in the 7 standard categories"),
         ],
+        "delivery60": delivery60(x, today),
         "tables": {
             "monthly": table(add_total(m, "Month"), key_col="Order Qty", sort=False),
             "categories": table(add_total(cat_df, "Month"), key_col="TOTAL", sort=False),
         },
         "charts": {
             "monthly_share": [{"label": r["Month"], "value": float(r["Order Qty"])} for _, r in pie.iterrows()],
+            "client_share": [{"label": str(n), "value": float(v)} for n, v in cl.items()],
             "fulfilment": [{"label": "Received", "value": k["received"]}, {"label": "Pending", "value": k["pending"]}]
             if k["received"] + k["pending"] > 0 else [],
             "category_by_month": _series(cat_months, [
