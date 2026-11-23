@@ -364,3 +364,391 @@ class PageAnswers:
             lines.append(f"Best month against target: **{best[0]}** ({best[ia] / best[it] * 100:.2f}%)." if best[it] else "")
         return "\n".join(x for x in lines if x), {"page": "target", "metric": "Achieved (New)", "intent": "trend",
                                                   "entities": [], "months": months, "dim": "month"}
+
+    # ------------------------------------------------------------------------------------------------ In/Out Sale
+    IOS = re.compile(r"\b(in[\s/-]*out[\s/-]*sale|net sale|net per pc|sale (?:pcs|pieces|amount|qty|quantity|value)|"
+                     r"sold (?:pcs|pieces)|incoming (?:pcs|pieces)|pcs incoming|in[\s-]?house|inhouse|deducted|"
+                     r"sent to production|pieces under production|sale vs incoming)\b")
+    IOS_METRICS = [("Net sale per pc", r"net sale per pc|net per pc|per pc net"), ("Net sale", r"net sale"),
+                   ("Sale amount", r"sale (?:amount|value)"), ("Sale pcs", r"sale (?:pcs|pieces|qty|quantity)|sold"),
+                   ("Incoming pcs", r"incoming"), ("Order pcs", r"order pcs|order pieces|orders? pcs"),
+                   ("Sent to production", r"sent to production|under production|production pcs")]
+    TYPE_W = re.compile(r"\b(in[\s-]?house|inhouse|outsource\w*|out source)\b")
+
+    IOS_NOT_FOLLOW = re.compile(r"\b(po|pos|fabric|vendor|samples?|designer|client|production|revenue|target|promis\w*)\b")
+
+    def _ios(self, months, fabs=(), typ=None):
+        f: dict = {}
+        if months:
+            f["month"] = list(months)
+        raws = [e.raw.get("in-out-sale") for e in fabs]
+        if raws and all(raws):
+            f["fabricator"] = raws
+        if typ:
+            f["type"] = [typ]
+        return self.fetch("in-out-sale", f)
+
+    @staticmethod
+    def _inr(v):
+        return fmt.inr_short(v) if isinstance(v, (int, float)) else "—"
+
+    FOLLOW_IOS = re.compile(r"\b(last year|previous year|compare|comparison|highest|lowest|best|worst|which month|"
+                            r"month wise|month by month|monthly|deducted|per pc|vs|growth|change|increase|decrease|"
+                            r"difference|percent\w*|%)\b")
+
+    def in_out_sale(self, text: str, entities, months: list[str], explicit: list[str], ctx_in: dict | None = None):
+        raw = re.sub(r"[/]", " ", text.lower())
+        t = norm(text)
+        follow = isinstance(ctx_in, dict) and ctx_in.get("page") == "in-out-sale" and len(raw.split()) <= 9 and \
+            bool(self.FOLLOW_IOS.search(raw)) and not self.IOS_NOT_FOLLOW.search(raw)
+        if follow and not months and not re.search(r"\b(highest|lowest|best|worst|which month|month wise|monthly|"
+                                                   r"month by month)\b", raw):
+            months = [m for m in ctx_in.get("months") or []]
+        named = "in-out-sale" in explicit or bool(self.IOS.search(raw)) or follow
+        promised = re.search(r"\bpromis\w*\b", raw) and re.search(r"\b(came|come|incoming|aaya|aaye|fabricators?|pcs|"
+                                                                    r"pieces|achieved|pending)\b", raw) and \
+            not re.search(r"\b(samples?|items?|designers?|teams?|overdue|visits?|meetings?|flo future|outsource)\b", raw)
+        fab_ents = [e for e in entities if e.type == "fabricator" and e.raw.get("in-out-sale")]
+        fab_follow = isinstance(ctx_in, dict) and ctx_in.get("page") == "in-out-sale" and \
+            ctx_in.get("dim") == "fabricator" and bool(fab_ents) and len(raw.split()) <= 7
+        if fab_follow and not months:
+            months = list(ctx_in.get("months") or [])
+        incoming_fab = fab_follow or (re.search(r"\bincoming\b", raw) and not re.search(r"\bmonthly incoming\b", raw) and (
+            fab_ents or re.search(r"\b(fabricators?|by fabricator|fabricator wise|karigar)\b", raw)))
+        if not (named or promised or incoming_fab):
+            return None
+        if any(e.type not in ("month", "fabricator") for e in entities):
+            return None
+        kinds = {("In-house" if re.search(r"house", m) else "Outsource") for m in
+                 (x.group(1) for x in self.TYPE_W.finditer(raw))}
+        typ = next(iter(kinds)) if len(kinds) == 1 else None
+        if len(kinds) == 2 or (typ and re.search(r"\b(vs|versus|compare|comparison)\b", raw)):
+            kinds = {"In-house", "Outsource"}
+            typ = None
+        when = " and ".join(months) if months else "all months so far"
+        ctx = {"page": "in-out-sale", "metric": None, "intent": "value", "entities":
+               [{"type": "fabricator", "value": e.display} for e in fab_ents], "months": months, "dim": None}
+        sheet = "IN/OUT/SALE sheet, 2026-27 tab"
+
+        # ---- promised vs incoming per fabricator and month
+        if promised:
+            body = self._ios(months, fab_ents)
+            cols, rows = _table(body, "promises")
+            if not rows:
+                return None
+            lines = [f"**Promised vs incoming pcs by fabricator** · {when} · {sheet}",
+                     "| Month | Fabricator | Promised | Incoming | Pending | Achieved % |", "|---|---|---|---|---|---|"]
+            tp = ti = 0
+            for r in rows:
+                if SPECIAL.match(str(r[0])):
+                    continue
+                tp, ti = tp + (r[2] or 0), ti + (r[3] or 0)
+                lines.append(f"| {r[0]} | {r[1]} | {fmt.fmt_int(r[2])} | {fmt.fmt_int(r[3])} | {fmt.fmt_int(r[4])} | "
+                             f"{r[5]:.1f}% |" if isinstance(r[5], (int, float)) else f"| {r[0]} | {r[1]} | {fmt.fmt_int(r[2])} | {fmt.fmt_int(r[3])} | {fmt.fmt_int(r[4])} | — |")
+            lines.append(f"Total: promised **{fmt.fmt_int(tp)}** pcs, incoming **{fmt.fmt_int(ti)}** pcs, "
+                         f"pending **{fmt.fmt_int(max(tp - ti, 0))}** pcs" +
+                         (f" — achieved **{ti / tp * 100:.1f}%** ({fmt.fmt_int(ti)} ÷ {fmt.fmt_int(tp)} × 100)." if tp else "."))
+            lines.append("The sheet tracks promised pcs for some fabricators and months only.")
+            return "\n".join(lines), {**ctx, "metric": "Promised"}
+
+        # ---- fabricator-wise incoming (one fabricator, a type, or the ranking)
+        if len(kinds) == 2 and not fab_ents:
+            body = self._ios(months)
+            cols, rows = _table(body, "fabricators")
+            it, itot = _col(cols, "Type"), _col(cols, "Total")
+            data = [r for r in rows if not SPECIAL.match(str(r[0]))]
+            if itot is None or it is None or not data:
+                return None
+            ih = sum(r[itot] or 0 for r in data if r[it] == "In-house")
+            ot = sum(r[itot] or 0 for r in data if r[it] == "Outsource")
+            tot = ih + ot
+            lines = [f"**Incoming pcs: In-house vs Outsource** · {when} · {sheet}",
+                     "| Type | Fabricators | Incoming pcs | Share % |", "|---|---|---|---|",
+                     f"| In-house | {sum(1 for r in data if r[it] == 'In-house')} | {fmt.fmt_int(ih)} | {ih / tot * 100 if tot else 0:.1f}% |",
+                     f"| Outsource | {sum(1 for r in data if r[it] == 'Outsource')} | {fmt.fmt_int(ot)} | {ot / tot * 100 if tot else 0:.1f}% |"]
+            if ih != ot:
+                hi, lo, a, b = ("In-house", "Outsource", ih, ot) if ih > ot else ("Outsource", "In-house", ot, ih)
+                lines.append(f"**{hi}** is higher by **{fmt.fmt_int(a - b)} pcs** ({fmt.fmt_int(a)} − {fmt.fmt_int(b)}"
+                             + (f", {(a - b) / b * 100:.1f}% more" if b else "") + ").")
+            return "\n".join(lines), {**ctx, "metric": "Incoming pcs", "dim": "fabricator"}
+
+        if fab_ents or typ or incoming_fab or re.search(r"\b(fabricators?|fabricator wise)\b", raw):
+            body = self._ios(months, fab_ents, typ)
+            cols, rows = _table(body, "fabricators")
+            it, itot, ish = _col(cols, "Type"), _col(cols, "Total"), _col(cols, "Share")
+            if itot is None:
+                return None
+            data = [r for r in rows if not SPECIAL.match(str(r[0]))]
+            if not data:
+                return None
+            total = sum(r[itot] or 0 for r in data)
+            lines = [f"**Incoming pcs by fabricator**{' (' + typ + ')' if typ else ''} · {when} · {sheet}"]
+            if re.search(r"\b(highest|most|top|lowest|least|which|kaun|sabse)\b", raw) and not fab_ents:
+                low = re.search(r"\b(lowest|least)\b", raw)
+                pick = (min if low else max)(data, key=lambda r: r[itot] or 0)
+                lines.append(f"**{pick[0]}** has the {'lowest' if low else 'highest'} incoming pcs: "
+                             f"**{fmt.fmt_int(pick[itot])} pcs** ({pick[itot] / total * 100:.1f}% of {fmt.fmt_int(total)})."
+                             if total else "")
+            if fab_ents and len(data) <= 6:
+                lines += [f"• **{r[0]}** ({r[it]}): **{fmt.fmt_int(r[itot])} pcs**"
+                          + (f" — {r[ish]:.1f}% of all incoming" if ish is not None and isinstance(r[ish], (int, float)) else "")
+                          for r in data]
+                if len(data) == 2:
+                    a, b = sorted(data, key=lambda r: -(r[itot] or 0))
+                    lines.append(f"**{a[0]}** is higher by **{fmt.fmt_int(a[itot] - b[itot])} pcs** "
+                                 f"({fmt.fmt_int(a[itot])} − {fmt.fmt_int(b[itot])}).")
+            else:
+                lines += ["| Fabricator | Type | Incoming pcs | Share % |", "|---|---|---|---|"]
+                for r in sorted(data, key=lambda r: -(r[itot] or 0))[:15]:
+                    share = (r[itot] / total * 100) if total else 0
+                    lines.append(f"| {r[0]} | {r[it]} | {fmt.fmt_int(r[itot])} | {share:.1f}% |")
+                lines.append(f"Total: **{fmt.fmt_int(total)} pcs** (share = fabricator ÷ total × 100).")
+            if not typ and not fab_ents:
+                ih = sum(r[itot] or 0 for r in data if r[it] == "In-house")
+                lines.append(f"In-house **{fmt.fmt_int(ih)} pcs** ({ih / total * 100:.1f}%), outsource "
+                             f"**{fmt.fmt_int(total - ih)} pcs** ({(total - ih) / total * 100:.1f}%)." if total else "")
+            lines.append("The Fabricators page's \"Monthly incoming\" comes from the stock sheet, so it can differ.")
+            return "\n".join(x for x in lines if x), {**ctx, "metric": "Incoming pcs", "dim": "fabricator"}
+
+        body = self._ios(months)
+        k = lambda s: _kpi(body, s)
+        cols_c, rows_c = _table(body, "compare")
+        cols_f, rows_f = _table(body, "flow")
+        yrs = body.get("years") or {}
+        this_y, last_y = yrs.get("this", "this year"), yrs.get("last", "last year")
+
+        # ---- this year against last year
+        if re.search(r"\b(last year|previous year|prev year|pichhle saal|pichle saal|yoy|year on year|vs 20\d\d|"
+                     r"compared? (?:to|with) 20\d\d|2025)\b", raw) or (
+                re.search(r"\b(compare|comparison|vs|versus)\b", raw) and not months and re.search(r"\byear\b", raw)):
+            if not rows_c:
+                return None
+            lines = [f"**Sale: {this_y} vs {last_y}** (same months) · {sheet}",
+                     f"| Month | Sale pcs {this_y} | Sale pcs {last_y} | Pcs change % | Net sale {this_y} | Net sale {last_y} | Net change % |",
+                     "|---|---|---|---|---|---|---|"]
+            tot = [0.0, 0.0, 0.0, 0.0]
+            for r in rows_c:
+                if SPECIAL.match(str(r[0])) or (months and r[0] not in months):
+                    continue
+                for i, j in enumerate((1, 2, 4, 5)):
+                    tot[i] += r[j] or 0
+                ch = lambda v: f"{v:+.1f}%" if isinstance(v, (int, float)) else "—"
+                lines.append(f"| {r[0]} | {fmt.fmt_int(r[1])} | {fmt.fmt_int(r[2])} | {ch(r[3])} | {self._inr(r[4])} | "
+                             f"{self._inr(r[5])} | {ch(r[6])} |")
+            if tot[1]:
+                lines.append(f"Total sale pcs: **{fmt.fmt_int(tot[0])}** vs {fmt.fmt_int(tot[1])} = "
+                             f"**{(tot[0] - tot[1]) / tot[1] * 100:+.1f}%** "
+                             f"(({fmt.fmt_int(tot[0])} − {fmt.fmt_int(tot[1])}) ÷ {fmt.fmt_int(tot[1])} × 100).")
+            if tot[3]:
+                lines.append(f"Total net sale: **{self._inr(tot[2])}** vs {self._inr(tot[3])} = "
+                             f"**{(tot[2] - tot[3]) / tot[3] * 100:+.1f}%**.")
+            return "\n".join(lines), {**ctx, "metric": "Sale pcs", "dim": "month"}
+
+        wanted = [lab for lab, rx in self.IOS_METRICS if re.search(rx, raw)]
+        if not wanted and follow and ctx_in.get("metric") in dict(self.IOS_METRICS):
+            wanted = [ctx_in["metric"]]
+        if not wanted and re.search(r"\bsales?\b", raw):
+            wanted = ["Sale pcs", "Sale amount", "Net sale"]
+        if "Net sale" in wanted and "Net sale per pc" in wanted:
+            wanted.remove("Net sale")
+        if "Sale amount" in wanted and "Net sale" in wanted:
+            pass
+
+        # ---- deducted share
+        if re.search(r"\bdeduct\w*\b", raw) and rows_f:
+            ci = {c: i for i, c in enumerate(cols_f)}
+            rows = [r for r in rows_f if not SPECIAL.match(str(r[0])) and (not months or r[0] in months)]
+            amt, net = sum(r[ci["Sale amount"]] or 0 for r in rows), sum(r[ci["Net sale"]] or 0 for r in rows)
+            if amt:
+                return (f"**Deducted from sale amount** · {when}: sale amount {self._inr(amt)} − net sale "
+                        f"{self._inr(net)} = **{self._inr(amt - net)}**, which is **{(amt - net) / amt * 100:.2f}%** "
+                        f"of the sale amount ({self._inr(amt - net)} ÷ {self._inr(amt)} × 100).", {**ctx, "metric": "Net sale"})
+
+        # ---- month by month / best month / flow
+        by_month = re.search(r"\b(month wise|month-wise|monthly|month by month|by month|each month|har mahine|"
+                             r"which month|flow)\b", raw)
+        extreme = re.search(r"\b(highest|lowest|best|worst|most|least|max|maximum|minimum|sabse)\b", raw)
+        if rows_f and (by_month or (len(months) != 1 and (len(wanted) > 1 or extreme))) and not (len(months) == 1):
+            ci = {c: i for i, c in enumerate(cols_f)}
+            rows = [r for r in rows_f if not SPECIAL.match(str(r[0])) and (not months or r[0] in months)]
+            lab = {"Sale pcs": "Sale pcs", "Net sale": "Net sale", "Sale amount": "Sale amount",
+                   "Net sale per pc": "Net per pc", "Incoming pcs": "Incoming pcs", "Order pcs": "Order pcs",
+                   "Sent to production": "Sent to production"}
+            keyl = lab.get(wanted[0], "Sale pcs") if wanted else "Sale pcs"
+            if extreme and keyl in ci:
+                low = re.search(r"\b(lowest|worst|least|minimum)\b", raw)
+                pick = (min if low else max)(rows, key=lambda r: r[ci[keyl]] or 0)
+                v = pick[ci[keyl]]
+                shown = self._inr(v) if keyl in ("Net sale", "Sale amount", "Net per pc") else f"{fmt.fmt_int(v)} pcs"
+                return (f"**{pick[0]}** has the {'lowest' if low else 'highest'} {keyl.lower()}: **{shown}** "
+                        f"({sheet}).", {**ctx, "metric": keyl, "dim": "month", "intent": "rank"})
+            show = [c for c in ("Order pcs", "Sent to production", "Incoming pcs", "Sale pcs", "Sale amount", "Net sale",
+                                "Net per pc") if c in ci]
+            lines = [f"**Order → production → incoming → sale by month** · {sheet}",
+                     "| Month | " + " | ".join(show) + " |", "|---|" + "---|" * len(show)]
+            money = {"Sale amount", "Net sale", "Net per pc"}
+            for r in rows:
+                lines.append(f"| {r[0]} | " + " | ".join(self._inr(r[ci[c]]) if c in money else fmt.fmt_int(r[ci[c]])
+                                                         for c in show) + " |")
+            return "\n".join(lines), {**ctx, "metric": keyl, "dim": "month", "intent": "trend"}
+
+        # ---- named figures (for the months asked) or the whole summary
+        if wanted and not re.search(r"\b(summary|overview|saar|all figures|everything)\b", raw):
+            lines = [f"**In/Out Sale** · {when} · {sheet}"]
+            for lab in wanted:
+                kp = k(lab)
+                if kp is None:
+                    continue
+                hint = f" — {kp['hint']}" if kp.get("hint") and "vs" in str(kp.get("hint")) else ""
+                lines.append(f"• {lab}: **{_show(kp)}**{hint}")
+            if len(lines) == 1:
+                return None
+            if "Net sale" in wanted and k("Net sale") and k("Sale amount") and "Sale amount" not in wanted:
+                lines.append(f"(Net sale is the sale amount less deductions: {_show(k('Sale amount'))} sale amount.)")
+            return "\n".join(lines), {**ctx, "metric": wanted[0]}
+        lines = [f"**In/Out Sale summary** · {when} · {sheet}"]
+        for kp in _kpis(body):
+            hint = f" — {kp['hint']}" if kp.get("hint") else ""
+            lines.append(f"• {kp['label']}: **{_show(kp)}**{hint}")
+        for ch in body.get("checks") or []:
+            if isinstance(ch, dict) and ch.get("text"):
+                lines.append(f"Note from the page: {ch['text']}")
+        return "\n".join(lines), {**ctx, "metric": "Sale pcs"}
+
+    # ------------------------------------------------------------------------------------------------ Clients Order Status
+    DELIVERY = re.compile(r"\b(expected deliver\w*|delivery (?:date|month|by month|due|schedule)|deliveries|"
+                          r"due in (?:the )?next \d+ days?|due in \d+ days?|due (?:soon|later)|60 days? deliver\w*|"
+                          r"delivery due|overdue deliver\w*|deliver\w* overdue|oldest delivery)\b")
+    FW = re.compile(r"\bfw orders?\b|\bfw order s\b|\bfw dispatch\w*\b|\bdispatched pcs\b|\bdispatch(?:ed)? pending\b")
+
+    @staticmethod
+    def _month_name(v) -> str:
+        from datetime import datetime, timedelta
+        m = re.fullmatch(r"([A-Za-z]{3})[A-Za-z]*-(?:20)?(\d{2})", str(v).strip())
+        if m:                                   # "Apr-2026" (FW ORDER'S) -> "April-26", the dashboard's month label
+            try:
+                return datetime.strptime(m.group(1).title() + m.group(2), "%b%y").strftime("%B-%y")
+            except ValueError:
+                return str(v)
+        if isinstance(v, str) and re.fullmatch(r"\d{5}(\.0+)?", v.strip()):
+            v = float(v)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and 20000 < v < 80000:
+            d = datetime(1899, 12, 30) + timedelta(days=float(v))
+            return d.strftime("%B-%y")
+        return str(v)
+
+    def fw_orders(self, text: str, entities, months: list[str], explicit: list[str]):
+        raw = re.sub(r"['’]", " ", text.lower())
+        if not self.FW.search(raw):
+            return None
+        body = self.fetch("client", {})
+        fw = body.get("fw_orders")
+        if not fw:
+            err = body.get("fw_orders_error")
+            return ("FW ORDER'S isn't available on the dashboard right now" + (f" ({err})" if err else "") + ".",
+                    {"page": "client", "metric": None, "intent": "value", "entities": [], "months": months, "dim": None})
+        cols, rows = _table(fw, "table") if False else ([c["label"] if isinstance(c, dict) else c for c in
+                                                         fw["table"]["columns"]], fw["table"]["rows"])
+        rows = [r for r in rows if str(r[0]).upper() != "TOTAL"]
+        for r in rows:
+            r[0] = self._month_name(r[0])
+        pick = [r for r in rows if not months or r[0] in months]
+        if months and not pick:
+            return (f"FW ORDER'S has no row for {' and '.join(months)}.", {"page": "client", "metric": None,
+                                                                         "intent": "value", "entities": [],
+                                                                         "months": months, "dim": None})
+        o, d, p = (sum(r[i] or 0 for r in pick) for i in (1, 2, 3))
+        pct = f"{d / (d + p) * 100:.1f}%" if (d + p) else "—"
+        lines = ["**FW ORDER'S** (Clients Order Status page · DASHBOARD tab of the master sheet) · " +
+                 (" and ".join(months) if months else "all months from April"),
+                 "| Month | Order pcs | Dispatched pcs | Pending pcs | Overall dispatched pcs |", "|---|---|---|---|---|"]
+        lines += [f"| {r[0]} | {fmt.fmt_int(r[1])} | {fmt.fmt_int(r[2])} | {fmt.fmt_int(r[3])} | {fmt.fmt_int(r[4])} |"
+                  for r in pick]
+        if len(pick) > 1:
+            lines.append(f"Total: order **{fmt.fmt_int(o)}**, dispatched **{fmt.fmt_int(d)}**, pending **{fmt.fmt_int(p)}** pcs.")
+        lines.append(f"Dispatched share: {pct} (dispatched ÷ (dispatched + pending) × 100 = {fmt.fmt_int(d)} ÷ "
+                     f"{fmt.fmt_int(d + p)}).")
+        for ch in fw.get("checks") or []:
+            if isinstance(ch, dict) and ch.get("text"):
+                lines.append(f"Note from the page: {ch['text']}")
+        opts = (body.get("options") or {}).get("client") or []
+        fw_name = next((c for c in opts if str(c).strip().upper() == "FW"), None)
+        if fw_name and not months:
+            qty = _kpi(self.fetch("client", {"client": [fw_name]}), "Total quantity")
+            if qty and isinstance(qty.get("value"), (int, float)):
+                same = abs(qty["value"] - o) < 0.5
+                lines.append(f"Cross-check: the client FW's total quantity on this page is {_show(qty)}"
+                             + (" - the same as FW ORDER'S order pcs." if same else
+                                f", {fmt.fmt_int(abs(qty['value'] - o))} pcs different from FW ORDER'S (different sheets)."))
+        return "\n".join(lines), {"page": "client", "metric": "Order pcs", "intent": "value", "entities": [],
+                                  "months": months, "dim": None}
+
+    def deliveries(self, text: str, entities, months: list[str], explicit: list[str]):
+        raw = text.lower()
+        overdue_designs = re.search(r"\b(overdue|late)\b", raw) and re.search(r"\bdesigns?\b", raw) and not re.search(
+            r"\b(production|fabricator|po|fabric)\b", raw)
+        if not (self.DELIVERY.search(raw) or overdue_designs or ("client" in explicit and re.search(r"\b(overdue|due)\b", raw))):
+            return None
+        clients = [e for e in entities if e.type == "client" and e.raw.get("client")]
+        if any(e.type not in ("client", "month") for e in entities):
+            return None
+        f: dict = {}
+        if clients:
+            f["client"] = [e.raw["client"] for e in clients]
+        body = self.fetch("client", f)
+        d = body.get("delivery60")
+        if not d:
+            return None
+        ks = {k["label"]: k for k in _kpis(d)}
+        cols_m, rows_m = _table(d, "months")
+        cols_c, rows_c = _table(d, "clients")
+        who = " and ".join(e.display for e in clients) or "all clients"
+        ctx = {"page": "client", "metric": "Pending", "intent": "value",
+               "entities": [{"type": "client", "value": e.display} for e in clients], "months": [], "dim": None}
+        lead = []
+        want_over = re.search(r"\boverdue\b", raw)
+        want_week = re.search(r"\b(next (?:7|seven) days?|in 7 days?|7 days?|this week)\b", raw)
+        want_late = re.search(r"\b(due later|later)\b", raw)
+        if re.search(r"\b(which|who|kaun|most|highest|sabse)\b", raw) and not clients and rows_c:
+            key = "Overdue pcs" if want_over else "Pending pcs"
+            i = _col(cols_c, key)
+            data = [r for r in rows_c if not SPECIAL.match(str(r[0]))]
+            if i is not None and data:
+                top = max(data, key=lambda r: r[i] or 0)
+                lines = [f"**{top[0]}** has the most {key.lower()} in expected deliveries: **{fmt.fmt_int(top[i])} pcs** "
+                         f"({fmt.fmt_int(top[i])} of {fmt.fmt_int(sum(r[i] or 0 for r in data))})."]
+                lines += [f"• {r[0]}: {fmt.fmt_int(r[i])} pcs" for r in sorted(data, key=lambda r: -(r[i] or 0))]
+                return "\n".join(lines), ctx
+        if want_week and "Due in 7 days" in ks:
+            lead.append(f"Due in the next 7 days ({who}): **{_show(ks['Due in 7 days'])}** ({ks['Due in 7 days'].get('hint')}).")
+        elif overdue_designs and "Overdue" in ks:
+            lead.append(f"Overdue designs ({who}, 60-day delivery date passed): **{(ks['Overdue'].get('hint') or '').split(' ')[0]} designs** "
+                        f"= {_show(ks['Overdue'])}. (The Production page's Overdue pcs counts a different date.)")
+        elif want_over and "Overdue" in ks:
+            lead.append(f"Overdue ({who}, delivery date passed): **{_show(ks['Overdue'])}** ({ks['Overdue'].get('hint')}) "
+                        f"of {_show(ks['Pending'])} pending.")
+        elif want_late and "Due later" in ks:
+            lead.append(f"Due later ({who}): **{_show(ks['Due later'])}** ({ks['Due later'].get('hint')}).")
+        lines = [f"**Expected deliveries** ({who}) · pending pcs by the 60-day delivery date"] + lead
+        if not lead:
+            lines += [f"• {k['label']}: **{_show(k)}**" + (f" ({k['hint']})" if k.get("hint") else "") for k in ks.values()]
+        else:
+            rows_c = []
+        if months and rows_m:
+            lines = [lines[0]]
+            rows_m = [r for r in rows_m if r[0] in months]
+            rows_c = []
+            if not rows_m:
+                return (f"There are no expected deliveries in {' and '.join(months)} (the delivery dates run "
+                        f"{d.get('today')} onward).", ctx)
+        if rows_m and not (lead and not months):
+            lines += ["| Delivery month | Designs | Pending pcs | Overdue pcs |", "|---|---|---|---|"]
+            for r in rows_m:
+                lines.append(f"| {r[0]} | {fmt.fmt_int(r[1])} | {fmt.fmt_int(r[2])} | {fmt.fmt_int(r[3])} |")
+        if rows_c and not clients:
+            lines += ["| Client | Designs | Pending pcs | Overdue pcs | Oldest delivery date |", "|---|---|---|---|---|"]
+            lines += [f"| {r[0]} | {fmt.fmt_int(r[1])} | {fmt.fmt_int(r[2])} | {fmt.fmt_int(r[3])} | {r[4] or '—'} |"
+                      for r in rows_c]
+        lines.append(f"As of {d.get('today')}: Overdue = delivery date before today. Pending pcs are the Clients "
+                     "page's Pending (sheet column AU).")
+        return "\n".join(lines), ctx

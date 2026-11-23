@@ -36,14 +36,17 @@ PAGES: dict[str, Page] = {p.key: p for p in [
          "Sample status: approved, rejected, on hold and in process, with approval and rejection rates, by month, "
          "designer and sampling vendor.",
          {"month": "month", "designer": "designer", "vendor": "vendor"}, 4),
-    Page("target", "Designer Order Target", "/target", ("target page", "revenue page", "target and revenue", "designer order target"),
+    Page("target", "Designer Order Target", "/target", ("target page", "revenue page", "target and revenue", "target & revenue", "designer order target",
+                                                        "order target page"),
          "The yearly NEW-order target against what is achieved, plus NEW and REPEAT revenue by month, designer, "
-         "item and who ordered.",
+         "item and who ordered. (Page name before the rename: Target & revenue.)",
          {"month": "month", "designer": "designer", "item": "category", "order_by": "client"}, 5),
     Page("designer", "Designers", "/designers", ("designers page", "designer page", "designer dashboard"),
          "Order volume per designer: new and repeat pcs, share of total, design count, and pcs by category.",
          {"month": "month", "designer": "designer"}, 6),
-    Page("client", "Clients Order Status", "/clients", ("clients page", "client page", "client dashboard", "clients order status", "client order status"),
+    Page("client", "Clients Order Status", "/clients", ("clients page", "client page", "client dashboard", "clients order status", "client order status",
+                                                  "fw orders", "fw order", "fw order's", "expected deliveries",
+                                                  "expected delivery", "delivery by month"),
          "Orders per client: order quantity, in production, received and pending pcs by month and category.",
          {"month": "month", "client": "client", "category": "category"}, 7),
     Page("flo-future", "FLO Future", "/flo-future",
@@ -61,6 +64,14 @@ PAGES: dict[str, Page] = {p.key: p for p in [
          "per-piece rates, the cheapest vendor for each fabric category, vendor averages (0 and blank rates left "
          "out) and how much dearer each offering is than the cheapest.",
          {"vendor": "vendor", "fabric": "fabric"}, 10),
+    Page("in-out-sale", "In/Out Sale", "/in-out-sale",
+         ("in out sale", "in/out sale", "in-out-sale", "inout sale", "sale page", "sales page", "net sale",
+          "sale pcs", "sale pieces", "incoming pcs", "incoming pieces", "incoming"),
+         "Sale and incoming pieces from the IN/OUT/SALE sheet (2026-27 tab): this year against last year (sale pcs, "
+         "sale amount, net sale, net sale per pc), the order -> production -> incoming -> sale flow per month, "
+         "fabricator-wise incoming pieces (In-house or Outsource) and the pieces promised for a month against what "
+         "came in.",
+         {"month": "month", "fabricator": "fabricator"}, 11),
     Page("overview", "Overview", "/", ("overview", "home page", "summary page", "main page"),
          "A summary of every sheet: orders, fabricator stock, fabric POs and samples, plus the alerts that need "
          "attention.",
@@ -68,7 +79,7 @@ PAGES: dict[str, Page] = {p.key: p for p in [
 ]}
 
 # Pages added after the original dashboard (the chatbot can summarise "the new sections").
-NEW_PAGES = ("flo-future", "vendor-rate")
+NEW_PAGES = ("flo-future", "vendor-rate", "in-out-sale")
 
 # Option lists in the API -> entity type. Other option lists (status, order type, risk...) are not used as names.
 OPTION_TYPES = {"designer": "designer", "client": "client", "order_by": "client", "vendor": "vendor",

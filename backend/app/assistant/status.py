@@ -56,7 +56,7 @@ _BOTH_PAGES = re.compile(r"\b(both pages|both the pages|dono page\w*|dono pages?
 # words that name another figure: leave those questions to the other answers
 _OTHER = re.compile(r"\b(po|pos|fpo|fabric|mtr|meters?|revenue|sales|sale|vendors?|rates?|overdue|delay\w*|late|"
                     r"approved|rejected|samples page|stock|fabricators?|clients?|orders?|designs?|items?|due|"
-                    r"visits?|meetings?|outsource)\b")
+                    r"visits?|meetings?|outsource|incoming|came|sale|sold|net)\b")
 _RANK = re.compile(r"\b(which|who|whose|highest|lowest|most|least|top|bottom|kaun|kiska|kiske|sabse|rank\w*|"
                    r"each|every|har|all designers|sab designers)\b")
 _COMPARE_M = re.compile(r"\b(vs|versus)\b")
@@ -145,6 +145,8 @@ class StatusAnalyst:
 
     def parse(self, q, ctx: dict | None, history: list[dict], vocab) -> Ask | None:
         t = norm(q.text)
+        if re.search(r"\b(came|incoming|sold|sale|net sale)\b", t):
+            return None                              # In/Out Sale figures
         sctx = self._base(ctx)
         designers = [e for e in q.entities if e.type == "designer"]
         if any(e.type not in ("designer", "month") for e in q.entities):

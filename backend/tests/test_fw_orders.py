@@ -88,3 +88,27 @@ def test_only_april_onwards_is_shown():
     d = fwo.fw_orders_dashboard(fwo.parse_fw_orders(g))
     assert d["chart"]["categories"] == ["May-26", "Jun-26"]
     assert d["table"]["rows"][-1][:2] == ["TOTAL", 48620 + 97365] and d["checks"] == []
+
+
+# The live DASHBOARD tab: other tables on the same rows (their MONTH header comes first), month cells that are real
+# dates (read as serial numbers) and a TOTAL line labelled "TOTAL".
+LIVE = [
+    ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "FW ORDER'S", "", "", "", ""],
+    ["MONTH", "ORDER QTY", "IN PRODUCTION", "RECEIVED", ""] + [""] * 13 +
+    ["MONTH", "ORDER \nPC'S", "DISPATCHED PC'S", "PENDING PC'S", "OVERALL DISPATCHED PC'S"],
+    [46138, 1, 1, 1, ""] + [""] * 13 + [46082, 97365, 87965, 9400, 26027],      # Mar-2026 | Apr-2026 (other table)
+    [46168, 1, 1, 1, ""] + [""] * 13 + [46138, 54520, 44620, 9900, 39308],      # Apr-2026
+    [46199, 1, 1, 1, ""] + [""] * 13 + [46168, 37980, 29049, 9171, 41681],      # May-2026
+    [46229, 1, 1, 1, ""] + [""] * 13 + ["TOTAL", 189865, 161634, 28471, 107016],
+    ["TOTAL", 4, 4, 4, ""] + [""] * 13 + [None, None, None, None, None],
+]
+
+
+def test_live_layout_reads_its_own_month_column_and_serial_dates():
+    p = fwo.parse_fw_orders(LIVE)
+    assert [r["month"] for r in p["rows"]] == ["Mar-2026", "Apr-2026", "May-2026"]
+    assert p["sheet_total"]["order"] == 189865
+    d = fwo.fw_orders_dashboard(p)
+    assert [r[0] for r in d["table"]["rows"]] == ["Apr-2026", "May-2026", "TOTAL"]     # March is before April
+    assert d["totals"]["order"] == 54520 + 37980 and d["checks"] == []
+    assert d["chart"]["categories"] == ["Apr-26", "May-26"]

@@ -528,6 +528,11 @@ class Candidate:
         return fmt.value(self.value, self.fmt, self.unit)
 
 
+_ALIAS_TO = {"target revenue": "designer order target", "target and revenue": "designer order target",
+             "in and out sale": "in out sale", "in out and sale": "in out sale", "in out sale": "in out sale"}
+_PAGE_ALIASES = re.compile(r"\btarget\s*(?:&|and)\s*revenue\b|\bin\s*(?:&|and)\s*out\s*(?:(?:&|and)\s*)?sale\b", re.I)
+
+
 class Assistant:
     """Answers one question at a time. ``fetch(page, filters)`` returns that dashboard page's API payload."""
 
@@ -545,6 +550,7 @@ class Assistant:
         question = (question or "").strip()[:MAX_QUESTION]
         if not question:
             return self._reply("Please type a question about the dashboard.", understood=False)
+        question = _PAGE_ALIASES.sub(lambda m: _ALIAS_TO[re.sub(r"\W+", " ", m.group(0).lower()).strip()], question)
         snap = Snapshot(self.fetch)
         vocab = Vocabulary(snap)
         if len(vocab.errors) == len(PAGES):
@@ -559,7 +565,11 @@ class Assistant:
             whole_status = self._status_ask(question, [], vocab, snap)[1]
         except (DataUnavailable, KeyError):
             whole_status = None
-        parts = [question] if whole_status else self._plan(question, vocab)
+        flow = re.search(r"sent to production|pieces under production", question, re.I) and \
+            re.search(r"\b(sale|incoming)\b", question, re.I) or \
+            (re.search(r"\bpromis\w*\b", question, re.I) and re.search(r"\b(came|come|incoming|aaya|aaye)\b", question, re.I)
+             and not re.search(r"\b(samples?|items?|designers?)\b", question, re.I))
+        parts = [question] if (whole_status or flow) else self._plan(question, vocab)
         if len(parts) > 1:
             return self._multi(question, parts, context, history, snap, vocab)
         return self._one(question, context, history, snap, vocab)
@@ -933,6 +943,9 @@ class Assistant:
                     data = None
                 if data:
                     for k in kpi_list(data):
+                        if k.get("_group") == "delivery60" and not (
+                                re.search(r"\b(deliver\w*|due)\b", norm(q.text)) or "client" in q.explicit):
+                            continue            # delivery KPIs share names with Production's ("Overdue")
                         if f and isinstance(k.get("value"), str) and k.get("format") == "text" and \
                                 any(e.type != "month" for e in q.entities):
                             continue            # "Most pending" once a name is the filter only repeats that name
@@ -1463,6 +1476,9 @@ class Assistant:
             tries.append(lambda: pa.rate_list(q.text, ents))
         if not ents and (not others or others == ["target"]):
             tries.append(lambda: pa.target_achieved(q.text, q.months))
+        tries.append(lambda: pa.fw_orders(q.text, ents, q.months, q.explicit))
+        tries.append(lambda: pa.deliveries(q.text, ents, q.months, q.explicit))
+        tries.append(lambda: pa.in_out_sale(q.text, ents, q.months, q.explicit, self._ctx_in))
         if ents and (not others or others == ["fabricator"]):
             pnames = [e.raw["production"] for e in self._vocab.of_type("fabricator") if "production" in e.raw] \
                 if getattr(self, "_vocab", None) else []
