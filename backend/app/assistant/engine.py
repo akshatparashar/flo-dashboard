@@ -561,6 +561,9 @@ class Assistant:
             context = history[-1]
         self._ctx_in, self._history = context, history
         self._vocab = vocab
+        own = calc.given_calc(question)
+        if own:
+            return self._given(question, own, context, history, snap, vocab)
         try:
             whole_status = self._status_ask(question, [], vocab, snap)[1]
         except (DataUnavailable, KeyError):
@@ -569,10 +572,41 @@ class Assistant:
             re.search(r"\b(sale|incoming)\b", question, re.I) or \
             (re.search(r"\bpromis\w*\b", question, re.I) and re.search(r"\b(came|come|incoming|aaya|aaye)\b", question, re.I)
              and not re.search(r"\b(samples?|items?|designers?)\b", question, re.I))
-        parts = [question] if (whole_status or flow) else self._plan(question, vocab)
+        one_page = re.search(r"\bfw\s+orders?\b", question, re.I) or (
+            re.search(r"\bincoming\b", question, re.I) and re.search(r"(%|percent\w*|share|hissa)", question, re.I))
+        parts = [question] if (whole_status or flow or one_page) else self._plan(question, vocab)
         if len(parts) > 1:
             return self._multi(question, parts, context, history, snap, vocab)
         return self._one(question, context, history, snap, vocab)
+
+    def _given(self, question, text, context, history, snap, vocab) -> dict:
+        """The person's own numbers are used for the sum; the dashboard's figures are shown next to them when the same
+        question can be answered from the dashboard, so a typo is easy to spot."""
+        lines = [text, "These are the numbers from your message, not the dashboard's."]
+        vals = calc.given_numbers(question) or []
+        unit = next((u for _, _, u in vals if u and u != "%"), "")
+        people = [vocab.entities.get(("designer", name_key(lab))) for lab, _, _ in vals]
+        if unit in ("orders", "order", "designs", "design", "pcs", "pieces") and len(people) == 2 and all(people):
+            check = f"compare {people[0].display} and {people[1].display} {unit}"     # same figure, from the dashboard
+        else:
+            check = re.sub(r"\b(if|agar|suppose|assume)\b|₹?\d[\d,]*(?:\.\d+)?\s*(?:%|lakhs?|cr|crore|k)?", " ", question,
+                           flags=re.I)
+        try:
+            known = [lab for lab, _, _ in vals if any((t, name_key(lab)) in vocab.entities for t in
+                                                      ("designer", "client", "vendor", "fabricator", "category"))
+                     or re.fullmatch(r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*", lab, re.I)]
+            dash = None if len(known) < len(vals) else \
+                self._one(check, context, history, snap, vocab, polish=False)
+        except Exception:                        # the check is a bonus; never let it break the answer
+            dash = None
+        ok = dash and dash.get("understood") and dash.get("intent") in ("orders", "calc", "value", "compare", "status")
+        if ok and unit and unit.rstrip("s") not in dash["answer"].lower():
+            ok = False                           # a different figure (e.g. approval % for "orders") is no check at all
+        if ok:
+            lines.append("\n**For comparison, the dashboard shows:**\n" + dash["answer"])
+            key = next((k for k, p in PAGES.items() if p.path == dash.get("page")), None)
+            return self._reply("\n".join(lines), key, dash.get("context") or context, intent="calc")
+        return self._reply("\n".join(lines), None, context or {}, intent="calc")
 
     # -------------------------------------------------------------------------------------------- planning
     def _asks(self, part: str, vocab: Vocabulary) -> bool:
@@ -767,6 +801,8 @@ class Assistant:
             q.pages = [pin] + [p for p in q.pages if p != pin]
         self._range(q, vocab)
         self._ctx_in = context if isinstance(context, dict) else None
+        if planner.WHOLE_YEAR.search(question) and not q.months:      # "this year" / "FY 2026-27" / "year to date"
+            q.toks = [x for x in q.toks if x not in planner.YEAR_WORDS]
         self._inherit(q, context, vocab)
         if _DEVANAGARI.search(question):
             if self.interpreter is None:
@@ -875,7 +911,8 @@ class Assistant:
                 ctx.get("page") in PAGES and q.intent in ("value", "compare", "rank", "trend"):
             if ctx["page"] not in q.pages:
                 q.pages.append(ctx["page"])              # same section as before, unless the question names another
-        if (follow or _PRONOUN.search(t) or short) and q.metric_toks and not planner.GLOBAL.search(t):
+        ranking = TOP in q.toks or BOTTOM in q.toks or bool(re.search(r"\b(top|bottom)\s+\d", t))
+        if (follow or _PRONOUN.search(t) or short) and q.metric_toks and not planner.GLOBAL.search(t) and not ranking:
             if not q.entities:
                 for ref in ctx.get("entities") or []:
                     e = vocab.entities.get((ref.get("type"), name_key(str(ref.get("value", "")))))

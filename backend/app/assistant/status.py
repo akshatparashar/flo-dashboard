@@ -412,6 +412,12 @@ class StatusAnalyst:
                              "the percentage above counts designs, so the two differ.")
         lines.append(self._check(fig, designs=self._wants_designs(ask), pcs=not self._wants_designs(ask) or
                                  any(r in ask.roles for r in ("pending", "total", "completed", "completion"))))
+        if ask.months and page == "production":
+            lines.append("Note: on the Production page a month means the order's month (client order date). The "
+                         "dashboard has no completion date, so this counts orders from that month that are now finished, "
+                         "not designs finished during that month.")
+            if fig.get("d_total") == 0 or fig.get("total") == 0:
+                lines.append(f"{who} has no Production rows for {' and '.join(ask.months)}.")
         if ask.months and page == "flo-future":
             lines.append(f"Note: FLO Future only holds {fig['period']}; the month you asked for doesn't apply to it.")
         return "\n".join(x for x in lines if x)

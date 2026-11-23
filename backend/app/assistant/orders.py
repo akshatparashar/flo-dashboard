@@ -21,6 +21,8 @@ from . import planner
 from .text import name_key, norm
 
 ORDER_W = re.compile(r"\b(orders?|ordr|designs?|design count|volume)\b")
+TOPN_W = re.compile(r"\b(?:top|bottom|best|worst|pehle|first)\s+(\d{1,2})\b|\b(\d{1,2})\s+(?:best|top)\b", re.I)
+WITH_W = re.compile(r"\b(with|saath|sath|vs|versus|against|se)\b")
 ZERO_W = re.compile(r"\b(zero|0|no|none|without|nahi|nil|koi nahi)\b")
 REPEAT_W = re.compile(r"\b(repeat\w*|rpt)\b")
 NEW_W = re.compile(r"\bnew\b")
@@ -88,6 +90,7 @@ class Spec:
     ascending: bool = False
     prior: list = field(default_factory=list)     # months already talked about in this conversation
     pct_first: bool = False                     # "what is the percentage decrease" -> lead with the percentage
+    top: int = 5                                # "top 3 designers": how many to list
     assumed: bool = False                       # no figure was named: orders were assumed (and the answer says so)
 
 
@@ -117,18 +120,20 @@ class OrderAnalyst:
         if not has_order and len(designers) >= 2 and COMPARE_W.search(t) and not OTHER_METRIC.search(t) and \
                 not calc.GROWTH.search(t) and not (isinstance(ctx, dict) and ctx.get("status")):
             has_order, assumed = True, not octx
+        whole_year = bool(planner.WHOLE_YEAR.search(raw))
         if not has_order:
             # "and November?", "how much decrease?", "what is the percentage?" after an order answer
             if not octx or OTHER_METRIC.search(t) or len(q.toks) > 8:
                 return None
-            if not (FOLLOW_OK.search(raw) or q.months or designers):
+            if not (FOLLOW_OK.search(raw) or q.months or designers or whole_year):
                 return None
-            if not (q.months or designers or growth or pct):
+            if not (q.months or designers or growth or pct or whole_year):
                 return None
             follow = True
         elif OTHER_METRIC.search(t):
             return None
-        elif octx and not designers and octx.get("designers") and not GLOBAL_W.search(t) and (
+        elif octx and not designers and octx.get("designers") and not GLOBAL_W.search(t) and \
+                not TOPN_W.search(raw) and not (RANK_W.search(t) and re.search(r"\bdesigners?\b|\bcustomers?\b", raw)) and (
                 len(q.toks) <= 5 or PRONOUN_W.search(t)):
             # "How many are repeat orders?" right after "Ayushi's orders" is still about Ayushi
             designers = self._remembered(octx, vocab)
@@ -141,11 +146,15 @@ class OrderAnalyst:
         noun = "designs" if DESIGN_W.search(t) else "orders"
         months = sorted(set(q.months), key=fy_months.index)
         if follow:
+            if designers and (COMPARE_W.search(t) or WITH_W.search(raw) or re.search(r"\b(her|him|his|them|uska|uski|uske|unka|unki|iska|inka|dono|both)\b", raw)) and octx.get("designers"):
+                keep = self._remembered(octx, vocab)
+                seen = {e.key for e in designers}
+                designers = [e for e in keep if e.key not in seen] + designers
             designers = designers or self._remembered(octx, vocab)
             kind = kind or octx.get("kind")
             unit = octx.get("unit", unit) if not PCS_W.search(t) else unit
             noun = octx.get("noun", noun)
-            if not months and not (growth or pct):
+            if not months and not (growth or pct) and not whole_year:
                 months = [m for m in (ctx.get("months") or []) if m in fy_months]     # "and for AYUSHI?" - same period
             if growth or pct:
                 seen = [m for m in octx.get("months_seen", []) if m in fy_months]
@@ -171,8 +180,10 @@ class OrderAnalyst:
             spec.mode = "zero"
         elif growth or (COMPARE_W.search(t) and two_months) or (follow and pct):
             spec.mode = "period"
-        elif RANK_W.search(t) and WHO_W.search(t) and not designers:
-            spec.mode, spec.ascending = "rank", bool(LOW_W.search(t))
+        elif (RANK_W.search(t) or TOPN_W.search(raw)) and (WHO_W.search(t) or TOPN_W.search(raw)) and not designers:
+            spec.mode, spec.ascending = "rank", bool(LOW_W.search(t) or re.search(r"\b(bottom|worst)\b", raw))
+            mn = TOPN_W.search(raw)
+            spec.top = int(mn.group(1) or mn.group(2)) if mn else 5
         elif len(designers) >= 2 or (COMPARE_W.search(t) and designers and wise):
             spec.mode = "compare" if len(designers) >= 2 else "table"
         elif wise and not designers and (COMPARE_W.search(t) or re.search(r"\b(wise|each|every|har|sabhi|all|"
@@ -349,9 +360,9 @@ class OrderAnalyst:
         if by_pcs:
             label = {"NEW": "new order", "REPEAT": "repeat order"}.get(kind or "", "total order")
             lines = [f"**{best[0]}** has the {adj} {label} volume{self._in(spec)}: **{n(best[1].pcs)} pcs** "
-                     f"({plural(best[1].designs, 'orders')}).", "", f"Top {min(5, len(items))} by {label} volume (pcs):"]
+                     f"({plural(best[1].designs, 'orders')}).", "", f"{'Bottom' if spec.ascending else 'Top'} {min(spec.top, len(items))} by {label} volume (pcs):"]
             lines += [f"{i}. {name}: {n(r.pcs)} pcs ({plural(r.designs, 'orders')})" for i, (name, r) in
-                      enumerate(items[:5], 1)]
+                      enumerate(items[:spec.top], 1)]
             return "\n".join(lines), self._seen(spec)
         if len(tied) > 1:
             lead = (f"{', '.join('**' + i[0] + '**' for i in tied)} are tied for the {adj} number of {word}"
@@ -359,8 +370,10 @@ class OrderAnalyst:
         else:
             lead = (f"**{best[0]}** has the {adj} number of {word}{self._in(spec)}: **{n(best[1].designs)}** "
                     f"({n(best[1].pcs)} pcs).")
-        lines = [lead, "", f"Top {min(5, len(items))} by {word}:"]
-        lines += [f"• {name}: {n(r.designs)} orders ({n(r.pcs)} pcs)" for name, r in items[:5]]
+        lines = [lead, "", f"{'Bottom' if spec.ascending else 'Top'} {min(spec.top, len(items))} by {word}:"]
+        lines += [f"{i}. {name}: {n(r.designs)} orders ({n(r.pcs)} pcs)" for i, (name, r) in enumerate(items[:spec.top], 1)]
+        if len(items) < spec.top:
+            lines.append(f"Only {len(items)} designers have {word}{self._in(spec)}.")
         return "\n".join(lines), self._seen(spec)
 
     def _table(self, spec: Spec, text: str):

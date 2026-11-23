@@ -98,3 +98,12 @@ def previous_window(ctx_months: list[str], text: str, fy: list[str]) -> list[str
     if last == 0:
         return None
     return [fy[last - 1], fy[last]]
+
+
+# "this year", "FY 2026-27", "year to date", "all months": the whole financial year so far, whatever months were
+# talked about before (a narrower period has to be named in the question itself).
+WHOLE_YEAR = re.compile(r"\b(this year'?s?|current year|this fy|fy\s*20\d\d(?:\s*-\s*\d\d)?|20\d\d\s*-\s*\d\d|"
+                        r"financial year|year to date|ytd|all months|all available months|whole year|full year|"
+                        r"entire year|year so far|poore saal|poora saal|is saal|saal bhar|since april)\b", re.I)
+YEAR_WORDS = {"year", "date", "fy", "ytd", "financial", "2026-27", "current", "whole", "entire", "full", "saal", "poora",
+              "poore", "bhar", "is", "this", "all", "available", "months"}
