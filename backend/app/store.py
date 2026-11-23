@@ -24,12 +24,13 @@ from .dashboards import flo_future as ffu
 from .dashboards import master as mst
 from .dashboards import samples as smp
 from .dashboards import fw_orders as fwo
+from .dashboards import in_out_sale as ios
 from .dashboards import target as tgt
 from .dashboards import vendor_rate as vrt
 from .sources.google import SheetAccessError
 
 KINDS = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future",
-         "vendor_rate"]
+         "vendor_rate", "in_out_sale"]
 # Kinds whose numbers depend on today's date (overdue / due soon), so their parsed copy is redone each day.
 DATED_KINDS = {"fabric_po", "flo_future"}
 FLO_FUTURE_PARTS = ("samples", "visits", "outsource")
@@ -204,6 +205,8 @@ class DataStore:
             if err:
                 raise SheetAccessError(err)
             return d
+        if kind == "in_out_sale":
+            return ios.parse_in_out_sale(entries[0].value)
         if kind == "fw_orders":
             return fwo.parse_fw_orders(entries[0].value)
         if kind == "sample_summary":

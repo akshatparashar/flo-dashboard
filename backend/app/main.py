@@ -30,6 +30,7 @@ from .dashboards import fabric_po as fpo
 from .dashboards import fabricator as fab
 from .dashboards import flo_future as ffu
 from .dashboards import fw_orders as fwo
+from .dashboards import in_out_sale as ios
 from .dashboards import master as mst
 from .dashboards import overview as ovw
 from .dashboards import samples as smp
@@ -284,6 +285,16 @@ def vendor_rate(vendor: Multi = [], fabric: Multi = [], width: str = "", q: Anno
     return _envelope(vrt.vendor_rate_dashboard(_need(ds), f), ds)
 
 
+@app.get("/api/in-out-sale", dependencies=[Depends(require_auth)])
+def in_out_sale(month: Multi = [], fabricator: Multi = [], type: Multi = []):
+    """In/Out Sale: this year vs last year (sale pcs, sale amount, net sale), the in -> out flow per month and the
+    fabricator-wise incoming pieces. `month` applies to everything; `fabricator` and `type` (In-house / Outsource)
+    apply to the fabricator part."""
+    ds = get_store().dataset("in_out_sale")
+    f = {"month": _clean(month), "fabricator": _clean(fabricator), "type": _clean(type)}
+    return _envelope(ios.in_out_sale_dashboard(_need(ds), f), ds)
+
+
 @app.get("/api/context", dependencies=[Depends(require_auth)])
 def context(month: Multi = []):
     """Compact, text-friendly snapshot of every dashboard for the AI assistant (no tables, no chart series)."""
@@ -291,7 +302,7 @@ def context(month: Multi = []):
     ds = store.datasets(KINDS)
     months = _clean(month)
     sources = {k: (v.data, v.error if v.data is None else None) for k, v in ds.items()
-               if k not in ("target_revenue", "flo_future", "vendor_rate")}
+               if k not in ("target_revenue", "flo_future", "vendor_rate", "in_out_sale")}
     ov = ovw.overview_dashboard(sources, months)
     out = {"alerts": [{"kind": a["kind"], "text": a["text"]} for a in ov["alerts"]],
            "errors": [e["text"] for e in ov["errors"]], "sections": {}}

@@ -64,6 +64,15 @@ SHEET_REGISTRY: dict[str, dict] = {
         "visits_tabs": ["Visits & Meetings"],
         "outsource_tabs": ["Outsource Projects", "Outsource"],
     },
+    "in_out_sale": {
+        "name": "In/Out Sale",
+        # "IN/OUT/SALE 2026-27": the "2026-27" tab (month table this year vs last year + fabricator-wise incoming).
+        # A new year's copy is picked up by setting IN_OUT_SALE_SHEET_ID.
+        "id": "1A6I90-kbzHkDRRcGspnln9aUmWm-FXD9EKNyKnudMzg",
+        "id_env": "IN_OUT_SALE_SHEET_ID",
+        "source_tabs": ["2026-27"],
+        "name_regex": r"^\s*20\d\d\s*-\s*\d\d\s*$",
+    },
     "vendor_rate": {
         "name": "Vendor Rate",
         # FABRIC PO 11: "Rate_Data" (the tidy rate list the sheet's own Vendor Rate Dashboard reads) and

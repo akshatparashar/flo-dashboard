@@ -36,6 +36,8 @@ SHEET_TABS = {
 }
 FLO_FUTURE_ID = "1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw"
 VENDOR_RATE_ID = "1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg"
+IN_OUT_SALE_ID = "1A6I90-kbzHkDRRcGspnln9aUmWm-FXD9EKNyKnudMzg"
+SHEET_TABS[IN_OUT_SALE_ID] = [("ALL PRODUCTION", 30), ("2026-27", 31), ("fabricator targets monthly", 32)]
 SHEET_TABS[VENDOR_RATE_ID] = [("Vendor Rate Dashboard", 20), ("NEW RATE SHEET", 21), ("SAMPLE", 22), ("RV 1498", 23),
                               ("Rate_Data", 24)]
 EPOCH = date(1899, 12, 30)
@@ -102,6 +104,7 @@ class DemoSheetSource:
                 # own random stream, so adding this sheet leaves the other demo sheets' numbers unchanged
                 grids.update(self._flo_future(np.random.RandomState(self.seed + 7), now))
                 grids.update(self._vendor_rate(np.random.RandomState(self.seed + 11)))
+                grids.update(self._in_out_sale(np.random.RandomState(self.seed + 13), now))
                 self._grids, self._day = grids, now
             return self._grids
 
@@ -454,6 +457,86 @@ class DemoSheetSource:
                                                 ("PRODUCTION / DESIGNER MEETING", "AARTI"))])
         return {(sid, "Samples", False): [header] + rows, (sid, "Outsource Projects", False): outsource,
                 (sid, "Visits & Meetings", False): visits}
+
+    def _in_out_sale(self, rng, now):
+        """The "2026-27" tab of the IN/OUT/SALE sheet: a month table (this year vs last year) and fabricator-wise
+        incoming pieces in blocks, laid out like the real tab."""
+        live = (now.year - FY_START_YEAR) * 12 + now.month - 4          # months of the FY already running (0-based)
+        live = max(0, min(live, 11))
+        grid = [[""] * 26 for _ in range(75)]
+
+        def put(r, c, v):
+            grid[r - 1][col_to_idx(c)] = v
+
+        put(1, "A", "2026-27"); put(1, "I", "2025-26")
+        for c, h in zip("ABCDEFGHIJK", ["Sr. No.", "Month", "Order Pieces ", "Pieces Under Production", "Incoming Pieces",
+                                        "Sale pieces", "Sale Amount", "Net Sale", "Sale pieces", "Sale Amount",
+                                        "Net Sale"]):
+            put(2, c, h)
+        tot = [0.0] * 9
+        for i in range(12):
+            r = 3 + i
+            put(r, "A", i + 1)
+            put(r, "B", serial(date(FY_START_YEAR + (1 if i >= 9 else 0), (3 + i) % 12 + 1, 26 if i < 9 else 27)))
+            ly = int(rng.randint(11000, 28000)) if i < 8 else 0
+            vals = [0] * 9
+            if i <= live:
+                pcs = int(rng.randint(26000, 54000)) if i < live else int(rng.randint(9000, 30000))
+                price = float(rng.uniform(1000, 1300))
+                amount = round(pcs * price, 2)
+                vals = [int(rng.randint(5000, 56000)), int(rng.randint(3000, 80000)), int(pcs * rng.uniform(0.75, 1.2)),
+                        pcs, amount, round(amount * float(rng.uniform(0.86, 0.93)), 2)]
+                vals += [ly, round(ly * float(rng.uniform(1300, 1500)), 2), 0.0]
+                vals[8] = round(vals[7] * float(rng.uniform(0.82, 0.92)), 2)
+            if ly and i > live:
+                vals[6] = ly
+                vals[7] = round(ly * float(rng.uniform(1300, 1500)), 2)
+                vals[8] = round(vals[7] * 0.88, 2)
+            if any(vals):
+                for c, v in zip("CDEFGHIJK", vals):
+                    put(r, c, v)
+            tot = [a + b for a, b in zip(tot, vals)]
+        put(15, "A", "TOTAL")
+        for c, v in zip("CDEFGHIJK", tot):
+            put(15, c, v)
+        fabs = ["FUSION STUDIO", "TAANTAV", "ANWAR ZARI ART", "AMBRAEE", "AGAM", "PRATAP OVERSEAS", "RFS (outsource)",
+                "J AND S (outsource)"]
+        share = np.array([0.45, 0.17, 0.07, 0.09, 0.06, 0.05, 0.07, 0.04])
+        names = ["APRIL", "MAY", "JUNE", "JULY", "AUG.", "SEP.", "OCT.", "NOV."]
+        # block 1: April / May (with May's promise) / June (with June's promise); block 2: July..; later months below
+        month_total = [grid[2 + i][col_to_idx("E")] or 0 for i in range(12)]
+
+        def fab_values(m):
+            v = np.round(float(month_total[m]) * share * rng.uniform(0.8, 1.2, len(share)))
+            return [int(x) if m <= live else 0 for x in v]
+
+        def block(row, columns):
+            """columns: [(header, month index, kind)] from column B; kind = incoming | promised | pending."""
+            put(row, "A", "FABRICATOR'S")
+            put(row + 1, "A", "TOTAL")
+            for k, n in enumerate(fabs):
+                put(row + 2 + k, "A", n)
+            inc, prom = {}, []
+            for j, (h, m, kind) in enumerate(columns):
+                c = chr(66 + j)
+                put(row, c, h)
+                if kind == "incoming":
+                    inc[m] = col = fab_values(m)
+                elif kind == "promised":
+                    prom = col = [(int(round(v * 1.15, -3)) or 1000) if v else 0 for v in inc[m]]
+                else:
+                    col = [p - i for p, i in zip(prom, inc[m])]
+                put(row + 1, c, sum(col))
+                for k, v in enumerate(col):
+                    put(row + 2 + k, c, v)
+
+        block(17, [("APRIL INCOMING", 0, "incoming"), ("MAY INCOMING", 1, "incoming"), ("PROMISED", 1, "promised"),
+                   ("PENDING", 1, "pending"), ("JUNE INCOMING", 2, "incoming"), ("PROMISED", 2, "promised"),
+                   ("PENDING", 2, "pending")])
+        block(30, [("JULY INCOMING", 3, "incoming"), ("PROMISED", 3, "promised"), ("PENDING", 3, "pending"),
+                   ("AUG. INCOMING", 4, "incoming"), ("SEP. INCOMING", 5, "incoming")])
+        block(43, [("OCT. INCOMING", 6, "incoming"), ("NOV. INCOMING", 7, "incoming")])
+        return {(IN_OUT_SALE_ID, "2026-27", False): grid, (IN_OUT_SALE_ID, "2026-27", True): grid}
 
     def _vendor_rate(self, rng):
         """FABRIC PO 11 rate tabs with the real quirks: a 0 rate, a rate typed as text, a fabric with no rate, rates

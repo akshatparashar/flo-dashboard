@@ -1,4 +1,4 @@
-import { Building2, ClipboardCheck, Factory, IndianRupee, LayoutDashboard, Menu, Moon, Package, Palette, PanelLeftClose, PanelLeftOpen, RefreshCw, Scissors, Shirt, Sun, Target, X } from "lucide-react";
+import { ArrowLeftRight, Building2, ClipboardCheck, Factory, IndianRupee, LayoutDashboard, Menu, Moon, Package, Palette, PanelLeftClose, PanelLeftOpen, RefreshCw, Scissors, Shirt, Sun, Target, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useFetchingReporter, useRefreshAll } from "../../api/hooks";
@@ -14,6 +14,7 @@ export const NAV = [
     { to: "/fabricators", label: "Fabricators", icon: Scissors },
     { to: "/fabric-po", label: "Fabric PO", icon: Package },
     { to: "/vendor-rate", label: "Vendor Rate", icon: IndianRupee },
+    { to: "/in-out-sale", label: "In/Out Sale", icon: ArrowLeftRight },
   ] },
   { group: "Design and sales", items: [
     { to: "/designers", label: "Designers", icon: Palette },

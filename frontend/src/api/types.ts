@@ -374,3 +374,26 @@ export interface VendorRateData extends Envelope {
   sheet_tables?: { vendor: string; items: number; table: TableData }[];
   vendor_fabric?: { widths: string[]; data: Record<string, { categories: string[]; series: { name: string; values: (number | null)[]; best: boolean[] }[] }> };
 }
+
+export interface InOutSaleData extends Envelope {
+  empty?: boolean;
+  notices?: Notice[];
+  options: Options;
+  years: { this: string; last: string };
+  kpis: Kpi[];
+  summary: { months: number; sale_pcs: number; net_sale: number; sale_change_pct: number | null };
+  tables: { compare: TableData; flow: TableData; fabricators?: TableData; promises?: TableData };
+  charts: {
+    sale_pcs: SeriesChart;
+    net_sale: SeriesChart;
+    cumulative_net: SeriesChart;
+    flow: SeriesChart;
+    fab_share?: Slice[];
+    fab_split?: Slice[];
+    fab_heat?: { rows: string[]; columns: string[]; values: number[][] };
+    fab_months?: SeriesChart;
+    promise?: SeriesChart;
+  };
+  fabricators: { count: number; incoming?: number; top?: string; top_pct?: number; promised?: number; promise_pending?: number };
+  checks: Notice[];
+}
