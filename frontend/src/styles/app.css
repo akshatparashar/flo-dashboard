@@ -1997,3 +1997,77 @@ a.alert:hover {
     width: 100%;
   }
 }
+
+/* Running total chart (In/Out Sale) */
+.rt-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.rt-stats > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--well);
+}
+.rt-stats .rt-k {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.rt-stats .rt-k i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.rt-stats .rt-k i.dash {
+  background: none;
+  height: 0;
+  width: 14px;
+  border-radius: 0;
+  border-top: 2px dashed;
+}
+.rt-stats b {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rt-stats b em {
+  font-style: normal;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.rt-stats .up b em {
+  color: var(--pos);
+  background: color-mix(in srgb, var(--pos) 14%, transparent);
+}
+.rt-stats .down b em {
+  color: var(--neg);
+  background: color-mix(in srgb, var(--neg) 14%, transparent);
+}
+.rt-tag-text {
+  font-size: 11px;
+  font-weight: 600;
+  fill: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.rt .rt-dot {
+  transition: r 0.12s;
+}
+@media (max-width: 640px) {
+  .rt-stats {
+    grid-template-columns: 1fr;
+  }
+}

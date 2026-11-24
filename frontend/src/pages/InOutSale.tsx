@@ -2,8 +2,8 @@ import { useDashboard } from "../api/hooks";
 import type { InOutSaleData } from "../api/types";
 import { Bars } from "../components/charts/Bars";
 import { Legend } from "../components/charts/common";
-import { BarList, Heatmap, Split } from "../components/charts/Lists";
-import { Lines } from "../components/charts/Lines";
+import { Heatmap } from "../components/charts/Lists";
+import { RunningTotal } from "../components/charts/RunningTotal";
 import { DataTable } from "../components/DataTable";
 import { FilterBar, MonthFilter, MultiSelect } from "../components/Filters";
 import { Empty, KpiStrip, Notices, Panel, Section } from "../components/ui";
@@ -13,7 +13,7 @@ import { PageHead, PageState } from "./common";
 
 /* In / Out Sale: the "2026-27" tab of the IN/OUT/SALE sheet. This year against last year (sale pcs, sale amount,
    net sale), the flow order -> production -> incoming -> sale per month, and fabricator-wise incoming pieces with
-   the pcs each fabricator promised. Every figure comes from GET /api/in-out-sale (backend/app/dashboards/in_out_sale.py). */
+   the incoming pcs per fabricator. Every figure comes from GET /api/in-out-sale (backend/app/dashboards/in_out_sale.py). */
 const KEYS = ["month", "fabricator", "type"];
 const THIS = "var(--accent)";
 const LAST = "var(--series-pale)";
@@ -82,16 +82,13 @@ export default function InOutSale() {
                     </Panel>
                   </div>
                   <div className="span-12">
-                    <Panel title="Net sale, running total" sub="Month by month, added up" right={<Legend items={[{ name: ty, color: THIS, kind: "line" }, { name: ly, color: "var(--series-ref)", kind: "dash" }]} />}>
-                      <Lines
+                    <Panel title="Net sale, running total" sub="Month by month, added up · hover a month to compare the two years">
+                      <RunningTotal
                         categories={d.charts.cumulative_net.categories}
-                        series={[
-                          { name: ty, values: d.charts.cumulative_net.series[0].values, color: THIS, fill: true },
-                          { name: ly, values: d.charts.cumulative_net.series[1].values, color: "var(--series-ref)", dashed: true },
-                        ]}
-                        money
+                        thisYear={{ name: ty, values: d.charts.cumulative_net.series[0].values }}
+                        lastYear={{ name: ly, values: d.charts.cumulative_net.series[1].values }}
                         label="Running net sale, this year against last year"
-                        height={260}
+                        height={320}
                       />
                     </Panel>
                   </div>
@@ -124,23 +121,13 @@ export default function InOutSale() {
               >
                 {fab.count && heat && d.tables.fabricators ? (
                   <div className="grid">
-                    <div className="span-5">
-                      <Panel title="Share of incoming" sub={fab.top ? `${fab.top} brings in ${fab.top_pct}%` : undefined}>
-                        <BarList items={d.charts.fab_share ?? []} unit="pcs" max={12} label="Incoming pcs by fabricator" />
-                      </Panel>
-                    </div>
-                    <div className="span-7">
-                      <Panel title="In-house and outsource">
-                        <Split items={d.charts.fab_split ?? []} unit="pcs" label="Incoming pcs, in-house against outsource" colors={{ "In-house": "var(--accent)", Outsource: "var(--series-ref)" }} />
-                      </Panel>
-                      {d.charts.fab_months && (
-                        <div style={{ marginTop: 16 }}>
-                          <Panel title="Incoming by month" sub="Top fabricators, stacked" right={<Legend items={d.charts.fab_months.series.map((s) => ({ name: s.name, color: stackColors[s.name] }))} />}>
-                            <Bars data={d.charts.fab_months} stacked months unit="pcs" label="Incoming pcs by month and fabricator" colors={stackColors} height={250} />
-                          </Panel>
-                        </div>
-                      )}
-                    </div>
+                    {d.charts.fab_months && (
+                      <div className="span-12">
+                        <Panel title="Incoming by month" sub="Top fabricators, stacked" right={<Legend items={d.charts.fab_months.series.map((s) => ({ name: s.name, color: stackColors[s.name] }))} />}>
+                          <Bars data={d.charts.fab_months} stacked months unit="pcs" label="Incoming pcs by month and fabricator" colors={stackColors} height={270} />
+                        </Panel>
+                      </div>
+                    )}
                     <div className="span-12">
                       <Panel title="Incoming pcs, fabricator by month" sub="Darker = more">
                         <Heatmap rows={heat.rows} columns={heat.columns.map(shortMonth)} values={heat.values} label="Incoming pcs per fabricator per month" full />
@@ -156,25 +143,6 @@ export default function InOutSale() {
                   <Empty title="No fabricator rows match these filters" />
                 )}
               </Section>
-
-              {!!d.tables.promises?.rows.length && (
-                <Section title="Promised against delivered" sub={`${fmtInt(fab.promised ?? 0)} pcs promised · pending = promised − incoming (below zero means more than promised came)`}>
-                  <div className="grid">
-                    {d.charts.promise && (
-                      <div className="span-5">
-                        <Panel title="By month" right={<Legend items={[{ name: "Promised", color: "var(--series-ref)" }, { name: "Incoming", color: "var(--accent)" }]} />}>
-                          <Bars data={d.charts.promise} months unit="pcs" label="Promised against incoming pcs by month" colors={{ Promised: "var(--series-ref)", Incoming: "var(--accent)" }} height={270} />
-                        </Panel>
-                      </div>
-                    )}
-                    <div className={d.charts.promise ? "span-7" : "span-12"}>
-                      <Panel title="By fabricator" flush>
-                        <DataTable table={d.tables.promises} name="in_out_sale_promises" maxRows={14} titleCaseFirst={false} />
-                      </Panel>
-                    </div>
-                  </div>
-                </Section>
-              )}
 
               {!!d.checks.length && (
                 <Section title="Sheet checks" sub="Places where two tables of the sheet disagree. Fix them in the sheet; this list updates within a minute.">
