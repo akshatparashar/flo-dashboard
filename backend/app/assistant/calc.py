@@ -179,3 +179,103 @@ def detect(text: str) -> Spec | None:
     if AVG.search(t):
         return Spec("average")
     return None
+
+
+# ------------------------------------------------------------------------------------------------ numbers the person gives
+_MONTH_WORD = re.compile(r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*$", re.I)
+_GIVEN_DROP = {"if", "agar", "suppose", "assume", "let", "lets", "say", "maan", "lo", "has", "have", "had", "is", "are",
+               "was", "were", "ke", "ka", "ki", "ko", "hain", "hai", "tha", "the", "and", "aur", "with", "orders", "order",
+               "pcs", "pieces", "designs", "design", "but", "while", "then", "of", "in", "for", "me", "mein", "what",
+               "how", "much", "many", "kitna", "kitne", "kitni", "a", "an", "to", "total", "repeat", "new", "sale",
+               "sales", "revenue", "rs", "inr", "units", "qty", "quantity", "got", "did", "does", "do", "made", "kiye",
+               "kiya", "se", "vs", "versus", "compared", "compare", "it", "its", "this", "that", "month", "mahine",
+               "average", "avg", "mean", "ausat", "sum", "rate", "percent", "percentage", "value", "values", "numbers"}
+_UNIT_AFTER = re.compile(r"\s*(orders?|designs?|pcs|pieces|qty|units|mtr|cr|crore|lakh|lakhs|l)\b", re.I)
+_CHANGE_W = re.compile(r"\b(increase\w*|decrease\w*|growth|grew|change|changed|badh\w*|ghat\w*|decline\w*|drop\w*|"
+                       r"girawat|gir\w*)\b", re.I)
+_MORE_W = re.compile(r"\b(difference|diff|fark|farak|antar|gap|more|less|zyada|jyada|kam|higher|lower|compare|"
+                     r"comparison)\b", re.I)
+_SUM_W = re.compile(r"\b(total|sum|milake|mila ke|jod\w*|combined|together|altogether)\b", re.I)
+_AVG_W = re.compile(r"\b(average|avg|mean|ausat)\b", re.I)
+
+
+def given_numbers(text: str) -> list[tuple[str, float, str]] | None:
+    """Figures the person typed in ("Deepika has 120 orders and Keerti has 90") -> [(label, value, unit)], or None.
+    Month labels ("October-26"), years and "top 5" are not figures."""
+    clean = re.sub(r"\b([A-Za-z]+)-\d{2}\b", r"\1", text)
+    clean = re.sub(r"\b20\d\d\s*-\s*\d\d\b|\bfy\s*20\d\d\b|\b20\d\d\b", " ", clean, flags=re.I)
+    out, prev = [], 0
+    ft = re.search(r"\bfrom\s+₹?\d[\d,.]*\s*\w*\s+to\s+₹?\d", clean, re.I)      # "from 100,000 to 150,000"
+    for m in re.finditer(r"₹?\s*(\d[\d,]*(?:\.\d+)?)\s*(cr|crore|lakhs?|lacs?|k|%)?(?![\w])", clean, re.I):
+        before = clean[max(0, m.start() - 8):m.start()].lower()
+        if re.search(r"\b(top|bottom|last|first|pehle)\s*$", before):
+            prev = m.end()
+            continue
+        suffix = (m.group(2) or "").lower()
+        value = to_number(m.group(1), None if suffix == "%" else suffix)
+        words = [w for w in re.findall(r"[A-Za-z']+", clean[prev:m.start()]) if w.lower().strip("'s") not in _GIVEN_DROP
+                 and w.lower() not in _GIVEN_DROP]
+        words = [re.sub(r"'s$", "", w) for w in words]
+        label = words[-1] if words and _MONTH_WORD.match(words[-1]) else " ".join(words[-2:])
+        after = re.match(r"\s*(?:orders?|designs?|pcs|pieces|lakhs?|cr|crore|%)?\s*(?:for|of|in|ka|ke|ki)\s+([A-Z][A-Za-z]+|"
+                         r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)", clean[m.end():], re.I)
+        if after:
+            label = after.group(1)               # "57.4% for Keerti", "40 lakh in September": the name comes after
+        unit_m = _UNIT_AFTER.match(clean[m.end():])
+        unit = "%" if suffix == "%" else (unit_m.group(1).lower() if unit_m and unit_m.group(1).lower() not in
+                                          ("cr", "crore", "lakh", "lakhs", "l") else "")
+        if ft and len(out) < 2 and ft.start() <= m.start() <= ft.end() + 20:
+            label = "Before" if not out else "After"
+        out.append((label.title() if label else f"Value {len(out) + 1}", value, unit))
+        prev = m.end()
+    return out if len(out) >= 2 else None
+
+
+def given_calc(text: str) -> str | None:
+    """Works a calculation out from the person's own figures. None when the message isn't one."""
+    t = norm(text)
+    if _arithmetic(t) or _N_OF_NUMBERS.match(t):
+        return None                              # "54338 minus 50580" is plain arithmetic, handled elsewhere
+    vals = given_numbers(text)
+    if not vals:
+        return None
+    pct = bool(PCT_WORD.search(t)) or "%" in text
+    change, more, total, avg = _CHANGE_W.search(text), _MORE_W.search(text), _SUM_W.search(text), _AVG_W.search(text)
+    if not (pct or change or more or total or avg):
+        return None
+    unit = next((u for _, _, u in vals if u and u != "%"), "")
+    show = lambda v: f"{num(v)} {unit}".strip()
+    names = ", ".join(f"{lab} {show(v)}" for lab, v, _ in vals)
+    lines = [f"Using the numbers you gave: {names}."]
+    if avg and not (change or more):
+        a = sum(v for _, v, _ in vals) / len(vals)
+        lines.append(f"Average: **{show(a)}** ({' + '.join(num(v) for _, v, _ in vals)} = {num(sum(v for _, v, _ in vals))}; "
+                     f"÷ {len(vals)} = {num(a)}).")
+    elif total and not (change or more or pct):
+        s = sum(v for _, v, _ in vals)
+        lines.append(f"Total: **{show(s)}** ({' + '.join(num(v) for _, v, _ in vals)}).")
+    elif len(vals) == 2 and change:
+        (la, a, _), (lb, b, _) = vals
+        d = b - a
+        word = "increase" if d > 0 else "decrease" if d < 0 else "no change"
+        lines.append(f"Change from {la} to {lb}: **{'+' if d > 0 else '−' if d < 0 else ''}{show(abs(d))}** ({num(b)} − {num(a)}).")
+        if a:
+            lines.append(f"Percentage {word}: **{abs(d) / abs(a) * 100:.2f}%** ({num(abs(d))} ÷ {num(abs(a))} × 100).")
+        else:
+            lines.append(f"{la} is 0, so a percentage change can't be worked out.")
+    elif len(vals) == 2:
+        (la, a, _), (lb, b, _) = vals
+        if a == b:
+            lines.append(f"Both are the same ({show(a)}), so there is no difference.")
+        else:
+            (hl, h), (ll, lo) = ((la, a), (lb, b)) if a > b else ((lb, b), (la, a))
+            lines.append(f"Difference: **{show(h - lo)}** ({num(h)} − {num(lo)}); {hl} is higher.")
+            if lo:
+                lines.append(f"{hl} is **{(h - lo) / lo * 100:.2f}% more** than {ll} ({num(h - lo)} ÷ {num(lo)} × 100).")
+            if h:
+                lines.append(f"{ll} is **{(h - lo) / h * 100:.2f}% less** than {hl} ({num(h - lo)} ÷ {num(h)} × 100).")
+            if unit == "%" or all(u == "%" for _, _, u in vals):
+                lines.append(f"As percentages, the gap is **{h - lo:.2f} percentage points**.")
+    else:
+        return None
+    return "\n".join(lines)

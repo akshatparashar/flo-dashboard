@@ -93,11 +93,13 @@ def test_two_month_change_with_formula_and_follow_ups(client):
     assert f"{abs((y - x) / x * 100):.2f}%" in r4["answer"]
 
 
-def test_stated_numbers_are_checked_against_dashboard(client):
+def test_stated_numbers_are_used_and_the_dashboard_is_shown_beside_them(client):
+    # The person's own numbers drive the calculation; the dashboard's figures follow so a typo is easy to spot.
     months = fy_months(client)
-    name = busy_designer(client)[0]
+    name, rows = busy_designer(client)
     r = ask(client, f"Total designs for {name} in {months[0]} is 999999 and {months[1]} is 5. How much decrease?")
-    assert "you mentioned 999,999 and 5" in r["answer"]
+    assert "999,994" in r["answer"] and "100.00%" in r["answer"] and "numbers from your message" in r["answer"]
+    assert "the dashboard shows" in r["answer"]
 
 
 def test_hinglish(client):

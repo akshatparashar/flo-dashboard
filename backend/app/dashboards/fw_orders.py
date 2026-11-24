@@ -6,6 +6,7 @@ and its header row, never by fixed cell addresses. Shown on the Clients Order St
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -32,6 +33,17 @@ def _num(v) -> float:
         return 0.0
 
 
+def _month_text(v) -> str:
+    """A MONTH cell as "Apr-2026". The sheet holds real dates, which the API returns as serial numbers (46138), so
+    those are turned back into the month they stand for; text cells ("Apr-2026") are kept as they are."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and 20000 < v < 80000:
+        return (datetime(1899, 12, 30) + timedelta(days=float(v))).strftime("%b-%Y")
+    s = str(v).strip()
+    if re.fullmatch(r"\d{5}(\.0+)?", s) and 20000 < float(s) < 80000:
+        return _month_text(float(s))
+    return s
+
+
 def parse_fw_orders(grid):
     """Raw grid -> {"rows": [{month, order, dispatched, pending, overall}], "sheet_total": {...} | None}."""
     title = header = None
@@ -47,14 +59,22 @@ def parse_fw_orders(grid):
     if header is None:
         return {"rows": [], "sheet_total": None}
     hr, keys = header
-    at = {name: keys.index(want) for name, want in COLUMNS.items() if want in keys}
+    # Other tables sit on the same rows (their own MONTH / ORDER QTY headers come first), so every column is looked up
+    # from the title's column onwards.
+    c0 = title[1]
+    first = lambda pred: next((i for i, k in enumerate(keys) if i >= c0 and pred(k)), None)
+    at = {name: first(lambda k, w=want: k == w) for name, want in COLUMNS.items()}
+    at = {n: i for n, i in at.items() if i is not None}
     if "order" not in at:
-        at["order"] = next(i for i, k in enumerate(keys) if k.startswith("ORDER"))
+        at["order"] = first(lambda k: k.startswith("ORDER"))
     rows, total = [], None
     for row in grid[hr + 1:]:
-        cell = lambda n: row[at[n]] if n in at and at[n] < len(row) else ""
-        month = str(cell("month")).strip()
+        cell = lambda n: row[at[n]] if n in at and at[n] is not None and at[n] < len(row) else ""
+        month = _month_text(cell("month"))
         vals = {n: _num(cell(n)) for n in ("order", "dispatched", "pending", "overall")}
+        if norm_key(month).startswith("TOTAL"):
+            total = vals                # the sheet's own TOTAL line ("TOTAL" or no month) ends the table
+            break
         if not month:
             if any(vals.values()) and total is None:
                 total = vals            # the sheet's own TOTAL line has no month; it ends the table

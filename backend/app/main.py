@@ -328,7 +328,7 @@ def context(month: Multi = []):
 # ------------------------------------------------------------------------------------------------ assistant
 _ASSISTANT_PAGES = {"overview": overview, "designer": designer, "client": client, "production": production,
                     "samples": samples, "fabricator": fabricator, "fabric-po": fabric_po, "target": target,
-                    "flo-future": flo_future, "vendor-rate": vendor_rate}
+                    "flo-future": flo_future, "vendor-rate": vendor_rate, "in-out-sale": in_out_sale}
 
 
 def _assistant_fetch(page: str, filters: dict) -> dict:

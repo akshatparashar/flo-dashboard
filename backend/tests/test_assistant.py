@@ -257,7 +257,7 @@ def test_gemini_only_when_rules_fail(client):
     assert r["engine"] == "gemini" and kpi(client, "/api/fabric-po", "Total POs") in bold(r["answer"])
     question, catalog = fake.calls[0]
     sent = json.dumps(catalog, ensure_ascii=False)          # keep "≤" as text, not an escape code
-    assert "Total POs" in sent and not re.search(r"\d{3,}", sent.replace("-26", "").replace("-27", ""))
+    assert "Total POs" in sent and not re.search(r"\d{3,}", re.sub(r"20\d\d-\d\d", "", sent).replace("-26", "").replace("-27", ""))   # year labels ("2025-26") are not figures
 
 
 def test_gemini_bad_label_is_ignored(client):

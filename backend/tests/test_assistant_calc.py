@@ -248,7 +248,7 @@ def test_hindi_question_is_read_by_gemini_and_answered_by_the_rules(client):
     assert r["engine"] == "gemini" and r["intent"] == "calc"
     assert fmt.value(cur, "inr") in r["answer"] and fmt.value(base, "inr") in r["answer"]
     sent = [x[2] for x in fake.seen if x[0] == "interpret"][0]
-    assert not re.search(r"\d{4,}", str(sent).replace("-26", "").replace("-27", ""))        # labels only, no figures
+    assert not re.search(r"\d{4,}", re.sub(r"20\d\d-\d\d", "", str(sent)).replace("-26", "").replace("-27", ""))        # labels only, no figures
 
 
 def test_follow_up_context_reaches_gemini(client):
