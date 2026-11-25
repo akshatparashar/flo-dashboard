@@ -173,3 +173,14 @@ def test_api_route_and_overview(monkeypatch):
     assert any(a["area"] == "promises" for a in ov["alerts"])
     assert ov["sections"]["flo_future"]["kpis"][0]["value"] == kpis(body)["target"]
     assert store.status()["flo_future"]["tabs"] == ["Samples", "Visits & Meetings", "Outsource Projects"]
+
+
+def test_blank_qty_warning_names_the_item(parsed):
+    """Regression: the warning once printed '<bound method IndexOpsMixin.item ...>' instead of the item name."""
+    d = ff.flo_future_dashboard(parsed, {})
+    msg = next(c["text"] for c in d["checks"] if c["text"].startswith("Qty Promised is blank"))
+    assert "Madhubani Collection Co-ord (" in msg and "sheet row" in msg
+    assert "<" not in msg and "bound method" not in msg
+    # no warning anywhere in the payload may contain python object text
+    for c in d["checks"] + d["notices"]:
+        assert "<bound" not in c["text"] and "dtype" not in c["text"] and "Name:" not in c["text"]

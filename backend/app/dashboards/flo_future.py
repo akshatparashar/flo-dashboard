@@ -411,7 +411,7 @@ def checks(d):
     blank = d[d["qty_blank"]]
     if len(blank):
         out.append(notice(f"Qty Promised is blank for {len(blank)} item(s): "
-                          + ", ".join(f"{r.item} ({r.designer}, sheet row {i})" for i, r in blank.iterrows())
+                          + ", ".join(f"{r['item']} ({r['designer']}, sheet row {i})" for i, r in blank.iterrows())
                           + ". They count as 0 promised and 0 pending.", "warning"))
     k = d["item"].map(norm_key)
     dup = d.assign(k=k).groupby("k")["designer"].nunique()

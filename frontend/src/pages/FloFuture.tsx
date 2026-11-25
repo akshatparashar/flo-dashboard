@@ -129,6 +129,14 @@ export default function FloFuture() {
               )}
 
               {visits}
+
+              {!!d.checks?.length && (
+                <Section title="Sheet checks" sub="Things in the sheet that look wrong or are missing. Fix them in the sheet; this list updates within a minute.">
+                  <div data-reveal>
+                    <Notices items={d.checks} />
+                  </div>
+                </Section>
+              )}
             </>
           );
         }}
