@@ -13,7 +13,7 @@ from typing import Callable
 from . import fmt, planner
 from .text import norm
 
-SPECIAL = re.compile(r"^\(.*\)$|^(total|grand total)$", re.I)
+SPECIAL = re.compile(r"^\(.*\)$|^(total|grand total)$|^all over\b", re.I)    # "ALL OVER (SHEET)" is the sheet's own total line
 
 
 def _kpis(body: dict) -> list[dict]:
@@ -64,9 +64,9 @@ class PageAnswers:
 
     # ------------------------------------------------------------------------------------------------ summary
     SUMMARY = re.compile(r"\b(summary|summarise|summarize|overview|saar|saransh|snapshot|highlights|report|"
-                         r"performance)\b")
-    SUMMARY_SCOPE = re.compile(r"\b(dashboard|complete|overall|whole|full|entire|everything|sab|sabka|company|flo|"
-                               r"this month|is mahine|month|performance|business|aaj tak)\b")
+                         r"performance|everything|sab kuch|sabkuch)\b")
+    SUMMARY_SCOPE = re.compile(r"\b(dashboard|complete|overall|whole|full|entire|everything|sab|sabka|sabhi|saare|company|flo|"
+                               r"this month|is mahine|month|performance|business|aaj tak|pages?)\b")
 
     def summary(self, text: str, months: list[str]) -> tuple[str, dict] | None:
         t = norm(text)
@@ -86,11 +86,35 @@ class PageAnswers:
             lines += [f"• {k.get('label')}: **{_show(k)}**" for k in ks]
         if len(lines) == 1:
             return None
+        dtab = (sections.get("designers") or {}).get("table") or {}
+        dcols = [c["label"] if isinstance(c, dict) else str(c) for c in dtab.get("columns") or []]
+        dfmt = [(c.get("format") if isinstance(c, dict) else None) for c in dtab.get("columns") or []]
+        drows = [x for x in dtab.get("rows") or [] if not SPECIAL.match(str(x[0]))]
+        if dcols and drows:
+            lines.append("\n**Designers**")
+            lines += ["| " + " | ".join(dcols[:8]) + " |", "|" + "---|" * min(len(dcols), 8)]
+            for r in drows[:10]:
+                lines.append("| " + " | ".join(fmt.value(v, dfmt[i], "") if isinstance(v, (int, float)) else str(v)
+                                               for i, v in enumerate(r[:8])) + " |")
         alerts = [a for a in body.get("alerts") or [] if isinstance(a, dict)]
         if alerts:
             lines.append("\n**Needs attention**")
             lines += [f"• {a.get('title') or a.get('text') or a.get('message')}" for a in alerts[:6]
                       if a.get('title') or a.get('text') or a.get('message')]
+        if re.search(r"\b(sabhi|saare|sare|all|every|har|sab)\b.*\b(pages?|tabs?|sections?)\b|\b(pages?|tabs?)\b.*\b(all|every)\b",
+                     text.lower()):
+            lines.append("\n**Pages that are not on the Overview**")
+            for page, label in (("client", "Clients Order Status"), ("vendor-rate", "Vendor Rate"),
+                                ("in-out-sale", "In/Out Sale"), ("target", "Designer Order Target"),
+                                ("daily-delegation", "Daily Delegation")):
+                try:
+                    allowed = self.page_filters.get(page, {})
+                    ks = self._kpis_deep(self.fetch(page, {"month": list(months)} if months and "month" in allowed else {}))
+                except Exception:
+                    continue
+                if ks:
+                    lines.append(f"**{label}** - " + "; ".join(f"{k['label']} {_show(k)}" for _, k in ks[:5]))
+            lines.append("Ask for any page by name (for example \"Show the Vendor Rate page summary\") for its full summary.")
         if months:
             lines.append("FLO Future always shows the current month's promises, whatever month is picked.")
         ctx = {"page": "overview", "metric": None, "intent": "summary", "entities": [], "months": months, "dim": None}
@@ -893,3 +917,432 @@ class PageAnswers:
         lines.append("FLO Future's Done % is a different measure (promised samples completed) and isn't used here.")
         return "\n".join(lines), {"page": "target", "metric": "New Revenue", "intent": "rank", "entities": [],
                                   "months": [], "dim": "designer"}
+
+
+    # ------------------------------------------------------------------------------------------------ page summary
+    # For a page named on its own ("Show the Fabricators page summary"): its KPI cards and its main table, read from the
+    # page's own API, plus the definition notes that keep look-alike figures apart.
+    PAGE_TABLE = {"production": ("fabricators", "Pending with fabricators"), "fabricator": ("scorecard", "Fabricator scorecard"),
+                  "fabric-po": ("vendors", "Vendor scorecard"), "vendor-rate": ("benchmark", "Vendor benchmark"),
+                  "in-out-sale": ("flow", "Order, production, incoming and sale"), "designer": ("designers", "Designer table"),
+                  "client": ("monthly", "Month by month"), "samples": ("designers", "Designer scorecard"),
+                  "target": ("filtered.tables.designers", "Designer revenue"), "flo-future": ("designers", "Designer-wise table")}
+    PAGE_NOTES = {
+        "production": "Production pending pcs are order pcs still with fabricators (Master Sheet). They are not the "
+                      "Fabricators page's Remaining pcs (stock sheet) and not FLO Future's pending (promised samples).",
+        "fabricator": "These figures come from the Fabricator Report (stock sheet), not the Production page. Remaining pcs here "
+                      "and Production pending pcs are different measures.",
+        "fabric-po": "Fabric PO pending is in metres of fabric (mtr), never pcs. 'Total pcs' is the pcs the POs are for.",
+        "vendor-rate": "Rates are Rs per metre; per-piece items are shown apart.",
+        "in-out-sale": "Sale pcs, sale amount and net sale are company-wide - the sheet does not split them by fabricator or "
+                       "In-house/Outsource. Year-on-year uses the same months in both years.",
+        "designer": "Design Count = order lines with qty > 0 (Master Sheet). NEW and REPEAT are order types.",
+        "client": "Expected-delivery overdue (60-day delivery date) is a different calculation from Production's overdue pcs.",
+        "samples": "Samples are counted in pcs by status; Open pipeline = On hold + In process.",
+        "target": "The target is one company-wide yearly NEW-order target; there is no per-designer target.",
+        "flo-future": "FLO Future holds the current month's promises only, and is never added to Production figures.",
+    }
+
+    @staticmethod
+    def _kpis_deep(body: dict):
+        out = []
+
+        def walk(o, group):
+            if isinstance(o, dict):
+                if isinstance(o.get("kpis"), list):
+                    out.extend((group, k) for k in o["kpis"] if isinstance(k, dict) and k.get("label"))
+                for k, v in o.items():
+                    if k not in ("tables", "charts", "options", "meta", "vendor_cards", "sheet_tables", "compare", "quality",
+                                 "kpis", "fw_orders", "visits", "follow_up") and isinstance(v, dict):
+                        walk(v, k)
+        walk(body, "")
+        return out
+
+    def page_summary(self, page: str, months: list[str]):
+        if page == "overview":
+            return self.summary("dashboard summary", months)
+        if page == "daily-delegation":
+            return self.daily_delegation("daily delegation summary", [], months, ["daily-delegation"], None)
+        pg = self.labels.get(page, page)
+        allowed = self.page_filters.get(page, {})
+        f = {"month": list(months)} if months and "month" in allowed else {}
+        body = self.fetch(page, f)
+        ks = self._kpis_deep(body)
+        if not ks:
+            return None
+        period = " and ".join(months) if f else {"flo-future": "this month's promises", "vendor-rate": "current rate list"}.get(
+            page, "all months so far")
+        lines = [f"**{pg} page summary** · {period}"]
+        group = None
+        for g, k in ks:
+            if g != group and len({x[0] for x in ks}) > 1:
+                nice = {"tracker": "Yearly target (always the whole year)", "filtered": "Revenue (the filters apply)",
+                        "delivery60": "Expected deliveries (60-day delivery date)"}
+                lines.append(f"\n**{nice.get(g) or (g.replace('_', ' ').title() if g else 'Overall')}**")
+                group = g
+            hint = f" ({k['hint']})" if k.get("hint") else ""
+            lines.append(f"• {k['label']}: **{_show(k)}**{hint}")
+        spec = self.PAGE_TABLE.get(page)
+        if spec:
+            node = body
+            for part in spec[0].split(".") if "." in spec[0] else ["tables", spec[0]]:
+                node = (node or {}).get(part) if isinstance(node, dict) else None
+            cols = [c["label"] if isinstance(c, dict) else str(c) for c in (node or {}).get("columns") or []]
+            rows = (node or {}).get("rows") or []
+            if cols and rows:
+                keep = list(range(min(len(cols), 7)))
+                fmts = [(c.get("format") if isinstance(c, dict) else None) for c in node["columns"]]
+                lines += ["", f"**{spec[1]}**", "| " + " | ".join(cols[i] for i in keep) + " |", "|" + "---|" * len(keep)]
+                rows = [r for r in rows if not re.match(r"^all over\b", str(r[0]), re.I)]     # duplicate of TOTAL
+                for r in rows[:12]:
+                    lines.append("| " + " | ".join(fmt.value(r[i], fmts[i], "") if isinstance(r[i], (int, float)) else str(r[i])
+                                                   for i in keep) + " |")
+                if len(rows) > 12:
+                    lines.append(f"(first 12 of {len(rows)} rows)")
+        for ch in (body.get("checks") or []) + (body.get("notices") or []):
+            if isinstance(ch, dict) and ch.get("text") and ch.get("kind") in ("warning", "alert"):
+                if re.search(r"<bound method|<[A-Za-z_.]+ object at|dtype:|Name: \d+, dtype", ch["text"]):
+                    lines.append(f"A sheet check on the {pg} page could not be shown as readable text; open the page to see it.")
+                else:
+                    lines.append(f"Note from the page: {ch['text']}")
+        if months and not f:
+            lines.append(f"The {pg} page has no month filter, so the month you named isn't applied.")
+        lines.append(self.PAGE_NOTES.get(page, ""))
+        key = {"fabricator": "fabricator", "client": "client"}.get(page, page)
+        return "\n".join(x for x in lines if x is not None), {"page": key, "metric": None, "intent": "summary", "entities": [],
+                                                              "months": months if f else [], "dim": None}
+
+
+    # ------------------------------------------------------------------------------------------------ fabricator stock
+    STOCK_COLS = [("Pcs Under Production", r"under production|pcs in production|production pcs"), ("RCVD (Pcs)", r"received|rcvd"),
+                  ("Remaining (Pcs)", r"remaining|left to receive|baki"), ("Monthly Incoming (Pcs)", r"incoming"),
+                  ("Fabric Issue (mtr)", r"fabric issued|issued|issue\b|metres?|meters?|mtr"), ("RCVD %", r"received (rate|%)|rcvd %|received percent\w*")]
+
+    def fabricator_stock(self, text: str, entities, months: list[str], explicit: list[str]):
+        """Fabricator Report (stock sheet) figures per fabricator: ranking, comparison, the whole scorecard. Never the
+        Production page - 'pending' alone is left to the Production answer."""
+        raw = text.lower()
+        if not re.search(r"\bfabricators?\b|\bfabricator wise\b|\bkarigar\b|\bmonthly incoming\b", raw) and \
+                not any(e.type == "fabricator" for e in entities):
+            return None
+        wanted = [c for c, rx in self.STOCK_COLS if re.search(rx, raw)]
+        if not wanted or re.search(r"\b(production page|overdue|delay\w*|on[- ]?time|po|pos|fabric po|vendor|pending)\b", raw):
+            return None
+        if any(e.type not in ("fabricator", "month") for e in entities):
+            return None
+        fabs = [e for e in entities if e.type == "fabricator"]
+        f = {"month": list(months)} if months else {}
+        body = self.fetch("fabricator", f)
+        t = (body.get("tables") or {}).get("scorecard") or {}
+        cols = [c["label"] if isinstance(c, dict) else str(c) for c in t.get("columns") or []]
+        fm = [(c.get("format") if isinstance(c, dict) else None) for c in t.get("columns") or []]
+        rows = [r for r in t.get("rows") or [] if not SPECIAL.match(str(r[0]))]
+        if not rows or any(w not in cols for w in wanted):
+            return None
+        when = " and ".join(months) if months else "all months so far"
+        pick = lambda r, c: r[cols.index(c)] or 0
+        unit = lambda c: "pcs" if "(Pcs)" in c else "mtr" if "(mtr)" in c else ""
+        show = lambda r, c: fmt.value(r[cols.index(c)], fm[cols.index(c)], unit(c)) if r[cols.index(c)] is not None else "—"
+        ctx = {"page": "fabricator", "metric": wanted[0], "intent": "rank", "entities": [], "months": months, "dim": "fabricator"}
+        head = f"**Fabricators page (Fabricator Report - stock sheet)** · {when}"
+        if fabs:
+            names = {str(e.raw.get("fabricator") or e.display).upper() for e in fabs} | {e.display.upper() for e in fabs}
+            sel = [r for r in rows if str(r[0]).upper() in names]
+            if not sel:
+                return None
+            lines = [head, "| Fabricator | " + " | ".join(wanted) + " |", "|---|" + "---|" * len(wanted)]
+            lines += [f"| {r[0]} | " + " | ".join(show(r, c) for c in wanted) + " |" for r in sel]
+            if len(sel) == 2:
+                for c in wanted:
+                    a, b = sorted(sel, key=lambda r: -pick(r, c))
+                    if pick(a, c) != pick(b, c):
+                        pct = c == "RCVD %"
+                        diff = f"{pick(a, c) - pick(b, c):.1f} percentage points" if pct else f"{pick(a, c) - pick(b, c):,.0f}"
+                        lines.append(f"{c}: **{a[0]}** is higher by **{diff}** ({show(a, c)} vs {show(b, c)}).")
+            lines.append(self.PAGE_NOTES["fabricator"])
+            return "\n".join(lines), {**ctx, "entities": [{"type": "fabricator", "value": e.display} for e in fabs]}
+        key = wanted[0]
+        ordered = sorted(rows, key=lambda r: -pick(r, key))
+        low = re.search(r"\b(lowest|least|minimum|kam)\b", raw)
+        top = ordered[-1] if low else ordered[0]
+        lines = [head]
+        if re.search(r"\b(highest|lowest|most|least|top|which|kaun|sabse|max|min)\b", raw):
+            lines.append(f"**{top[0]}** has the {'lowest' if low else 'highest'} {key}: **{show(top, key)}**.")
+        lines += ["| Fabricator | " + " | ".join(wanted) + " |", "|---|" + "---|" * len(wanted)]
+        lines += [f"| {r[0]} | " + " | ".join(show(r, c) for c in wanted) + " |" for r in ordered]
+        tot = next((r for r in t.get("rows") or [] if str(r[0]).upper() == "TOTAL"), None)
+        if tot:
+            lines.append("| TOTAL | " + " | ".join(show(tot, c) for c in wanted) + " |")
+        lines.append(self.PAGE_NOTES["fabricator"])
+        return "\n".join(lines), ctx
+
+    # ------------------------------------------------------------------------------------------------ Daily Delegation
+    # Sir's day as a task list (sheet Sir_Daily_Delegation_Tracker, tab "Daily Schedule"). Everything here is counted in
+    # TASKS; "open for" is days since the task's date. People are the sheet's Responsible Person values, found from the
+    # page's own filter options (never a fixed list).
+    DELEG = re.compile(r"\b(delegat\w*|daily schedule|daily tasks?|tasks?|task list|responsible|awaiting (?:sir'?s? )?approval|"
+                       r"waiting for (?:sir|approval)|sir'?s? (?:day|schedule|approval)|kaam)\b")
+    DSTATUS = [("Awaiting Approval", r"awaiting|approval|approve|sign[- ]?off|waiting for sir"),
+               ("In Progress", r"in progress|inprogress|ongoing|chal raha|chalu|wip"),
+               ("On Hold", r"on hold|hold"),
+               ("Pending", r"pending|baki|baaki|not started|shuru nahi"),
+               ("Completed", r"completed|complete|done|finished|ho gaya|ho gaye|poora|pura|khatam")]
+    MONTHS3 = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", "jul": "Jul", "aug": "Aug",
+               "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
+
+    def _dd(self, f=None):
+        f = {k: v for k, v in (f or {}).items() if v}
+        return self.fetch("daily-delegation", f)
+
+    def _dd_people(self, text: str, options: list[str]) -> list[str]:
+        raw = text.lower()
+        found = []
+        for name in options:
+            low = name.lower()
+            first = low.split()[0]
+            if re.search(rf"\b{re.escape(low)}\b", raw) or (len(first) >= 4 and re.search(rf"\b{re.escape(first)}\b", raw)):
+                found.append(name)
+        # "monu" matches "Monu Sir" once; a bare title ("sir", "mam") is never a name; named order is kept
+        pos = lambda nm: min([m.start() for m in (re.search(rf"\b{re.escape(nm.lower())}\b", raw),
+                                                  re.search(rf"\b{re.escape(nm.lower().split()[0])}\b", raw)) if m] or [10**6])
+        return sorted(dict.fromkeys(found), key=pos)
+
+    def _dd_dates(self, text: str, options: list[str], today_label: str) -> tuple[list[str], str | None]:
+        raw = text.lower()
+        found, note = [], None
+        if re.search(r"\b(today|aaj)\b", raw):
+            if today_label in options:
+                found.append(today_label)
+            else:
+                note = f"No tasks are dated today ({today_label}); the sheet's dates are {', '.join(options)}."
+        for m in re.finditer(r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b", raw):
+            lab = next((o for o in options if o.lower().startswith(f"{int(m.group(1)):02d} {m.group(2)}")), None)
+            if lab:
+                found.append(lab)
+            else:
+                note = f"No tasks are dated {m.group(1)} {m.group(2).title()}; the sheet's dates are {', '.join(options)}."
+        return list(dict.fromkeys(found)), note
+
+    def daily_delegation(self, text: str, entities, months: list[str], explicit: list[str], ctx_in: dict | None = None):
+        raw = text.lower()
+        named = "daily-delegation" in explicit
+        base = self._dd()
+        opts = base.get("options") or {}
+        people_all = opts.get("person") or []
+        dctx = ctx_in.get("deleg") if isinstance(ctx_in, dict) and ctx_in.get("page") == "daily-delegation" else None
+        follow = bool(dctx) and len(raw.split()) <= 9
+        trigger = named or bool(self.DELEG.search(raw)) or (follow and (self._dd_people(raw, people_all) or any(
+            re.search(rx, raw) for _, rx in self.DSTATUS) or re.search(r"\b(compare|what about|and|aur|vs|now|ab)\b", raw)))
+        if not trigger:
+            return None
+        if base.get("empty") or "kpis" not in base:
+            return None
+        people = self._dd_people(raw, people_all)
+        statuses = [s for s, rx in self.DSTATUS if re.search(rx, raw)]
+        if "On Hold" in statuses and "In Progress" in statuses:
+            statuses.remove("On Hold")
+        want_open = bool(re.search(r"\b(open|baki|baaki|incomplete|unfinished|outstanding)\b", raw)) and "Completed" not in statuses
+        dates, date_note = self._dd_dates(raw, opts.get("date") or [], base.get("today", ""))
+        mq = re.search(r"\btasks?\s+(?:about|regarding|related to|on|containing|with)\s+([a-z0-9&\-\s]{3,40})$", raw.strip(" ?.!"))
+        q = mq.group(1).strip() if mq else ""
+        if q and any(q.lower() == p.lower() or q.lower() == p.lower().split()[0] for p in people_all):
+            q = ""                                       # "tasks with Monu Sir" names a person, not search text
+        if dctx and follow:                              # "What about Monu Sir?", "Now show pending", "Compare with Deepika"
+            if not people and not re.search(r"\b(all|everyone|sab|sabhi|overall|total|company)\b", raw):
+                people = list(dctx.get("person") or [])
+            elif people and re.search(r"\b(compare|with|vs|versus|aur|and|saath)\b", raw):
+                people = list(dict.fromkeys(list(dctx.get("person") or []) + people))
+            if not statuses and not want_open:
+                statuses = list(dctx.get("status") or [])
+            if not dates:
+                dates = list(dctx.get("date") or [])
+        explicit_statuses = list(statuses)
+        if want_open:
+            statuses = [s for s in (opts.get("status") or []) if s != "Completed"]
+        f = {"person": people, "status": statuses, "date": dates, "q": [q] if q else []}
+        body = self._dd(f)
+        mem = {"person": people, "status": statuses, "date": dates}
+        ctx = {"page": "daily-delegation", "metric": "Tasks", "intent": "value", "entities": [], "months": [], "dim": None,
+               "deleg": mem}
+        who = " and ".join(people) if people else "everyone"
+        scope = f"{who}" + (f" · {', '.join(statuses)}" if statuses else "") + (f" · {', '.join(dates)}" if dates else "") + \
+            (f" · text “{q}”" if q else "")
+        if body.get("no_match"):
+            return (f"No task matches these filters ({scope}). People in the sheet: {', '.join(people_all)}; dates: "
+                    f"{', '.join(opts.get('date') or [])}; statuses: {', '.join(opts.get('status') or [])}.", ctx)
+        k = {x["label"]: x for x in _kpis(body)}
+        sm = body.get("summary") or {}
+        ptab = (body.get("tables") or {}).get("persons") or {}
+        pcols = [c["label"] if isinstance(c, dict) else str(c) for c in ptab.get("columns") or []]
+        prows = [r for r in ptab.get("rows") or [] if r[0] != "TOTAL"]
+        pi = lambda c: pcols.index(c)
+        head = f"**Daily Delegation** · {scope} · today is {body.get('today')}"
+        notes = [date_note] if date_note else []
+        footer = ("Counts are tasks (one row of the Daily Schedule tab each); 'open for' is days since the task's date - "
+                  "the sheet has no deadline column.")
+
+        summary_ask = (named or re.search(r"\bdelegat\w*", raw)) and re.search(
+            r"\b(summary|overview|saar|saransh|highlights|page|everything|poora|sab kuch)\b", raw) and not (people or statuses)
+        bare_page = named and not (people or statuses or dates or q) and not re.search(
+            r"\b(how many|kitne|kitna|which|who|kaun|oldest|today|aaj|compare|list|show tasks|pending|completed)\b", raw)
+        # ---- full page summary
+        if summary_ask or bare_page:
+            lines = [head] + notes
+            lines += [f"• {x['label']}: **{_show(x)}**" + (f" ({x['hint']})" if x.get('hint') else "") for x in _kpis(body)]
+            if prows:
+                lines += ["", "**Tasks by person**", "| " + " | ".join(pcols) + " |", "|" + "---|" * len(pcols)]
+                for r in ptab.get("rows") or []:
+                    lines.append("| " + " | ".join(self._dd_cell(v, c) for v, c in zip(r, ptab["columns"])) + " |")
+            for ins in body.get("insights") or []:
+                lines.append(f"• {ins}")
+            for ch in body.get("checks") or []:
+                if isinstance(ch, dict) and ch.get("text"):
+                    lines.append(f"Note from the page: {ch['text']}")
+            lines.append(footer)
+            return "\n".join(lines), {**ctx, "intent": "summary"}
+
+        # ---- who has the most / fewest (open) tasks, best/worst completion
+        rank = re.search(r"\b(who|which person|kaun|kiske|kis|most|least|fewest|highest|lowest|sabse|top|best|worst)\b", raw) and \
+            not people and re.search(r"\b(tasks?|open|pending|completed|done|work|kaam|baki|approval|completion|percent\w*)\b|%", raw)
+        if rank:
+            body = self._dd({"date": dates, "q": [q] if q else []})      # a ranking compares everyone: no status filter
+            ptab = (body.get("tables") or {}).get("persons") or {}
+            pcols = [c["label"] if isinstance(c, dict) else str(c) for c in ptab.get("columns") or []]
+            prows = [r for r in ptab.get("rows") or [] if r[0] != "TOTAL"]
+            pi = lambda c: pcols.index(c)
+            statuses = explicit_statuses
+            low = bool(re.search(r"\b(least|fewest|lowest|worst|kam)\b", raw))
+            if re.search(r"done %|completion|completed %|percent|%|best|worst", raw) and not statuses:
+                key = "Done %"
+            elif statuses == ["Completed"]:
+                key = "Completed"
+            elif "Pending" in statuses:
+                key = "Pending"
+            elif "In Progress" in statuses:
+                key = "In progress"
+            elif "Awaiting Approval" in statuses:
+                key = "Awaiting approval"
+            elif want_open or re.search(r"\bopen\b|\bbaki\b|pending", raw):
+                key = "Open"
+            else:
+                key = "Tasks"
+            ordered = sorted(prows, key=lambda r: (r[pi(key)] or 0, r[pi("Tasks")] or 0), reverse=not low)
+            top = ordered[0]
+            tied = [r[0] for r in ordered if (r[pi(key)] or 0) == (top[pi(key)] or 0)]
+            unit = "%" if key == "Done %" else " tasks"
+            val = f"{top[pi(key)]:.1f}%" if key == "Done %" else f"{top[pi(key)]:,.0f}"
+            lines = [head] + notes + [f"**{', '.join(tied)}** {'has' if len(tied) == 1 else 'have'} the "
+                                      f"{'fewest' if low else 'most'} {key.lower()}: **{val}{'' if key == 'Done %' else ' tasks'}**."
+                                      if key != "Done %" else
+                                      f"**{', '.join(tied)}** {'has' if len(tied) == 1 else 'have'} the "
+                                      f"{'lowest' if low else 'highest'} Done %: **{val}**.",
+                                      ]
+            extra = [c for c in ("Tasks", "Open", "Done %") if c != key]
+            lines += ["| Person | " + key + " | " + " | ".join(extra) + " |", "|---|" + "---|" * (len(extra) + 1)]
+            for r in ordered:
+                lines.append(f"| {r[0]} | {self._dd_num(r[pi(key)], key)} | " + " | ".join(self._dd_num(r[pi(c)], c) for c in extra) + " |")
+            lines.append(footer)
+            return "\n".join(lines), {**ctx, "intent": "rank", "dim": "person"}
+
+        # ---- oldest open task / what needs attention
+        if re.search(r"\b(oldest|purana|sabse purana|needs attention|attention|carried|overdue|kitne din)\b", raw):
+            att = (body.get("tables") or {}).get("attention") or {}
+            cols = [c["label"] if isinstance(c, dict) else str(c) for c in att.get("columns") or []]
+            rows = att.get("rows") or []
+            lines = [head] + notes
+            old = k.get("Oldest open task")
+            if old:
+                lines.append(f"Oldest open task: **{old['hint']}** - open for **{old['value']:.0f} days**.")
+            if rows:
+                lines += ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+                lines += ["| " + " | ".join(self._dd_cell(v, c) for v, c in zip(r, att["columns"])) + " |" for r in rows[:15]]
+                if len(rows) > 15:
+                    lines.append(f"(first 15 of {len(rows)} tasks, oldest first)")
+            lines.append(footer)
+            return "\n".join(lines), {**ctx, "intent": "list"}
+
+        # ---- today's pending work
+        if re.search(r"\b(today|aaj)\b", raw) and set(dates) <= {base.get("today", "")} and \
+                re.search(r"\b(pending|open|tasks?|work|kaam|schedule)\b", raw):
+            tp = body.get("today_pending") or {}
+            lines = [head.replace(f" · {', '.join(statuses)}", ""), f"Tasks dated today ({tp.get('date')}): **{tp.get('today_total', 0)}**; open ones: **{len(tp.get('today') or [])}**.",
+                     f"Open tasks carried over from earlier days: **{len(tp.get('carried') or [])}**."]
+            show = (tp.get("today") or []) + (tp.get("carried") or [])
+            if show:
+                lines += ["| Task | Responsible | Status | Date | Open for (days) |", "|---|---|---|---|---|"]
+                lines += [f"| {t['task']} | {t['person']} | {t['status']} | {t['date']} | {t['age'] if t['age'] is not None else '—'} |"
+                          for t in show[:15]]
+                if len(show) > 15:
+                    lines.append(f"(first 15 of {len(show)})")
+            lines.append(footer)
+            return "\n".join(lines), {**ctx, "intent": "list"}
+
+        # ---- comparison of two people
+        if len(people) >= 2 and re.search(r"\b(compare|vs|versus|with|saath|mukabla|aur|and|difference|zyada|kam)\b", raw):
+            cbody = self._dd({"date": dates, "q": [q] if q else []})        # every status: a comparison is about whole workloads
+            ctab = (cbody.get("tables") or {}).get("persons") or {}
+            ccols = [c["label"] if isinstance(c, dict) else str(c) for c in ctab.get("columns") or []]
+            pcols, pi = ccols, (lambda c: ccols.index(c))
+            by = {r[0]: r for r in ctab.get("rows") or []}
+            sel = [by[p] for p in people if p in by]
+            lines = [f"**Daily Delegation** · {' vs '.join(people)} · today is {body.get('today')}", "| Metric | " + " | ".join(r[0] for r in sel) + " |", "|---|" + "---|" * len(sel)]
+            cols2 = ["Tasks", "Completed", "In progress", "Pending", "Awaiting approval", "Open", "Done %"]
+            for c in cols2:
+                lines.append(f"| {c} | " + " | ".join(self._dd_num(r[pi(c)], c) for r in sel) + " |")
+            if len(sel) == 2:
+                for c in ("Tasks", "Open", "Done %"):
+                    a, b = sorted(sel, key=lambda r: -(r[pi(c)] or 0))
+                    if (a[pi(c)] or 0) != (b[pi(c)] or 0):
+                        d = (a[pi(c)] or 0) - (b[pi(c)] or 0)
+                        lines.append(f"{c}: **{a[0]}** is higher by **{d:.1f} percentage points**." if c == "Done %" else
+                                     f"{c}: **{a[0]}** is higher by **{d:,.0f}** ({a[pi(c)]:,.0f} − {b[pi(c)]:,.0f}).")
+            lines.append(footer)
+            return "\n".join(lines), {**ctx, "intent": "compare", "dim": "person"}
+
+        # ---- completion %
+        if re.search(r"(%|percent\w*|completion|done rate|kitna ho gaya)", raw):
+            n_all, done = sm.get("tasks", 0), sm.get("completed", 0)
+            lines = [head] + notes + [f"Completion: **{sm.get('done_pct', 0):.1f}%** ({done:,.0f} completed ÷ {n_all:,.0f} tasks × 100)."]
+            if people and len(people) == 1 and prows:
+                r = prows[0]
+                lines.append(f"{r[0]}: {r[pi('Completed')]:,.0f} of {r[pi('Tasks')]:,.0f} tasks done = {r[pi('Done %')]:.1f}%.")
+            lines.append(footer)
+            return "\n".join(lines), ctx
+
+        # ---- list tasks (open / by status / by person / by date) or counts
+        asks_list = re.search(r"\b(which|list|show|dikhao|batao|konse|kaun se|what are|tasks? (?:are|hain)|details?)\b", raw) and \
+            not re.search(r"\b(how many|kitne|kitni|count|number)\b", raw)
+        tt = (body.get("tables") or {}).get("tasks") or {}
+        tcols = [c["label"] if isinstance(c, dict) else str(c) for c in tt.get("columns") or []]
+        trows = tt.get("rows") or []
+        n_sel = sm.get("tasks", 0)
+        lines = [head] + notes
+        lines.append(f"**{n_sel:,.0f} task{'s' if n_sel != 1 else ''}**" + (f" - {sm.get('open', 0):,.0f} open, {sm.get('completed', 0):,.0f} completed"
+                                                                         if not statuses else "") + ".")
+        breakdown = [f"{x['label']} {x['value']:,.0f}" for x in _kpis(body) if x["label"] in ("Completed", "In progress", "Pending", "Awaiting approval")]
+        if not statuses and breakdown:
+            lines.append("By status: " + ", ".join(breakdown) + ".")
+        if asks_list or len(trows) <= 8:
+            keep = [i for i, c in enumerate(tcols) if c in ("Date", "Task", "Responsible", "Status", "Open for (days)")]
+            lines += ["| " + " | ".join(tcols[i] for i in keep) + " |", "|" + "---|" * len(keep)]
+            for r in trows[:15]:
+                lines.append("| " + " | ".join(self._dd_cell(r[i], tt["columns"][i]) for i in keep) + " |")
+            if len(trows) > 15:
+                lines.append(f"(first 15 of {len(trows)} tasks - open tasks first, oldest on top)")
+        lines.append(footer)
+        return "\n".join(lines), ctx
+
+    @staticmethod
+    def _dd_num(v, key) -> str:
+        if v is None:
+            return "—"
+        return f"{v:.1f}%" if key == "Done %" else f"{v:,.0f}"
+
+    @staticmethod
+    def _dd_cell(v, col) -> str:
+        label = col["label"] if isinstance(col, dict) else str(col)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if v != v:
+                return "—"
+            return f"{v:.1f}%" if label == "Done %" else f"{v:,.0f}"
+        return str(v) if v not in (None, "") else "—"

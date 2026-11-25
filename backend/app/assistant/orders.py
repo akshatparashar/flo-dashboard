@@ -23,6 +23,8 @@ from .text import name_key, norm
 ORDER_W = re.compile(r"\b(orders?|ordr|designs?|design count|volume)\b")
 TOPN_W = re.compile(r"\b(?:top|bottom|best|worst|pehle|first)\s+(\d{1,2})\b|\b(\d{1,2})\s+(?:best|top)\b", re.I)
 WITH_W = re.compile(r"\b(with|saath|sath|vs|versus|against|se)\b")
+MONTHLY_W = re.compile(r"\b(monthly|month[- ]?wise|month by month|per month|each month|by month|mahine ke hisaab|monthwise|"
+                       r"performance)\b", re.I)
 ZERO_W = re.compile(r"\b(zero|0|no|none|without|nahi|nil|koi nahi)\b")
 REPEAT_W = re.compile(r"\b(repeat\w*|rpt)\b")
 NEW_W = re.compile(r"\bnew\b")
@@ -101,11 +103,13 @@ class OrderAnalyst:
         self.running_note = running_note or (lambda m: "")
         self.today_month = today_month
         self._tables: dict = {}
+        self.months_list: list[str] = []
 
     # -------------------------------------------------------------------------------------------- understanding
     def parse(self, q, ctx: dict | None, vocab) -> Spec | None:
         """Is this an order question? Returns what is asked, or None to leave it to the other answers."""
         fy_months = vocab.months
+        self.months_list = list(fy_months)
         t = norm(q.text)
         raw = q.text.lower()
         octx = (ctx or {}).get("orders") if isinstance(ctx, dict) else None
@@ -117,6 +121,9 @@ class OrderAnalyst:
         pct = bool(SHARE_W.search(raw))
         follow = False
         assumed = False
+        if not has_order and MONTHLY_W.search(raw) and not OTHER_METRIC.search(t) and (
+                designers or re.search(r"\bdesigners?\b|\bcustomers?\b", raw)):
+            has_order = True                     # "Monthly performance of Deepika", "designer month wise"
         if not has_order and len(designers) >= 2 and COMPARE_W.search(t) and not OTHER_METRIC.search(t) and \
                 not calc.GROWTH.search(t) and not (isinstance(ctx, dict) and ctx.get("status")):
             has_order, assumed = True, not octx
@@ -176,6 +183,8 @@ class OrderAnalyst:
         elif pct and (kind or "repeat" in t) and not growth and (has_order and not follow):
             spec.mode = "share"
             spec.kind = spec.kind or "REPEAT"
+        elif MONTHLY_W.search(raw) and not months and len(designers) <= 1 and not (RANK_W.search(t) and not designers):
+            spec.mode = "monthly"
         elif ZERO_W.search(t) and kind and not designers and (WHO_W.search(t) or wise):
             spec.mode = "zero"
         elif growth or (COMPARE_W.search(t) and two_months) or (follow and pct):
@@ -245,7 +254,8 @@ class OrderAnalyst:
     # -------------------------------------------------------------------------------------------- answering
     def answer(self, spec: Spec, text: str) -> tuple[str, dict] | None:
         fn = {"value": self._value, "details": self._details, "rank": self._rank, "table": self._table,
-              "compare": self._compare, "share": self._share, "period": self._period, "zero": self._zero}[spec.mode]
+              "compare": self._compare, "share": self._share, "period": self._period, "zero": self._zero,
+              "monthly": self._monthly}[spec.mode]
         out = fn(spec, text)
         if out is None:
             return None
@@ -418,6 +428,25 @@ class OrderAnalyst:
             if lo[1].designs:
                 lines.append(f"Calculation: {n(hi[1].designs)} − {n(lo[1].designs)} = {n(diff)}; "
                              f"{n(diff)} ÷ {n(lo[1].designs)} × 100 = {p2(diff / lo[1].designs * 100)}.")
+        return "\n".join(lines), self._seen(spec)
+
+    def _monthly(self, spec: Spec, text: str):
+        """Orders and pcs month by month (one designer, or the whole company), from the Designers page."""
+        d = spec.designers[0] if spec.designers else None
+        who = d.display if d else "All designers"
+        lines = [f"**Month-by-month orders · {who}** (Designers page)",
+                 "| Month | Orders | Total pcs | New pcs | Repeat pcs |", "|---|---|---|---|---|"]
+        t = [0, 0.0, 0.0, 0.0]
+        for m in self.months_list:
+            r, nw, rp = self.figure(d, [m], None), self.figure(d, [m], "NEW"), self.figure(d, [m], "REPEAT")
+            if not (r.designs or r.pcs):
+                continue
+            t = [t[0] + r.designs, t[1] + r.pcs, t[2] + nw.pcs, t[3] + rp.pcs]
+            lines.append(f"| {m} | {n(r.designs)} | {n(r.pcs)} | {n(nw.pcs)} | {n(rp.pcs)} |")
+        lines.append(f"| TOTAL | {n(t[0])} | {n(t[1])} | {n(t[2])} | {n(t[3])} |")
+        tot = self.figure(d, [], None)
+        if tot.designs != t[0] or abs(tot.pcs - t[1]) > 0.5:
+            lines.append(f"The page's all-month total is {n(tot.designs)} orders / {n(tot.pcs)} pcs.")
         return "\n".join(lines), self._seen(spec)
 
     def _zero(self, spec: Spec, text: str):

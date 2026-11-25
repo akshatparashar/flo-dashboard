@@ -37,7 +37,7 @@ THRESHOLD = 1.0           # below this, the rules are not sure what was asked
 SOFT = {"new", "yearly", "annual", "fy", "all", "sheet", "overall", "qty", "mtr", "day",
         "date", "pass", "promis"}           # FLO Future labels: "Overdue (Date Passed)", "Target Qty (Promised)"
 SKIP_KEYS = {"meta", "options", "charts", "matrix", "heatmap", "lines", "top_repeat", "gauge", "schedule"}
-SPECIAL_ROW = re.compile(r"^\(.*\)$|^(total|grand total)$", re.I)
+SPECIAL_ROW = re.compile(r"^\(.*\)$|^(total|grand total)$|^all over\b", re.I)    # incl. the sheet's "ALL OVER" total line
 MAX_QUESTION = 500
 PHRASE_INTENTS = {"status", "value", "rank", "trend", "compare", "calc", "record", "count", "list", "explain", "where", "page",
                   "help", "unknown"}
@@ -685,7 +685,13 @@ class Assistant:
         for i, (p, r) in enumerate(zip(parts, results), 1):
             body = r["answer"] if r.get("understood") else (
                 "I couldn't match this part to a figure on the dashboard, so I can't answer it.")
-            lines.append(f"**{i}. {p[:1].upper() + p[1:]}**\n{body}")
+            m = re.match(r"\s*\*\*([^*\n]+)\*\*", body)
+            if m:                                                      # the answer has its own title: number that one
+                lines.append(f"**{i}. {m.group(1)}**" + body.lstrip()[m.end() - (len(body) - len(body.lstrip())):])
+            elif body.lstrip().startswith("|"):
+                lines.append(f"**{i}.**\n{body.lstrip()}")
+            else:
+                lines.append(f"**{i}. {p[:1].upper() + p[1:]}**\n{body}")
         pages = Counter(r.get("page") for r in results if r.get("page"))
         top = pages.most_common(1)[0][0] if pages else None
         key = next((k for k, p in PAGES.items() if p.path == top), None)
@@ -970,6 +976,9 @@ class Assistant:
         named_types = {e.type for e in q.entities}
         rank_dim = q.dims[0] if q.intent == "rank" and q.dims else None
         for page in PAGES:
+            if page == "daily-delegation" and page not in q.explicit and not re.search(
+                    r"\b(delegat\w*|tasks?|daily schedule)\b", norm(q.text)):
+                continue                        # its "Pending" / "Completed" cards are tasks, not production pcs
             bonus = self._page_bonus(page, q)
             # KPIs: only when every name in the question can be applied as a filter on this page
             f = self._filters(page, q)
@@ -1049,6 +1058,10 @@ class Assistant:
         return out
 
     def _solve(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
+        if isinstance(self._ctx_in, dict) and self._ctx_in.get("page") == "daily-delegation":
+            res = self._page_answers(q, snap)                 # "What about Monu Sir?" continues the task conversation
+            if res:
+                return res
         if q.intent == "record":
             return self._record(q, snap)
         res = self._status(q, snap, vocab) or self._orders(q, snap, vocab) or self._page_answers(q, snap)
@@ -1497,12 +1510,47 @@ class Assistant:
             return None
         return self._reply(text, ask.pages[0], ctx, intent="status")
 
+    @staticmethod
+    def _page_only(q: Query, page: str) -> bool:
+        """"Show the Fabricators page summary" / "Vendor Rate page" / "Designer Order Target": a page named with nothing
+        else asked about it."""
+        t = norm(q.text)
+        alias = {w for ph in PAGES[page].words if re.search(r"\b(page|dashboard)\b", ph) for w in tokens(ph)}
+        page_words = alias | {page} | set(tokens(PAGES[page].label)) | {
+            "page", "tab", "dashboard", "summary", "overview", "details", "detail", "show", "give", "me", "the", "complete",
+            "full", "whole", "poora", "saar", "saransh", "batao", "dikhao", "all", "of", "ka", "ki", "ke", "section",
+            "numbers", "figures", "highlights", "kya", "hai", "what", "is", "about", "tell", "sabhi", "pages", "screen"}
+        rest = {x for x in q.metric_toks} - page_words - {"summary", "overview"}
+        if re.search(r"\b(kya|what|dikhata|dikhati|batata|contain|contains|explain|about|describe|meaning)\b", t) and \
+                not re.search(r"\b(summary|overview|saar|saransh)\b", t):
+            return False                         # "what does the production page show": the page's description answers it
+        return not rest
+
     def _page_answers(self, q: Query, snap: Snapshot) -> dict | None:
         """Summary, samples waiting, pending POs, the rate list and target achievement (see extras.py)."""
         pa = PageAnswers(snap.get, {k: p.filters for k, p in PAGES.items()}, {k: p.label for k, p in PAGES.items()})
         ents = [e for e in q.entities if e.type not in ("month",)]
         others = [p for p in q.explicit if p not in ("overview",)]
+        if re.search(r"\bunder production\b", q.text, re.I):          # a measure's name, not the Production page
+            others = [p for p in others if p != "production"]
         tries = []
+        if re.search(r"\bmonthly incoming\b", q.text, re.I) and all(e.type == "fabricator" for e in ents):
+            # "Monthly incoming" is the Fabricators page's stock-sheet figure (In/Out Sale calls its own "Incoming pcs")
+            try:
+                out = pa.fabricator_stock(q.text, ents, q.months, ["fabricator"])
+            except (DataUnavailable, KeyError, TypeError, ZeroDivisionError):
+                out = None
+            if out:
+                text, ctx = out
+                return self._reply(text, ctx.get("page"), ctx, intent=ctx.get("intent") or "value")
+        named_page = [p for p in q.explicit if p in PAGES]
+        pl = re.match(r"^\s*(?:(?:show|give|tell|dikhao|batao)\s*)?(?:me\s+)?(?:all\s+|the\s+|sabhi\s+)?(designers?|fabricators?|clients?|samples?)"
+                      r"(?:\s+(?:page\s+)?(?:summary|overview|table|details?|saar|page))?\s*[.?!]*\s*$", q.text, re.I)
+        if pl and not named_page:
+            named_page = [{"d": "designer", "f": "fabricator", "c": "client", "s": "samples"}[pl.group(1)[0].lower()]]
+            q.explicit = list(named_page)
+        if len(named_page) == 1 and not ents and (pl or self._page_only(q, named_page[0])):
+            tries.append(lambda: pa.page_summary(named_page[0], q.months))
         if not ents and not others:
             tries.append(lambda: pa.summary(q.text, q.months))
         if not others or others == ["samples"]:
@@ -1513,9 +1561,12 @@ class Assistant:
             tries.append(lambda: pa.rate_list(q.text, ents))
         if not ents and (not others or others == ["target"]):
             tries.append(lambda: pa.target_achieved(q.text, q.months))
+        tries.append(lambda: pa.daily_delegation(q.text, ents, q.months, q.explicit, self._ctx_in))
         tries.append(lambda: pa.fw_orders(q.text, ents, q.months, q.explicit))
         tries.append(lambda: pa.deliveries(q.text, ents, q.months, q.explicit))
         tries.append(lambda: pa.in_out_sale(q.text, ents, q.months, q.explicit, self._ctx_in))
+        if not others or others == ["fabricator"]:
+            tries.append(lambda: pa.fabricator_stock(q.text, ents, q.months, q.explicit))
         if ents and (not others or others == ["fabricator"]):
             pnames = [e.raw["production"] for e in self._vocab.of_type("fabricator") if "production" in e.raw] \
                 if getattr(self, "_vocab", None) else []
