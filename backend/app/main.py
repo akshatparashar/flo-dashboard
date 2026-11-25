@@ -30,6 +30,7 @@ from .dashboards import fabric_po as fpo
 from .dashboards import fabricator as fab
 from .dashboards import flo_future as ffu
 from .dashboards import fw_orders as fwo
+from .dashboards import daily_delegation as ddl
 from .dashboards import in_out_sale as ios
 from .dashboards import master as mst
 from .dashboards import overview as ovw
@@ -295,6 +296,16 @@ def in_out_sale(month: Multi = [], fabricator: Multi = [], type: Multi = []):
     return _envelope(ios.in_out_sale_dashboard(_need(ds), f), ds)
 
 
+@app.get("/api/daily-delegation", dependencies=[Depends(require_auth)])
+def daily_delegation(date: Multi = [], person: Multi = [], status: Multi = [],
+                     q: Annotated[str, Query(max_length=80)] = ""):
+    """Daily Delegation: Sir's day from the Daily Schedule tab. `date` = labels like "20 Nov 2026", `person` =
+    responsible person, `status` = Completed / In Progress / Awaiting Approval / Pending / On Hold, `q` = free text."""
+    ds = get_store().dataset("daily_delegation")
+    f = {"date": _clean(date), "person": _clean(person), "status": _clean(status), "q": [q] if q.strip() else []}
+    return _envelope(ddl.daily_delegation_dashboard(_need(ds), f), ds)
+
+
 @app.get("/api/context", dependencies=[Depends(require_auth)])
 def context(month: Multi = []):
     """Compact, text-friendly snapshot of every dashboard for the AI assistant (no tables, no chart series)."""
@@ -302,7 +313,7 @@ def context(month: Multi = []):
     ds = store.datasets(KINDS)
     months = _clean(month)
     sources = {k: (v.data, v.error if v.data is None else None) for k, v in ds.items()
-               if k not in ("target_revenue", "flo_future", "vendor_rate", "in_out_sale")}
+               if k not in ("target_revenue", "flo_future", "vendor_rate", "in_out_sale", "daily_delegation")}
     ov = ovw.overview_dashboard(sources, months)
     out = {"alerts": [{"kind": a["kind"], "text": a["text"]} for a in ov["alerts"]],
            "errors": [e["text"] for e in ov["errors"]], "sections": {}}

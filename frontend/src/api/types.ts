@@ -397,3 +397,26 @@ export interface InOutSaleData extends Envelope {
   fabricators: { count: number; incoming?: number; top?: string; top_pct?: number; promised?: number; promise_pending?: number };
   checks: Notice[];
 }
+
+export interface DailyDelegationData extends Envelope {
+  empty?: boolean;
+  no_match?: boolean;
+  notices?: Notice[];
+  options: Options;
+  today: string;
+  kpis: Kpi[];
+  summary: { tasks: number; completed: number; open: number; done_pct: number; people: number; days: number; awaiting: number; today: number };
+  insights: string[];
+  today_pending: { date: string; today_total: number; today: TodoItem[]; carried: TodoItem[] };
+  charts: { status: Slice[]; by_person: SeriesChart; by_date: SeriesChart; ageing: Slice[] };
+  tables: { tasks: TableData; persons: TableData; dates: TableData; attention: TableData };
+  checks: Notice[];
+}
+
+export interface TodoItem {
+  task: string;
+  person: string;
+  status: string;
+  date: string;
+  age: number | null;
+}

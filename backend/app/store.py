@@ -23,6 +23,7 @@ from .dashboards import fabricator as fab
 from .dashboards import flo_future as ffu
 from .dashboards import master as mst
 from .dashboards import samples as smp
+from .dashboards import daily_delegation as ddl
 from .dashboards import fw_orders as fwo
 from .dashboards import in_out_sale as ios
 from .dashboards import target as tgt
@@ -30,7 +31,7 @@ from .dashboards import vendor_rate as vrt
 from .sources.google import SheetAccessError
 
 KINDS = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future",
-         "vendor_rate", "in_out_sale"]
+         "vendor_rate", "in_out_sale", "daily_delegation"]
 # Kinds whose numbers depend on today's date (overdue / due soon), so their parsed copy is redone each day.
 DATED_KINDS = {"fabric_po", "flo_future"}
 FLO_FUTURE_PARTS = ("samples", "visits", "outsource")
@@ -150,6 +151,12 @@ class DataStore:
             titles = [t for t, _ in meta]
             src = next((t for t in (find_tab(titles, c) for c in cfg["source_tabs"]) if t), None)
             return [src or next((t for t in titles if "DASHBOARD" not in t.upper()), titles[0])]
+        if kind == "daily_delegation":
+            # Only the "Daily Schedule" tab, never a fallback to another tab of the sheet.
+            tab = next((t for t, _ in meta if t.strip().lower() == ddl.TAB.lower()), None)
+            if tab is None:
+                raise SheetAccessError(f"The sheet has no '{ddl.TAB}' tab (the Daily Delegation dashboard reads only that tab).")
+            return [tab]
         if kind == "fw_orders":
             # Exact title (ignoring spaces / case): the sheet also has CLIENT DASHBOARD and DASHBOARD_ tabs.
             tab = next((t for t, _ in meta if t.strip().upper() == fwo.TAB), None)
@@ -205,6 +212,8 @@ class DataStore:
             if err:
                 raise SheetAccessError(err)
             return d
+        if kind == "daily_delegation":
+            return ddl.parse_daily_schedule(entries[0].value)
         if kind == "in_out_sale":
             return ios.parse_in_out_sale(entries[0].value)
         if kind == "fw_orders":

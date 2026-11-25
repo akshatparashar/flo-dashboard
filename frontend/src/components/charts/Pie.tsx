@@ -16,7 +16,7 @@ const TINTS = [
   "color-mix(in srgb, var(--series-ref) 30%, var(--series-grey))",
 ];
 
-export function Pie({ items, unit = "", label, size = 220 }: { items: Slice[]; unit?: string; label: string; size?: number }) {
+export function Pie({ items, unit = "", label, size = 220, colors }: { items: Slice[]; unit?: string; label: string; size?: number; colors?: Record<string, string> }) {
   const parts = items.filter((i) => i.value > 0);
   const total = parts.reduce((a, b) => a + b.value, 0);
   const [hot, setHot] = useState<number | null>(null);
@@ -25,7 +25,7 @@ export function Pie({ items, unit = "", label, size = 220 }: { items: Slice[]; u
   const slices = pie<Slice>().value((d) => d.value).sort(null).padAngle(parts.length > 1 ? 0.012 : 0)(parts);
   const path = arc<(typeof slices)[number]>().innerRadius(r * 0.58).outerRadius(r - 2).cornerRadius(2);
   const lift = arc<(typeof slices)[number]>().innerRadius(r * 0.58).outerRadius(r + 2).cornerRadius(2);
-  const col = (i: number) => TINTS[i % TINTS.length];
+  const col = (i: number) => colors?.[parts[i].label] ?? TINTS[i % TINTS.length];
   const show = hot === null ? null : parts[hot];
   return (
     <div className="pie" role="group" aria-label={label}>

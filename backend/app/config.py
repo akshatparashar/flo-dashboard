@@ -73,6 +73,13 @@ SHEET_REGISTRY: dict[str, dict] = {
         "source_tabs": ["2026-27"],
         "name_regex": r"^\s*20\d\d\s*-\s*\d\d\s*$",
     },
+    "daily_delegation": {
+        "name": "Daily Delegation",
+        # "Sir_Daily_Delegation_Tracker": only its "Daily Schedule" tab is read (date, task, person, status, remarks).
+        "id": "10bQHge7sumI35OVK6f6Ke2c9tWvE4QEIBoxXdUHbBJI",
+        "id_env": "DAILY_DELEGATION_SHEET_ID",
+        "source_tabs": ["Daily Schedule"],
+    },
     "vendor_rate": {
         "name": "Vendor Rate",
         # FABRIC PO 11: "Rate_Data" (the tidy rate list the sheet's own Vendor Rate Dashboard reads) and

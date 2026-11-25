@@ -2071,3 +2071,91 @@ a.alert:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* Highlights list (Daily Delegation) */
+.insights {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.insights li {
+  position: relative;
+  padding-left: 22px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.insights li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 0.62em;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* Today's pending work (Daily Delegation): open tasks as red-edged lines */
+.todo {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.todo li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 10px 14px;
+  border-left: 4px solid var(--neg);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--neg) 6%, var(--sheet));
+}
+.todo .todo-task {
+  font-weight: 560;
+  min-width: 0;
+}
+.todo .todo-who {
+  color: var(--ink-2);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+.todo .todo-who::before {
+  content: "→ ";
+  color: var(--neg);
+}
+.todo .todo-status {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  color: var(--c);
+  background: color-mix(in srgb, var(--c) 14%, transparent);
+  white-space: nowrap;
+}
+.todo .todo-age {
+  grid-column: 1 / -1;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.todo-sub {
+  margin: 18px 0 10px;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+}
+.todo-sub b {
+  color: var(--neg);
+}
+.todo-none {
+  color: var(--muted);
+  font-size: var(--t-sm);
+}
+@media (max-width: 640px) {
+  .todo li {
+    grid-template-columns: 1fr;
+  }
+}

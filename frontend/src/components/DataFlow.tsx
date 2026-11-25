@@ -6,7 +6,7 @@ import { ago } from "../lib/format";
 import { useLive } from "../lib/live";
 import { prefersReducedMotion, useWidth } from "./charts/common";
 
-const ORDER = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future", "vendor_rate", "in_out_sale"];
+const ORDER = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future", "vendor_rate", "in_out_sale", "daily_delegation"];
 const LABEL: Record<string, string> = {
   tracker: "Master sheet",
   sample_summary: "Sample summary",
@@ -16,6 +16,7 @@ const LABEL: Record<string, string> = {
   flo_future: "FLO Future",
   vendor_rate: "Vendor rates",
   in_out_sale: "In/Out sale",
+  daily_delegation: "Delegation",
 };
 
 export interface FlowOut {

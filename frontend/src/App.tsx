@@ -19,6 +19,7 @@ const Target = lazy(() => import("./pages/Target"));
 const FloFuture = lazy(() => import("./pages/FloFuture"));
 const VendorRate = lazy(() => import("./pages/VendorRate"));
 const InOutSale = lazy(() => import("./pages/InOutSale"));
+const DailyDelegation = lazy(() => import("./pages/DailyDelegation"));
 
 function SignIn({ onDone }: { onDone: () => void }) {
   const [code, setCode] = useState("");
@@ -91,6 +92,7 @@ function Dashboard() {
             <Route path="/flo-future" element={<FloFuture />} />
             <Route path="/vendor-rate" element={<VendorRate />} />
             <Route path="/in-out-sale" element={<InOutSale />} />
+            <Route path="/daily-delegation" element={<DailyDelegation />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

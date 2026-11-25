@@ -38,6 +38,8 @@ FLO_FUTURE_ID = "1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw"
 VENDOR_RATE_ID = "1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg"
 IN_OUT_SALE_ID = "1A6I90-kbzHkDRRcGspnln9aUmWm-FXD9EKNyKnudMzg"
 SHEET_TABS[IN_OUT_SALE_ID] = [("ALL PRODUCTION", 30), ("2026-27", 31), ("fabricator targets monthly", 32)]
+DAILY_DELEGATION_ID = "10bQHge7sumI35OVK6f6Ke2c9tWvE4QEIBoxXdUHbBJI"
+SHEET_TABS[DAILY_DELEGATION_ID] = [("Daily Summary Dashboard", 40), ("Daily Delegation Tracker", 41), ("Daily Schedule", 42)]
 SHEET_TABS[VENDOR_RATE_ID] = [("Vendor Rate Dashboard", 20), ("NEW RATE SHEET", 21), ("SAMPLE", 22), ("RV 1498", 23),
                               ("Rate_Data", 24)]
 EPOCH = date(1899, 12, 30)
@@ -105,6 +107,7 @@ class DemoSheetSource:
                 grids.update(self._flo_future(np.random.RandomState(self.seed + 7), now))
                 grids.update(self._vendor_rate(np.random.RandomState(self.seed + 11)))
                 grids.update(self._in_out_sale(np.random.RandomState(self.seed + 13), now))
+                grids.update(self._daily_delegation(np.random.RandomState(self.seed + 17), now))
                 self._grids, self._day = grids, now
             return self._grids
 
@@ -457,6 +460,28 @@ class DemoSheetSource:
                                                 ("PRODUCTION / DESIGNER MEETING", "AARTI"))])
         return {(sid, "Samples", False): [header] + rows, (sid, "Outsource Projects", False): outsource,
                 (sid, "Visits & Meetings", False): visits}
+
+    def _daily_delegation(self, rng, now):
+        """The "Daily Schedule" tab: one row per task, the last few days, text dates like the real sheet."""
+        people = ["Meera Ji", "Raghav Sir", "Anita Mam", "Kunal Sir", "Divya"]
+        tasks = ["Prepare the monthly budget sheet", "Book tickets for the buying trip", "Follow up with the lot supplier",
+                 "Finalise the vendor contract letter", "Reconcile the payment accounts", "Arrange a meeting with designers",
+                 "Order office supplies", "Review the photoshoot schedule", "Collect samples from the courier office",
+                 "Update the staff attendance sheet", "Confirm the hotel booking", "Print the catalogue material",
+                 "Check pending challan payments", "Schedule the fabric quality review", "Send the revised PO to the mill"]
+        rows = [["SIR'S DAILY SCHEDULE"], ["One row per time slot."], ["Today:", serial(now)],
+                ["Date", "Day", "Task / Meeting / Follow-up", "Responsible Person", "Status", "Remarks"]]
+        days = [now - timedelta(days=k) for k in (5, 3, 2, 0)]
+        for di, day in enumerate(days):
+            for _ in range(int(rng.randint(7, 12))):
+                age = (now - day).days
+                p = rng.rand()
+                status = ("Completed" if p < 0.30 + 0.12 * min(age, 4) else "In Progress" if p < 0.58 + 0.1 * min(age, 3)
+                          else "Awaiting Approval" if p < 0.74 + 0.08 * min(age, 3) else "Pending")
+                rows.append([dmy(day).replace("/", "-"), "", tasks[int(rng.randint(len(tasks)))],
+                             people[int(rng.randint(len(people)))], status, ""])
+        rows += [[""] * 6 for _ in range(20)]
+        return {(DAILY_DELEGATION_ID, "Daily Schedule", False): rows, (DAILY_DELEGATION_ID, "Daily Schedule", True): rows}
 
     def _in_out_sale(self, rng, now):
         """The "2026-27" tab of the IN/OUT/SALE sheet: a month table (this year vs last year) and fabricator-wise

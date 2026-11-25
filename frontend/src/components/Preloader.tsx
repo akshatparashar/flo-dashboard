@@ -6,7 +6,7 @@ import { ART, BRACKET, Wordmark } from "./Brand";
 import { prefersReducedMotion } from "./charts/common";
 import { navCollapsed } from "./shell/Shell";
 
-const SOURCE_ORDER = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future", "vendor_rate", "in_out_sale"];
+const SOURCE_ORDER = ["tracker", "sample_summary", "overview_fabricators", "fabric_po", "target_revenue", "flo_future", "vendor_rate", "in_out_sale", "daily_delegation"];
 const SOURCE_NAMES: Record<string, string> = {
   tracker: "Master sheet",
   sample_summary: "Samples",
@@ -16,6 +16,7 @@ const SOURCE_NAMES: Record<string, string> = {
   flo_future: "FLO Future",
   vendor_rate: "Vendor rates",
   in_out_sale: "In/Out sale",
+  daily_delegation: "Delegation",
 };
 const MIN_MS = 1700;
 const MAX_MS = 9000;
