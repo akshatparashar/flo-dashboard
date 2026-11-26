@@ -33,6 +33,7 @@ from .dashboards import fw_orders as fwo
 from .dashboards import daily_delegation as ddl
 from .dashboards import in_out_sale as ios
 from .dashboards import master as mst
+from .dashboards import stock_ageing as sta
 from .dashboards import overview as ovw
 from .dashboards import samples as smp
 from .dashboards import target as tgt
@@ -306,6 +307,14 @@ def daily_delegation(date: Multi = [], person: Multi = [], status: Multi = [],
     return _envelope(ddl.daily_delegation_dashboard(_need(ds), f), ds)
 
 
+@app.get("/api/stock-ageing", dependencies=[Depends(require_auth)])
+def stock_ageing(type: Multi = [], age: Multi = [], q: Annotated[str, Query(max_length=80)] = ""):
+    """FIFO stock ageing (pcs) from the EasyTrade snapshot. `type` = design series, `age` = oldest age band of a design,
+    `q` = free text over design code / description."""
+    f = {"type": _clean(type), "age": _clean(age), "q": [q] if q.strip() else []}
+    return _envelope(sta.stock_ageing_dashboard(sta.load_snapshot(), f))
+
+
 @app.get("/api/context", dependencies=[Depends(require_auth)])
 def context(month: Multi = []):
     """Compact, text-friendly snapshot of every dashboard for the AI assistant (no tables, no chart series)."""
@@ -340,7 +349,7 @@ def context(month: Multi = []):
 _ASSISTANT_PAGES = {"overview": overview, "designer": designer, "client": client, "production": production,
                     "samples": samples, "fabricator": fabricator, "fabric-po": fabric_po, "target": target,
                     "flo-future": flo_future, "vendor-rate": vendor_rate, "in-out-sale": in_out_sale,
-                    "daily-delegation": daily_delegation}
+                    "daily-delegation": daily_delegation, "stock-ageing": stock_ageing}
 
 
 def _assistant_fetch(page: str, filters: dict) -> dict:

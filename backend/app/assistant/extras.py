@@ -106,7 +106,7 @@ class PageAnswers:
             lines.append("\n**Pages that are not on the Overview**")
             for page, label in (("client", "Clients Order Status"), ("vendor-rate", "Vendor Rate"),
                                 ("in-out-sale", "In/Out Sale"), ("target", "Designer Order Target"),
-                                ("daily-delegation", "Daily Delegation")):
+                                ("daily-delegation", "Daily Delegation"), ("stock-ageing", "Stock Ageing")):
                 try:
                     allowed = self.page_filters.get(page, {})
                     ks = self._kpis_deep(self.fetch(page, {"month": list(months)} if months and "month" in allowed else {}))
@@ -798,6 +798,32 @@ class PageAnswers:
         return "\n".join(lines), {"page": "client", "metric": "Order pcs", "intent": "value", "entities": [],
                                   "months": months, "dim": None}
 
+    def outsource_projects(self, text: str, entities):
+        """The "Outsource Projects" tab of the FLO Future sheet (the page itself does not show this table)."""
+        raw = text.lower()
+        if not (re.search(r"\b(outsourced?|out source\w*|bahar)\b", raw) and re.search(r"\b(projects?|flo future|future)\b", raw)):
+            return None
+        if re.search(r"\b(incoming|sale|sold|came|aaya|fabricators?|in[- ]?house|how many|kitne|kitni|count|overdue|due|"
+                     r"pending|not updated)\b", raw) or any(e.type != "designer" for e in entities):
+            return None                          # counts, overdue and incoming questions have their own answers
+        cols, rows = _table(self.fetch("flo-future", {}), "outsource")
+        rows = [r for r in rows if not SPECIAL.match(str(r[0]))]
+        ix = {c: i for i, c in enumerate(cols)}
+        names = {e.display.upper() for e in entities}
+        if names:
+            rows = [r for r in rows if str(r[ix["Designer"]]).upper() in names]
+        ctx = {"page": "flo-future", "metric": None, "intent": "items", "entities": [], "months": [], "dim": None}
+        if not rows:
+            return "There are no outsource projects for that in the FLO Future sheet.", ctx
+        lines = [f"**{len(rows)}** outsource project{'s' if len(rows) != 1 else ''} (FLO Future sheet, Outsource Projects tab):"]
+        for r in rows[:12]:
+            lines.append(f"• **{r[0]}**: {r[ix['Designer']]}, {r[ix['Outsource Vendor']] or 'no vendor'}, "
+                         f"pending {fmt.fmt_int(r[ix['Pending']] or 0)} pcs, {r[ix['Status']]}, {str(r[ix['Days Left']]).lower()}")
+        if len(rows) > 12:
+            lines.append(f"… and {len(rows) - 12} more.")
+        lines.append("The FLO Future page does not show this table; it comes straight from the sheet.")
+        return "\n".join(lines), ctx
+
     def deliveries(self, text: str, entities, months: list[str], explicit: list[str]):
         raw = text.lower()
         overdue_designs = re.search(r"\b(overdue|late)\b", raw) and re.search(r"\bdesigns?\b", raw) and not re.search(
@@ -806,7 +832,9 @@ class PageAnswers:
                                                                     r"fabric)\b", raw) and (
             months or re.search(r"\b(due|pending|kitne|kitna|kitni|how many|how much|hone|honi|baki|baaki|expected|"
                                 r"next|upcoming|aane)\b", raw))
-        if not (self.DELIVERY.search(raw) or deliver_q or overdue_designs or
+        arriving = re.search(r"\b(aane\s*wal\w*|aane\s*waal\w*|aayenge|aaenge|arriving|will arrive|aa rahe|aane h\w+)\b",
+                             raw) and not re.search(r"\b(fabric|po|pos|vendor|fabricator|karigar|incoming|samples?)\b", raw)
+        if not (self.DELIVERY.search(raw) or deliver_q or overdue_designs or arriving or
                 ("client" in explicit and re.search(r"\b(overdue|due)\b", raw))):
             return None
         clients = [e for e in entities if e.type == "client" and e.raw.get("client")]
@@ -829,6 +857,18 @@ class PageAnswers:
         want_over = re.search(r"\boverdue\b", raw)
         want_week = re.search(r"\b(next (?:7|seven) days?|in 7 days?|7 days?|this week)\b", raw)
         want_late = re.search(r"\b(due later|later)\b", raw)
+        ranking = re.search(r"\b(which|kis|kaun\w*|most|highest|sabse|zyada|maximum|least|lowest|kam)\b", raw)
+        if ranking and re.search(r"\b(months?|mahin\w*)\b", raw) and not months and rows_m:
+            key = "Overdue pcs" if want_over else "Pending pcs"
+            i = _col(cols_m, key)
+            data = [r for r in rows_m if not SPECIAL.match(str(r[0]))]
+            if i is not None and data:
+                least = bool(re.search(r"\b(least|lowest|kam)\b", raw))
+                top = (min if least else max)(data, key=lambda r: r[i] or 0)
+                lines = [f"**{top[0]}** has the {'least' if least else 'most'} {key.lower()} in expected deliveries: "
+                         f"**{fmt.fmt_int(top[i])} pcs** (of {fmt.fmt_int(sum(r[i] or 0 for r in data))}, {who})."]
+                lines += [f"• {r[0]}: {fmt.fmt_int(r[i])} pcs" for r in data]
+                return "\n".join(lines), ctx
         if re.search(r"\b(which|who|kaun|most|highest|sabse)\b", raw) and not clients and rows_c:
             key = "Overdue pcs" if want_over else "Pending pcs"
             i = _col(cols_c, key)
@@ -858,6 +898,8 @@ class PageAnswers:
             lines = [lines[0]]
             rows_m = [r for r in rows_m if r[0] in months]
             rows_c = []
+            if rows_m:
+                lines.append(f"Expected in {' and '.join(months)}: **{fmt.fmt_int(sum(r[2] or 0 for r in rows_m))} pcs** pending.")
             if not rows_m:
                 return (f"There are no expected deliveries in {' and '.join(months)} (the delivery dates run "
                         f"{d.get('today')} onward).", ctx)
@@ -1167,6 +1209,16 @@ class PageAnswers:
         who = " and ".join(people) if people else "everyone"
         scope = f"{who}" + (f" · {', '.join(statuses)}" if statuses else "") + (f" · {', '.join(dates)}" if dates else "") + \
             (f" · text “{q}”" if q else "")
+        if body.get("no_match") and statuses == ["Pending"]:
+            rest = [s for s in (opts.get("status") or []) if s not in ("Completed", "Pending")]
+            other = self._dd({"person": people, "date": dates, "q": [q] if q else [], "status": rest}) if rest else None
+            if other and not other.get("no_match"):
+                tab = (other.get("tables") or {}).get("tasks") or {}
+                cols = [c["label"] for c in tab.get("columns") or []]
+                lines = [f"{who}: no task has the status **Pending**, but **{(other.get('summary') or {}).get('tasks')}** "
+                         "still open with another status:"]
+                lines += [f"• {r[cols.index('Task')]} ({r[cols.index('Status')]})" for r in (tab.get("rows") or [])[:10]]
+                return "\n".join(lines), ctx
         if body.get("no_match"):
             return (f"No task matches these filters ({scope}). People in the sheet: {', '.join(people_all)}; dates: "
                     f"{', '.join(opts.get('date') or [])}; statuses: {', '.join(opts.get('status') or [])}.", ctx)

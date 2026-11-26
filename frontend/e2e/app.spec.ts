@@ -28,6 +28,9 @@ const PAGES = [
   { path: "/target", h1: "Designer Order Target", api: "/api/target" },
   { path: "/flo-future", h1: "FLO Future", api: "/api/flo-future" },
   { path: "/vendor-rate", h1: "Vendor Rate", api: "/api/vendor-rate" },
+  { path: "/in-out-sale", h1: "In/Out Sale", api: "/api/in-out-sale" },
+  { path: "/daily-delegation", h1: "Daily Delegation", api: "/api/daily-delegation" },
+  { path: "/stock-ageing", h1: "Stock Ageing", api: "/api/stock-ageing" },
 ];
 
 function watch(page: Page) {

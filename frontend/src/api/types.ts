@@ -420,3 +420,18 @@ export interface TodoItem {
   date: string;
   age: number | null;
 }
+
+export interface StockAgeingData extends Envelope {
+  empty?: boolean;
+  no_match?: boolean;
+  demo: boolean;
+  as_on: string;
+  source: string;
+  notices?: Notice[];
+  options: Options;
+  kpis: Kpi[];
+  summary: { qty: number; value: number; designs: number; avg_age: number; old_qty: number; old_value: number; old_value_pct: number };
+  insights: string[];
+  charts: { value_by_age: Slice[]; qty_by_age: Slice[]; type_age: { rows: string[]; columns: string[]; values: number[][] } };
+  tables: { ages: TableData; types: TableData; stuck: TableData; designs: TableData };
+}

@@ -38,6 +38,7 @@ def split_questions(text: str) -> list[tuple[str, str]]:
     """Cuts a message into clauses: [(joiner, clause)], where joiner is what stood before the clause (", " or
     " and "). The engine joins back clauses that are not questions on their own using that joiner."""
     parts: list[tuple[str, str]] = []
+    text = re.sub(r"\bvisits?\s*(?:and|&|aur)\s*(meetings?)\b", r"visits \1", text, flags=re.I)
     for chunk in _HARD.split(text):
         first_c = True
         for piece in _COMMA.split(chunk):

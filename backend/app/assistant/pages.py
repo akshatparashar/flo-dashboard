@@ -142,6 +142,6 @@ FEATURES = [
 
 HELP = ("I answer questions about the numbers and pages of this dashboard, in English or Hinglish. Ask about POs, "
         "pending or received pcs, revenue and target, samples, this month's FLO Future promises (overdue, due "
-        "soon, outsource, meetings), fabric rates (cheapest vendor for crepe, a vendor's rate list), a designer, "
+        "soon, outsource, meetings), stock ageing (closing stock, old stock, design series), fabric rates (cheapest vendor for crepe, a vendor's rate list), a designer, "
         "team, client, vendor, fabricator or month. "
         "Add “in one word” for just the number, or “in detail” for a breakdown.")

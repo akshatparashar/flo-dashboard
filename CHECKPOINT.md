@@ -1,59 +1,79 @@
 # Checkpoint — where the project stands
 
-_Last updated: 2026-11-17. Read this first when picking the work up._
+_Last updated: 2026-11-26. Read this first when picking the work up._
 
-**Live at https://flo-dashboardd.vercel.app** (deployed 17 Nov on a personal Vercel account, not the floworker team).
-**Phone app:** Android preview APK, version 2 (17 Nov, chat keyboard fix) — Expo project `flo-ais-team/flo`,
-https://expo.dev/accounts/flo-ais-team/projects/flo/builds/c35a3aba-8160-4280-bc1a-0f78b019025c (signing key kept by EAS; new builds install over old ones).
-**Left:** check that APK on a real phone, then hand it to the owner ([Part B](#part-b--the-phone-app)).
+> [!IMPORTANT]
+> **Work on `more-sheets`, not `main`.** `main` (`977b158`) has none of the new tabs and must not be merged into,
+> committed to or rebased without the owner's say-so.
+
+## Branches
+
+| Branch | What is on it (26 Nov) |
+|---|---|
+| `more-sheets` | The integration branch: **everything below**, including Stock Ageing and the 26 Nov chatbot fixes. |
+| `feature/chatbot` | Chatbot work up to `a898a64` (merged into `more-sheets` on 26 Nov). Start from `more-sheets`: this branch lacks the later work. |
+| `backup/more-sheets-2026-11-24` | `more-sheets` as it was before the first chatbot merge. |
+| `main` | Untouched; what the 17 Nov deploy was made from. |
+
+## New since 17 Nov
+
+| Page / feature | Source | Notes |
+|---|---|---|
+| **FLO Future** `/flo-future` | `FLO_Future Nov 2026` (`1GFJRv_9…`) | Same rules as the old Streamlit tab (parity test). "Outsource Projects" is returned by the API and the chatbot but **not shown on the page** (left out when it was redrawn to the owner's screenshots). |
+| **Vendor Rate** `/vendor-rate` | `FABRIC PO 11` (`1yIn6Gs5…`): `Rate_Data`, `NEW RATE SHEET` | Filters, fabric comparison chart, master price table (fabric × vendor), one vendor's rate table on selection, sheet checks. KPI tiles, benchmark and master rate sheet were removed on the owner's request. |
+| **Clients Order Status** (was *Clients*) | Master sheet | Added: client pie, **FW ORDER'S** (`DASHBOARD` tab, April onwards), **expected deliveries by month** (pending `AU` by 60-day delivery date `AG`). |
+| **Designer Order Target** | | Renamed from *Target & revenue*; URL `/target` unchanged. |
+| **In/Out Sale** `/in-out-sale` | `IN/OUT/SALE 2026-27` (`1A6I90-k…`), tab `2026-27` | This year vs last year, animated running total, fabricator-wise incoming. "Share of incoming", "In-house and outsource" and "Promised against delivered" were removed from the page on request. |
+| **Daily Delegation** `/daily-delegation` | `Sir_Daily_Delegation_Tracker` (`10bQHge7…`), **only** the `Daily Schedule` tab | Never falls back to another tab. "Today's pending work" in red lines with the responsible person. No deadline column, so "open for" counts from the task date. Contains personal tasks: keep the passcode on. |
+| **Stock Ageing** `/stock-ageing` | **SQL snapshot**, not a sheet (see below) | FIFO ageing of finished-goods pcs, by age band and design-code series. |
+
+### Stock Ageing: it is a snapshot, not live
+
+- The API does **not** connect to SQL. It reads `stock_ageing.json` from the folder in `SQL_SNAPSHOT_DIR`.
+  The file holds company figures: keep it **outside the repo** (on the owner's PC: `E:\flo\flo-sql-data`).
+  Without it the page and the chatbot show made-up demo rows and say so (that includes any Vercel deploy).
+- Current snapshot: as on **25 Nov 2026** closing. It does not update by itself.
+- Rules: EasyTrade database `F2ETrade11`; PCS only (`sd_Mtrs = 0`); closing = yesterday; FIFO allocation of the
+  closing balance to the newest inward lots across the year tables; value = inward rate before GST.
+- File shape: `{as_on, source, control:{items, qty}, items:[{d, n, b, q1..q6, v1..v6, oi, li, wa}]}` (design code,
+  description, balance, pcs and value per age band, oldest / last inward date, weighted age). `control.qty` is the
+  ledger total; the page warns when the rows do not add up to it.
+- **Open:** the SQL query that builds the file is not in the repo (it is in the owner's `stock-ageing-report`
+  Claude skill). A refresh job or a real read-only SQL source is the next step.
+
+### Not built: FIFO creditors ageing
+
+Parked on the owner's instruction (26 Nov). The SQL database does not hold creditor bills (only vouchers pushed to
+Tally since 1 Oct); the owner's FIFO register is built from **Tally Prime**'s pending bills.
 
 ## Status at a glance
 
-| Part | State | Verified how |
+| Part | State | Verified how (26 Nov, demo data unless said) |
 |---|---|---|
-| **API** (`backend/`, FastAPI) | Working on the real Google Sheets | 128 pytest tests pass on demo data |
-| **Numbers vs the old Streamlit app** | Identical on the real sheets | Old app and new `/api` compared end to end on the live sheets (17 Nov): all 98 headline figures on all 8 pages match |
-| **Website** (`frontend/`, React + Vite) | Working | 31 Playwright tests; 19 unit tests; typecheck and build clean |
-| **FLO Assistant** (chatbot, `POST /api/chat`) | Working in English + Hinglish | Tested on real data; optional Gemini fallback tested with a real key |
-| **Live site** (Vercel) | **Deployed** — https://flo-dashboardd.vercel.app | 17 Nov: passcode required, `source: google`, all 5 sheets `ok`, all 8 pages answer, chatbot "total PO count" = 514 = *Total POs* |
-| **Phone app** (`mobile/`, Expo SDK 58) | Working, **not yet tried on a real phone** | Typecheck, tests and expo-doctor clean; Android + iOS bundles compile; builds point at the live site (`eas.json`) |
+| API (`backend/`) | Working | 409 pytest tests pass; every page endpoint answers 200 |
+| Website (`frontend/`) | Working | Playwright 42 passed, 8 skipped by design (desktop + phone, includes the new tabs); 19 unit tests; typecheck and build clean |
+| FLO Assistant | Answers for every new tab | Tested in English + Hinglish against copies of the real sheets and the stock snapshot |
+| New sheets on the live Google API | **Not verified** | No Google key on the development PC; checked against downloaded copies of the sheets |
+| Phone app (`mobile/`) | Renames only; **no screens for the new tabs** | Not tested since 17 Nov (dependencies not installed) |
+| Live site (Vercel) | Deployed 17 Nov from `main` | Not redeployed as part of this work; not re-checked |
+
+Chatbot fixes of 26 Nov: Stock Ageing questions; "December me kitne pcs aane wale hai" (answered 0 before); "which
+month has the most deliveries" (answered by client before); listing outsource projects; "visits and meetings"
+answered twice; a person's open tasks when none is marked *Pending*. Tests: `tests/test_assistant_stock_and_gaps.py`.
 
 > [!IMPORTANT]
-> **Why the new dashboard can look "wrong":** without a Google key the API serves built-in **demo data** (the top
-> bar shows a *Demo data* badge, and e.g. Total POs reads 170 instead of the real figure). That is not a calculation
-> bug. Check `GET /api/health` → `"source": "google"` before comparing numbers with the sheets.
+> **Why the dashboard can look "wrong":** without a Google key the API serves built-in **demo data** (the top bar
+> shows a *Demo data* badge). Check `GET /api/health` → `"source": "google"` before comparing numbers with the sheets.
 
-### In progress: branch `feature/flo-future` (not merged; the owner tests and merges it)
+## Before putting this live
 
-New **FLO Future** page (`/flo-future`, API `GET /api/flo-future`) for the monthly "FLO_Future Nov 2026" sheet
-(`1GFJRv_9gk2I1ARPxSEoEDsyzzJ1flYKnUtIuGV_DpZw`, shared with the dashboard's service account). It is the FLO Future
-tab of the old Streamlit dashboard (github.com/design355/sample-production-dashboard) rebuilt here with the same
-rules: that repo's `app.py` is now `legacy/streamlit_app.py` (it is the old legacy file + the FLO Future tab), and
-`tests/test_parity_flo_future.py` runs it next to the API and compares every KPI, table cell and sort order.
-Also run by hand on the real November rows for 4 "today" dates × 9 filter sets: identical (310 promised / 40 done /
-270 pending / 2 overdue on 19 Nov). Extras that change no old number: a follow-up list, a team table, sheet checks
-and the Outsource Projects tab in its own section. Overview has a FLO Future alert + highlights section; the chatbot
-answers its figures and lists items ("which samples are overdue").
-
-- Ignored on purpose: "FLO Future – Nov 2026 Promised Actions (Clean)", an earlier copy whose Designer Summary tab is
-  `#REF!`. Only the live sheet is read.
-- Next month: share the new copy with the service account and set `FLO_FUTURE_SHEET_ID` (no code change).
-- Not done yet: a FLO Future screen in the phone app (`mobile/`).
-
-### In progress: branch `feature/vendor-rate` (built on `feature/flo-future`; not merged)
-
-New **Vendor Rate** page (`/vendor-rate`, API `GET /api/vendor-rate`) for the rate tabs of **FABRIC PO 11**
-(`1yIn6Gs5WZMDg1CozR1OzIP34rIWBp2WOv2j7OgDeMDg`, newly shared with the service account). It is the Vendor Rate tab of the
-old Streamlit dashboard (github.com/design355/sample-production-dashboard; `legacy/streamlit_app.py`) rebuilt on the
-sheet's data: `Rate_Data` is read, `NEW RATE SHEET` marks vendors with a "44/36 WIDTH" column and is cross-checked.
-`tests/test_vendor_rate.py` runs the old vr_* functions next to the API (every filter set, every category).
-Page: Vendor / Fabric category / Width / search filters, the 5 KPIs, "Compare fabric category" with the
-"<category>: vendor-wise cheapest rate (★ = Best Price)" chart + table + per-piece table, the vendor benchmark, one
-table per vendor, the master rate sheet, and sheet checks. Chatbot answers rate questions.
-- Not verified on the live sheet through the API yet (no key in `backend/.env`); built from the sheet's own
-  dashboard tab. The NEW RATE SHEET block layout in particular should be checked once the key is added.
-- FABRIC PO 11 also holds the newer PO tabs (RV 1498 …); the Fabric PO page still reads FABRIC PO 10's INDEX.
-
+1. Share the **new sheets** with the service account as Viewer: FLO Future, FABRIC PO 11, IN/OUT/SALE 2026-27,
+   Sir_Daily_Delegation_Tracker (FLO Future and FABRIC PO 11 were reported shared; the other two are unconfirmed).
+2. Compare each new page with its sheet on `DATA_SOURCE=google`.
+3. Decide how Stock Ageing gets its data on the server (see above).
+4. Decide on Gemini phrasing: with a key set, answer text (now including task names and stock values) is sent to
+   Google unless `ASSISTANT_GEMINI_PHRASING=off`.
+5. Merge to `main` only when the owner says so.
 
 ## Part A — Deploy the dashboard on Vercel ✅ done 17 Nov
 
@@ -62,7 +82,7 @@ Kept for redeploys. Env vars were imported from a local, git-ignored `.env.verce
 `GOOGLE_SERVICE_ACCOUNT_JSON` in Vercel, redeploy, then delete the old key. A longer `DASHBOARD_PASSCODE` is advised.
 
 **Who:** whoever owns the Vercel account. **Needs:** access to this GitHub repo, a Google service-account key with
-Viewer access to the five sheets, a team passcode. Full steps: README → [Deploy to Vercel](README.md#deploy-to-vercel).
+Viewer access to every sheet in `backend/app/config.py` (nine files now), a team passcode. Full steps: README → [Deploy to Vercel](README.md#deploy-to-vercel).
 
 1. **Make fresh keys first.** The current Google service-account key and Gemini key have been shared in chats.
    - Google Cloud Console → *IAM → Service accounts* → `streamlit-dashboard-master@…` → *Keys* → **Add key (JSON)**,
@@ -87,7 +107,7 @@ Viewer access to the five sheets, a team passcode. Full steps: README → [Deplo
    - [ ] Robot button → "total PO count" answers with the same number.
 5. **Send the phone developer** the Vercel address and the passcode (not the Google key — the app never needs it).
 
-Expect the first page after an idle period to take **~12–15 s** (all five sheets are read on a cold start). After
+Expect the first page after an idle period to take **~12–15 s** (every sheet is read on a cold start). After
 that, data is cached for 60 s.
 
 ## Part B — The phone app
@@ -128,7 +148,7 @@ iPhone.
   `test_fabric_po_dashboard[0–5]`. The new API shows the placeholder text "CLIENT NAME" (PO **RV 1316**) and
   "DESIGNER NAME" (PO **SVV 12**) as *(BLANK)*; the old app showed them as names. No totals change. Fix: type the
   real client / designer into those two rows of the Fabric PO sheet (or teach the parity test the new rule).
-  The demo-data test run (128 tests) is unaffected.
+  The demo-data test run is unaffected.
 - **Sign-in is one shared passcode**, not personal logins. The 10-tries-a-minute lock is per server instance, so on
   Vercel keep the passcode long.
 - **Chatbot** is rule based and does growth %, differences, sums, averages, shares and basic arithmetic on dashboard
@@ -136,6 +156,7 @@ iPhone.
   talk (labels only) and for rewriting answers fluently (**this step sends the answer's figures to Google**; turn it
   off with `ASSISTANT_GEMINI_PHRASING=off`). Ambiguous wording ("supplier") can pick fabricators instead of fabric vendors.
 - `legacy/` (old Streamlit app) is kept only for the parity tests; remove once the old dashboard is retired.
+- "How many outsource projects" says the list is on the FLO Future page; the page does not show that table.
 
 ## How to run everything locally
 
@@ -156,7 +177,7 @@ point `GOOGLE_SERVICE_ACCOUNT_FILE` at them.
 ## Checks before every push
 
 ```bash
-cd backend  && python -m pytest                                 # 128 tests (demo data)
+cd backend  && python -m pytest                                 # 409 tests (demo data), ~5 min
 cd frontend && npm run typecheck && npm test && npx playwright test
 cd mobile   && npm run typecheck && npm run lint && npm test && npx expo-doctor
 # after changing a calculation, also on the real sheets:
@@ -165,6 +186,7 @@ cd backend  && PARITY_SOURCE=google python -m pytest tests/test_parity.py
 
 ## Recent history
 
+- **18–26 Nov:** the new tabs above, chatbot answers for them, merged on `more-sheets` (never `main`).
 - **17 Nov — real-sheet check:** the old Streamlit app (`legacy/streamlit_app.py`, identical to the
   `design355/sample-production-dashboard` app) and the new API were run on the same live sheets: all headline
   figures match. Reports of "wrong numbers" were the demo-data mode. This file and the README were updated as a

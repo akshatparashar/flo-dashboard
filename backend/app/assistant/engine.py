@@ -25,6 +25,7 @@ from . import calc, fmt, planner
 from .orders import OrderAnalyst
 from .status import StatusAnalyst
 from .extras import PageAnswers
+from . import stock
 from .pages import (NEW_PAGES, DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
 from ..dashboards.vendor_rate import category_in_text
@@ -1064,6 +1065,9 @@ class Assistant:
                 return res
         if q.intent == "record":
             return self._record(q, snap)
+        res = self._stock_ageing(q, snap)
+        if res:
+            return res
         res = self._status(q, snap, vocab) or self._orders(q, snap, vocab) or self._page_answers(q, snap)
         if res:
             return res
@@ -1499,6 +1503,19 @@ class Assistant:
         analyst = StatusAnalyst(snap.get, {k: p.label for k, p in PAGES.items()})
         return analyst, analyst.parse(q0, getattr(self, "_ctx_in", None), getattr(self, "_history", []) or [], vocab)
 
+    def _stock_ageing(self, q: Query, snap: Snapshot) -> dict | None:
+        """Old / closing / ageing stock questions (the Stock Ageing page, see stock.py)."""
+        previous = self._ctx_in.get("page") if isinstance(self._ctx_in, dict) else None
+        if not stock.matches(q.text, previous):
+            return None
+        try:
+            text = stock.answer(q.text, snap.get)
+        except (DataUnavailable, KeyError, ValueError, ZeroDivisionError):
+            return None
+        out = self._reply(text, None, {"page": "stock-ageing", "metric": None, "intent": "value", "entities": [],
+                                       "months": [], "dim": None}, intent="value")
+        return {**out, "page": "/stock-ageing", "page_label": "Stock Ageing"}
+
     def _status(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:
         """Total / completed / pending / completion % per designer, Production and FLO Future kept apart."""
         try:
@@ -1563,6 +1580,7 @@ class Assistant:
             tries.append(lambda: pa.target_achieved(q.text, q.months))
         tries.append(lambda: pa.daily_delegation(q.text, ents, q.months, q.explicit, self._ctx_in))
         tries.append(lambda: pa.fw_orders(q.text, ents, q.months, q.explicit))
+        tries.append(lambda: pa.outsource_projects(q.text, ents))
         tries.append(lambda: pa.deliveries(q.text, ents, q.months, q.explicit))
         tries.append(lambda: pa.in_out_sale(q.text, ents, q.months, q.explicit, self._ctx_in))
         if not others or others == ["fabricator"]:
