@@ -3,12 +3,13 @@ import { useDashboard } from "../api/hooks";
 import type { StockAgeingData } from "../api/types";
 import { Bars } from "../components/charts/Bars";
 import { Heatmap } from "../components/charts/Lists";
-import { DataTable } from "../components/DataTable";
+import { DataTable, DayLegend } from "../components/DataTable";
 import { FilterBar, MultiSelect } from "../components/Filters";
 import { Empty, KpiStrip, Notices, Panel, Section } from "../components/ui";
 import { useFilters } from "../lib/filters";
 import { fmtInt, inrShort } from "../lib/format";
 import { PageHead, PageState } from "./common";
+import { UnsoldInsights } from "../components/UnsoldInsights";
 
 /* Stock Ageing (FIFO): finished-goods pcs from EasyTrade, as on one day's closing. How old the stock is, what it is
    worth at inward cost, which design series hold the old stock and which designs to act on first. Every figure comes
@@ -86,7 +87,9 @@ export default function StockAgeing() {
                 </Panel>
               </Section>
 
-              <Section title="Age profile" sub="How much stock sits in each age band">
+              {d.unsold && <UnsoldInsights u={d.unsold} asOn={d.as_on} />}
+
+              <Section title="Stock by time in warehouse" sub="How much stock sits in each age band">
                 <div className="grid">
                   <div className="span-6">
                     <Panel title="Value at cost by age">
@@ -124,14 +127,16 @@ export default function StockAgeing() {
               {!!d.tables.stuck.rows.length && (
                 <Section title="Act on these first" sub="The 25 designs with the most value over 180 days old">
                   <Panel flush>
-                    <DataTable table={d.tables.stuck} name="stock_ageing_old_designs" maxRows={25} titleCaseFirst={false} csv />
+                    <DayLegend />
+                    <DataTable table={d.tables.stuck} name="stock_ageing_old_designs" maxRows={25} titleCaseFirst={false} csv dayHeat={["Avg age (days)"]} />
                   </Panel>
                 </Section>
               )}
 
               <Section title="All designs" sub="Highest value first">
                 <Panel flush>
-                  <DataTable table={d.tables.designs} name="stock_ageing_designs" maxRows={15} titleCaseFirst={false} csv />
+                  <DayLegend />
+                  <DataTable table={d.tables.designs} name="stock_ageing_designs" maxRows={15} titleCaseFirst={false} csv dayHeat={["Avg age (days)"]} />
                 </Panel>
               </Section>
             </>

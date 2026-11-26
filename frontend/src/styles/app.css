@@ -2159,3 +2159,154 @@ a.alert:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* Unsold Inventory Insights (Stock Ageing) */
+.unsold-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--gap);
+}
+.unsold-card {
+  --tone: var(--accent);
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  text-align: left;
+  padding: 14px 16px 16px;
+  background: var(--sheet);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  border-top: 4px solid var(--tone);
+  border-radius: var(--r-card);
+  cursor: pointer;
+  font: inherit;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.unsold-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--tone) 16%, transparent);
+}
+.unsold-card[aria-pressed="true"] {
+  outline: 2px solid var(--tone);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--tone) 6%, var(--sheet));
+}
+.unsold-card.step0 { --tone: var(--accent); }
+.unsold-card.step1 { --tone: var(--series-ref); }
+.unsold-card.step2 { --tone: var(--warn); }
+.unsold-card.step3 { --tone: var(--neg); }
+.unsold-card .uc-title {
+  font-size: var(--t-md);
+  font-weight: 620;
+}
+.unsold-card .uc-label,
+.unsold-card .uc-line {
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.unsold-card .uc-big {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+.unsold-card .uc-big em {
+  font-style: normal;
+  font-size: var(--t-sm);
+  color: var(--muted);
+  margin-left: 4px;
+}
+.unsold-card .uc-meter {
+  height: 5px;
+  border-radius: 99px;
+  background: var(--well);
+  overflow: hidden;
+  margin: 4px 0 6px;
+}
+.unsold-card .uc-meter i {
+  display: block;
+  height: 100%;
+  background: var(--tone);
+}
+.unsold-card .uc-sale {
+  display: grid;
+  gap: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+}
+.unsold-card .uc-sale b {
+  font-size: var(--t-md);
+  color: var(--tone);
+}
+.unsold-note {
+  margin: 10px 0 14px;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.unsold-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.unsold-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 18px 12px;
+}
+.unsold-tools .seg {
+  flex-wrap: wrap;
+}
+.unsold-count {
+  font-size: var(--t-sm);
+  color: var(--muted);
+  margin-left: auto;
+}
+.unsold-count b {
+  color: var(--ink);
+}
+@media (max-width: 1100px) {
+  .unsold-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .unsold-cards {
+    grid-template-columns: 1fr;
+  }
+  .unsold-count {
+    margin-left: 0;
+  }
+}
+
+/* Day counts tinted green -> yellow -> red (Stock Ageing tables); --h is the hue */
+.day-chip {
+  display: inline-block;
+  min-width: 44px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: hsl(var(--h) 85% 48% / 0.22);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px hsl(var(--h) 80% 42% / 0.55);
+}
+.day-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 18px 10px;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.day-legend .day-chip {
+  font-weight: 500;
+}

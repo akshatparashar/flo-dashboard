@@ -210,3 +210,33 @@ test("Vendor Rate: the vendor filter limits the vendor tables to the chosen vend
   await page.locator("#vr-vendor").selectOption(vendor);
   await expect(page.getByRole("heading", { level: 3, name: vendor, exact: true })).toBeVisible();
 });
+
+test("Stock Ageing: unsold cards match the API and drive the product list", async ({ page, request }) => {
+  const problems = watch(page);
+  await page.goto("/stock-ageing?nointro");
+  const body = await (await request.get(`${API}/api/stock-ageing`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })).json();
+  const u = body.unsold;
+  const n = (v: number) => Math.round(v).toLocaleString("en-IN");
+  await expect(page.getByRole("heading", { level: 2, name: "Unsold Inventory Insights" })).toBeVisible({ timeout: 30_000 });
+  const cards = page.getByRole("group", { name: "Unsold for more than" }).getByRole("button");
+  await expect(cards).toHaveCount(4);
+  for (let i = 0; i < 4; i++) {
+    await expect(cards.nth(i)).toContainText(`Over ${u.cards[i].days} days`);
+    await expect(cards.nth(i).locator(".uc-big")).toContainText(n(u.cards[i].pcs));
+    await expect(cards.nth(i).locator(".uc-sale")).toContainText(n(u.cards[i].no_sale.designs));
+  }
+  const count = page.locator(".unsold-count");
+  await cards.nth(3).click(); // over 365 days, measured by no-sale time
+  await expect(count).toContainText(`${n(u.cards[3].no_sale.designs)} designs`);
+  await page.getByRole("group", { name: "Measure" }).getByRole("button", { name: "Piece age" }).click();
+  await expect(count).toContainText(`${n(u.cards[3].designs)} designs`);
+  await page.getByRole("group", { name: "Measure" }).getByRole("button", { name: "No sale for" }).click();
+  await page.getByRole("group", { name: "Threshold" }).getByRole("button", { name: "Never sold" }).click();
+  await expect(count).toContainText(`${n(u.never.designs)} designs`);
+  await page.getByRole("group", { name: "Threshold" }).getByRole("button", { name: "All" }).click();
+  await expect(count).toContainText(`${n(u.totals.designs)} designs`);
+  // nothing may push the page sideways, on a phone either
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect(problems).toEqual([]);
+});
+

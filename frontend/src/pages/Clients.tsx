@@ -3,12 +3,12 @@ import type { ClientData } from "../api/types";
 import { Bars } from "../components/charts/Bars";
 import { Pie } from "../components/charts/Pie";
 import { Legend } from "../components/charts/common";
-import { Heatmap, Progress } from "../components/charts/Lists";
+import { Progress } from "../components/charts/Lists";
 import { DataTable } from "../components/DataTable";
 import { FilterBar, MonthFilter, MultiSelect } from "../components/Filters";
 import { KpiStrip, Notices, Panel, Section } from "../components/ui";
 import { useFilters } from "../lib/filters";
-import { fmtInt, shortMonth } from "../lib/format";
+import { fmtInt } from "../lib/format";
 import { PageHead, PageState } from "./common";
 
 const KEYS = ["month", "client", "order_type", "category"];
@@ -52,7 +52,6 @@ export default function Clients() {
           const pct = done ? (k.received / done) * 100 : 0;
           const monthly = d.tables.monthly;
           const bodyRows = monthly.rows.filter((_, i) => !monthly.meta[i].kind);
-          const cat = d.charts.category_by_month;
           return (
             <>
               <PageHead
@@ -140,17 +139,8 @@ export default function Clients() {
                 </div>
               </Section>
 
-              <Section title="Categories by month" sub="Order pcs, darker = more">
+              <Section title="Categories by month" sub="Order pcs">
                 <div className="grid">
-                  <div className="span-12">
-                    <Panel>
-                      {cat.series.length ? (
-                        <Heatmap rows={cat.series.map((s) => s.name)} columns={cat.categories.map(shortMonth)} values={cat.series.map((s) => s.values)} label="Order pcs per category per month" full />
-                      ) : (
-                        <div className="state">No category data for these filters.</div>
-                      )}
-                    </Panel>
-                  </div>
                   <div className="span-12">
                     <Panel title="Category table" flush>
                       <DataTable table={d.tables.categories} name="client_categories" maxRows={13} titleCaseFirst={false} />

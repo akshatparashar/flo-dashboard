@@ -434,4 +434,28 @@ export interface StockAgeingData extends Envelope {
   insights: string[];
   charts: { value_by_age: Slice[]; qty_by_age: Slice[]; type_age: { rows: string[]; columns: string[]; values: number[][] } };
   tables: { ages: TableData; types: TableData; stuck: TableData; designs: TableData };
+  unsold?: UnsoldData;
+}
+
+export interface UnsoldCard {
+  days: number;
+  pcs: number;
+  value: number;
+  designs: number;
+  pcs_pct: number;
+  value_pct: number;
+  no_sale: { designs: number; pcs: number; value: number; value_pct: number } | null;
+}
+
+export interface UnsoldData {
+  has_sales: boolean;
+  cards: UnsoldCard[];
+  totals: { pcs: number; value: number; designs: number };
+  compare: SeriesChart;
+  bands: { label: string; designs: number; pcs: number; value: number }[];
+  never: { designs: number; pcs: number; value: number; value_pct: number } | null;
+  heat: { rows: string[]; columns: string[]; values: number[][] } | null;
+  dated_from: { returns: number; adjustments: number };
+  table: TableData;
+  insights: string[];
 }

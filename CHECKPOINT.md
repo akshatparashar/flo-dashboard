@@ -42,6 +42,14 @@ _Last updated: 2026-11-26 (evening: FLO World UI). Read this first when picking 
 - **Open:** the SQL query that builds the file is not in the repo (it is in the owner's `stock-ageing-report`
   Claude skill). A refresh job or a real read-only SQL source is the next step.
 
+**Unsold Inventory Insights** (section of the same page, `backend/app/dashboards/unsold.py`): two separate measures,
+piece age (FIFO bands; "over 30 / 90 / 180 / 365 days" are nested) and no-sale days = as-on date minus the later of
+the last sale and the arrival of the oldest piece still in stock. It needs the snapshot to carry `has_sales: true` and
+per row `ls` (last `SL` sale date; absent = none since Apr 2023), `sa`, `s30`..`s365` (pcs sold), `fi` (first inward),
+`rsr` / `radj` / `rop` (closing pcs whose lot is a sales return / stock count or journal entry / opening). Without them
+only piece age is shown. On 26 Nov the 25 Nov snapshot was re-pulled with these fields: every earlier field was
+identical, and the over-N and no-sale counts matched an independent SQL calculation.
+
 ### Not built: FIFO creditors ageing
 
 Parked on the owner's instruction (26 Nov). The SQL database does not hold creditor bills (only vouchers pushed to

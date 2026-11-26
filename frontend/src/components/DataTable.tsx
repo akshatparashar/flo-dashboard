@@ -11,6 +11,33 @@ interface Props {
   maxHeight?: number;
   titleCaseFirst?: boolean;
   csv?: boolean;
+  dayHeat?: string[];       // column labels holding "days" figures, tinted green -> yellow -> red
+}
+
+/** Colour of a day count: green when fresh, yellow around three to six months, red from a year on. */
+const DAY_STOPS: [number, number][] = [[0, 135], [30, 105], [90, 55], [180, 38], [365, 0]];
+export function dayHue(days: number): number {
+  if (days <= DAY_STOPS[0][0]) return DAY_STOPS[0][1];
+  for (let i = 1; i < DAY_STOPS.length; i++) {
+    const [d1, h1] = DAY_STOPS[i];
+    const [d0, h0] = DAY_STOPS[i - 1];
+    if (days <= d1) return Math.round(h0 + ((days - d0) / (d1 - d0)) * (h1 - h0));
+  }
+  return DAY_STOPS[DAY_STOPS.length - 1][1];
+}
+
+/** What the colours of the day columns mean. */
+export function DayLegend() {
+  return (
+    <div className="day-legend">
+      <span>Days:</span>
+      {([[0, "0-30"], [60, "31-90"], [135, "91-180"], [270, "181-365"], [400, "over 365"]] as [number, string][]).map(([d, label]) => (
+        <span key={label} className="day-chip" style={{ ["--h" as string]: dayHue(d) }}>
+          {label}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function rateClass(v: Cell, col: Column, muted: boolean, kind: string | null): string | null {
@@ -20,7 +47,7 @@ function rateClass(v: Cell, col: Column, muted: boolean, kind: string | null): s
 
 /** Sticky header, right-aligned tabular figures, TOTAL row pinned at the bottom, the key column marked with a thin
  *  bar. Rows arrive in the server's order (same as the original dashboards); clicking a header re-sorts locally. */
-export function DataTable({ table, name, maxRows = 12, maxHeight, titleCaseFirst = true, csv = true }: Props) {
+export function DataTable({ table, name, maxRows = 12, maxHeight, titleCaseFirst = true, csv = true, dayHeat }: Props) {
   const [sort, setSort] = useState<{ col: number; dir: 1 | -1 } | null>(null);
   const [all, setAll] = useState(false);
   const keyIdx = table.columns.findIndex((c) => c.key === table.key_col);
@@ -94,6 +121,15 @@ export function DataTable({ table, name, maxRows = 12, maxHeight, titleCaseFirst
                   const isKey = ci === keyIdx && !m.kind;
                   const zero = isNum(v) && v === 0 && ci > 0;
                   const cls = [isKey ? "key" : "", zero && !rc ? "zero" : ""].join(" ").trim() || undefined;
+                  const days = dayHeat?.includes(col.label) && isNum(v) && !m.kind ? v : null;
+                  if (days !== null)
+                    return (
+                      <td key={ci}>
+                        <span className="day-chip" style={{ ["--h" as string]: dayHue(days) }}>
+                          {text}
+                        </span>
+                      </td>
+                    );
                   return (
                     <td key={ci} className={cls} title={ci === 0 && typeof v === "string" ? v : undefined} style={leftCols.has(ci) ? { textAlign: "left" } : undefined}>
                       {rc ? <span className={`rate ${rc}`}>{text}</span> : text}

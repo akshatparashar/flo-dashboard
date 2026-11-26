@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from ..tables import kpi, notice, table
+from .unsold import unsold_insights
 
 BUCKETS = ["0-30 days", "31-60 days", "61-90 days", "91-180 days", "181-365 days", "Over 365 days"]
 Q = [f"q{i}" for i in range(1, 7)]
@@ -38,6 +39,7 @@ def load_snapshot():
 
 def demo_snapshot(seed: int = 7):
     rng = random.Random(seed)
+    sales = random.Random(seed + 1)
     names = ["KURTA WITH PANT", "CO-ORD SET", "GOWN DRESS", "KAFTAN", "KURTA PANT DUPATTA", "PRINTED TOP"]
     as_on = date(2026, 11, 25)
     items = []
@@ -50,8 +52,12 @@ def demo_snapshot(seed: int = 7):
                "oi": str(as_on - timedelta(days=age)), "li": str(as_on - timedelta(days=age)), "wa": age}
         row.update({k: 0 for k in Q + V})
         row[Q[slot]], row[V[slot]] = b, b * rate
+        if i % 5:                                       # 1 design in 5 has no sale on record
+            sold_ago = sales.randint(0, 500)
+            sold = sales.randint(1, 60)
+            row.update({"ls": str(as_on - timedelta(days=sold_ago)), "sa": sold, "s90": sold if sold_ago <= 90 else 0})
         items.append(row)
-    return {"as_on": str(as_on), "source": "made-up demo rows", "unit": "PCS", "items": items, "demo": True,
+    return {"as_on": str(as_on), "source": "made-up demo rows", "unit": "PCS", "items": items, "demo": True, "has_sales": True,
             "control": {"items": len(items), "qty": sum(x["b"] for x in items)}}
 
 
@@ -159,6 +165,7 @@ def stock_ageing_dashboard(snapshot, f):
         "summary": {"qty": qty, "value": value, "designs": int(len(x)), "avg_age": round(avg_age),
                     "old_qty": old_q, "old_value": old_v, "old_value_pct": _share(old_v, value)},
         "insights": _insights(x, qty, value, bq, bv, tt, stuck),
+        "unsold": unsold_insights(x, snapshot["as_on"], bool(snapshot.get("has_sales")), Q, V),
         "charts": {
             "value_by_age": [{"label": b, "value": v} for b, v in zip(BUCKETS, bv)],
             "qty_by_age": [{"label": b, "value": v} for b, v in zip(BUCKETS, bq)],
