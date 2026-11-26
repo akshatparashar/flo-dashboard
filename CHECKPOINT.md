@@ -1,17 +1,18 @@
 # Checkpoint — where the project stands
 
-_Last updated: 2026-11-26 (evening: FLO World UI). Read this first when picking the work up._
+_Last updated: 2026-11-26 (late: English + Hinglish chatbot, live EasyTrade for Stock Ageing). Read this first._
 
 > [!IMPORTANT]
 > **26 Nov: the owner moved everything to `main`** (the new tabs, the chatbot fixes and the FLO World UI). `main` is
-> now the working branch; `more-sheets` stops at `49f4eca`. The **phone app (`mobile/`) was left as it is on
+> now the working branch and **every push to it redeploys the live site**. `more-sheets` got one more commit
+> (`ce7404c`, Unsold Inventory Insights), merged into `main` the same evening. The **phone app (`mobile/`) was left as it is on
 > purpose**: it will be rewritten later for the new version, and the new build handed to the owner then.
 
 ## Branches
 
 | Branch | What is on it (26 Nov) |
 |---|---|
-| `more-sheets` | The new tabs, Stock Ageing and the 26 Nov chatbot fixes (`49f4eca`); all of it is now on `main` too. |
+| `more-sheets` | The new tabs, Stock Ageing, the 26 Nov chatbot fixes and Unsold Inventory Insights (`ce7404c`); all of it is on `main` too. |
 | `feature/chatbot` | Chatbot work up to `a898a64` (merged into `more-sheets` on 26 Nov). Start from `more-sheets`: this branch lacks the later work. |
 | `backup/more-sheets-2026-11-24` | `more-sheets` as it was before the first chatbot merge. |
 | `main` | Everything: `more-sheets` plus the FLO World UI (pushed 26 Nov on the owner's instruction). Before that, `977b158` (the 17 Nov deploy). |
@@ -26,21 +27,45 @@ _Last updated: 2026-11-26 (evening: FLO World UI). Read this first when picking 
 | **Designer Order Target** | | Renamed from *Target & revenue*; URL `/target` unchanged. |
 | **In/Out Sale** `/in-out-sale` | `IN/OUT/SALE 2026-27` (`1A6I90-k…`), tab `2026-27` | This year vs last year, animated running total, fabricator-wise incoming. "Share of incoming", "In-house and outsource" and "Promised against delivered" were removed from the page on request. |
 | **Daily Delegation** `/daily-delegation` | `Sir_Daily_Delegation_Tracker` (`10bQHge7…`), **only** the `Daily Schedule` tab | Never falls back to another tab. "Today's pending work" in red lines with the responsible person. No deadline column, so "open for" counts from the task date. Contains personal tasks: keep the passcode on. |
-| **Stock Ageing** `/stock-ageing` | **SQL snapshot**, not a sheet (see below) | FIFO ageing of finished-goods pcs, by age band and design-code series. |
+| **Stock Ageing** `/stock-ageing` | **EasyTrade** (SQL Server), live through its MCP server, else a snapshot file (see below) | FIFO ageing of finished-goods pcs, by age band and design-code series, plus Unsold Inventory Insights. |
 
-### Stock Ageing: it is a snapshot, not live
+### Stock Ageing: live from EasyTrade (code ready, **not yet switched on**)
 
-- The API does **not** connect to SQL. It reads `stock_ageing.json` from the folder in `SQL_SNAPSHOT_DIR`.
-  The file holds company figures: keep it **outside the repo** (on the owner's PC: `E:\flo\flo-sql-data`).
-  Without it the page and the chatbot show made-up demo rows and say so (that includes any Vercel deploy).
-- Current snapshot: as on **25 Nov 2026** closing. It does not update by itself.
+**To switch it on** (the owner has the address and token of EasyTrade's read-only MCP server):
+1. `backend/.env` and Vercel → Settings → Environment Variables (Production + Preview):
+   `EASYTRADE_MCP_URL=https://…ngrok-free.dev/ai/mcp` and `EASYTRADE_MCP_TOKEN=<token>`. The token is a secret:
+   never in git, a chat or a screenshot.
+2. Run one pull by hand and tie it to EasyTrade's as-on stock report:
+   `cd backend; .venv\Scripts\python -m app.sources.easytrade --out C:\flo-sql-data`
+   (prints designs, closing pcs, the ledger total and negative-stock items).
+3. Redeploy on Vercel (env changes need a new deploy). The *Demo rows* warning goes and the source line reads
+   "EasyTrade F2ETrade11 (live, via MCP)".
+
+How it works (`backend/app/sources/easytrade.py`, tests in `tests/test_easytrade.py` against a fake MCP server):
+- JSON-RPC over Streamable HTTP: initialize → `tools/call run_query` (SELECT only, 1,000 rows a page, 30 s).
+- Yesterday's closing, pulled **about once a day**: 5–7 requests (connect, table list, ledger total, one query per
+  1,000 designs), cached in memory and in `EASYTRADE_CACHE_DIR` (default the temp folder) for that date. The MCP
+  server has a **monthly request limit**; on Vercel each new server instance may pull once more on a cold start.
+- If EasyTrade cannot be reached (the PC behind the ngrok tunnel is off, a wrong token, the limit used up): the last
+  good pull with a warning, then the `SQL_SNAPSHOT_DIR` file, then demo rows. After a failure it waits 10 minutes
+  before asking again.
+- The FIFO query is the one from the owner's `stock-ageing-report` skill, grouped by product + design.
+- **Not verified on the real server yet:** this PC has no token, so the code was only run against a fake server.
+  Check before relying on it: (a) the totals of the first pull match EasyTrade; (b) the sales fields. `ls`, `sa`
+  and `s30`..`s365` are computed from `SL` vouchers (`s30` = pcs sold in the last 30 days, as-on day included) and
+  `rop` from `OP` lots. **`rsr` / `radj` (sales return / adjustment lots) are not filled**: their EasyTrade voucher
+  codes are not known here, so the "dated from returns / adjustments" note shows 0. Compare one pull with the 25 Nov
+  snapshot (which has them) and adjust `fifo_sql` if any field differs.
+
+Without the two variables nothing changes: the API reads `stock_ageing.json` from the folder in
+`SQL_SNAPSHOT_DIR` (on the owner's PC: `E:\flo\flo-sql-data`, **outside the repo**), else shows made-up demo
+rows and says so. The last snapshot file is as on **25 Nov 2026** closing.
 - Rules: EasyTrade database `F2ETrade11`; PCS only (`sd_Mtrs = 0`); closing = yesterday; FIFO allocation of the
   closing balance to the newest inward lots across the year tables; value = inward rate before GST.
 - File shape: `{as_on, source, control:{items, qty}, items:[{d, n, b, q1..q6, v1..v6, oi, li, wa}]}` (design code,
   description, balance, pcs and value per age band, oldest / last inward date, weighted age). `control.qty` is the
   ledger total; the page warns when the rows do not add up to it.
-- **Open:** the SQL query that builds the file is not in the repo (it is in the owner's `stock-ageing-report`
-  Claude skill). A refresh job or a real read-only SQL source is the next step.
+- The query that builds it is now in the repo (`easytrade.fifo_sql`), from the owner's `stock-ageing-report` skill.
 
 **Unsold Inventory Insights** (section of the same page, `backend/app/dashboards/unsold.py`): two separate measures,
 piece age (FIFO bands; "over 30 / 90 / 180 / 365 days" are nested) and no-sale days = as-on date minus the later of
@@ -54,6 +79,22 @@ identical, and the over-N and no-sale counts matched an independent SQL calculat
 
 Parked on the owner's instruction (26 Nov). The SQL database does not hold creditor bills (only vouchers pushed to
 Tally since 1 Oct); the owner's FIFO register is built from **Tally Prime**'s pending bills.
+
+## FLO Assistant: English and Hinglish (26 Nov late)
+
+The owner wants **English and Hinglish only** (no Devanagari replies). The reply follows the question.
+- With Gemini (the key is set on Vercel): Gemini rewrites the answer in Hinglish, every figure checked. Its prompt
+  now asks for English or Hinglish only, office-WhatsApp style, never Devanagari.
+- Without Gemini, or when it fails / times out / changes a figure: `backend/app/assistant/hinglish.py` rewrites the
+  common answer shapes line by line ("Total POs **170 POs** hai (ab tak ke sabhi mahine)", "Sabse zyada Pending Pcs
+  **MAHI EXPORTS** (fabricator) ke paas hai", growth / decline, top-N, month-wise, "X page par dikhega", stock lines,
+  target achievement). Tables and long explanations stay in English. "namaste" / "shukriya" get Hinglish replies.
+- A question in Devanagari is still read by Gemini (on Vercel) and answered in Hinglish; without Gemini it is asked
+  to type in English or Hinglish.
+- Hinglish detection words were widened (`_HINDI_WORDS` in `text.py`: kahan, purana, sasta, dikhega, dono, …).
+- Checked on demo data with 40 English and Hinglish questions from the tests and docs: all understood; Hinglish
+  replies keep the same figures as the English ones. Tests: `tests/test_assistant_hinglish.py` (33).
+- To teach a new answer shape: add a pattern to `_LINES` in `hinglish.py` and a case to `CASES` in the test.
 
 ## FLO World UI (26 Nov evening, on `main`)
 
@@ -227,6 +268,8 @@ cd backend  && PARITY_SOURCE=google python -m pytest tests/test_parity.py
 
 ## Recent history
 
+- **26 Nov late:** merged `more-sheets` (Unsold Inventory Insights); chatbot replies in English or Hinglish
+  without needing Gemini; Stock Ageing can read EasyTrade live through its MCP server (needs the two env vars).
 - **26 Nov evening:** FLO World UI (landing, hub, coming-soon rooms), footer, data-flow height fix; see above.
 - **18–26 Nov:** the new tabs above, chatbot answers for them, merged on `more-sheets`, then (26 Nov) on `main`.
 - **17 Nov — real-sheet check:** the old Streamlit app (`legacy/streamlit_app.py`, identical to the
@@ -250,6 +293,8 @@ cd backend  && PARITY_SOURCE=google python -m pytest tests/test_parity.py
 | Chatbot understanding | `backend/app/assistant/engine.py`, `text.py` (words, Hinglish), `pages.py` |
 | Sheet IDs / tabs | `backend/app/config.py` → `SHEET_REGISTRY` |
 | Website page | `frontend/src/pages/` |
+| Hinglish replies | `backend/app/assistant/hinglish.py` (patterns), `text.py` (`_HINDI_WORDS`, `language_of`) |
+| EasyTrade (Stock Ageing) | `backend/app/sources/easytrade.py` (MCP client, FIFO SQL, daily cache) |
 | Landing / FLO World / label rooms | `frontend/src/world/` (labels list in `brands.ts`) |
 | Phone screen | `mobile/src/app/` (tabs in `(tabs)/`), shared UI in `mobile/src/components/` |
 | Deploy config | `vercel.json`, `.vercelignore`, `backend/.python-version`, `mobile/eas.json` |

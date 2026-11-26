@@ -1,7 +1,8 @@
 # FLO Assistant
 
 A chatbot on every page of the dashboard (the robot in the bottom-right corner). It answers questions about the
-dashboard's numbers and pages, in English, Hinglish or Hindi, and quotes exactly the figures the pages show.
+dashboard's numbers and pages in **English or Hinglish** (it replies in the language of the question) and quotes
+exactly the figures the pages show.
 
 ## How it answers
 
@@ -22,8 +23,8 @@ dashboard's numbers and pages, in English, Hinglish or Hindi, and quotes exactly
      rules' answer, is read by Gemini (English, Hinglish, Hindi in Devanagari, spelling mistakes). It receives the
      question and the dashboard's labels, **never any figures**, and returns which label / names / months /
      operation were meant; the rules then fetch the figures and do the maths. Gemini's reading replaces the rules'
-     answer only if it explains at least as much of the question. Hindi (Devanagari) questions always go through it,
-     because the rules read Roman letters only.
+     answer only if it explains at least as much of the question. A question typed in Devanagari always goes
+     through it (the rules read Roman letters only) and is answered in Hinglish.
   2. **Small talk.** Greetings and off-topic questions get a short friendly reply (no figures).
   3. **Fluent answers.** The finished answer is rewritten in the language of the question (the language is
      detected by rules and passed in). **This is the one step that sends figures to Google** (the answer text, e.g.
@@ -31,6 +32,30 @@ dashboard's numbers and pages, in English, Hinglish or Hindi, and quotes exactly
      any figure differs, the plain answer is used instead. One-word answers are never rewritten. Switch this step
      off with `ASSISTANT_GEMINI_PHRASING=off`. Check Google's terms for the key you use: free-tier API content
      may be used to improve Google's products.
+
+## English and Hinglish replies
+
+The reply follows the question: English in, English out; Hinglish in ("is mahine ki sales kitni hai"), Hinglish
+out. A question counts as Hinglish when it holds a Hindi word the rules know (`_HINDI_WORDS` in `text.py`: kitna,
+hai, batao, mahine, sabse, kahan, purana, ...).
+
+1. **With Gemini** (the live site has a key): Gemini rewrites the answer in fluent Hinglish, with every figure
+   checked against the original.
+2. **Without Gemini**, or when its call fails, times out or changes a figure: the rules' own rewrite
+   (`backend/app/assistant/hinglish.py`) turns the common answer shapes into Hinglish, line by line:
+
+   | English answer | Hinglish reply |
+   |---|---|
+   | Total revenue in November-26 is **₹4.06 Cr**. | November-26 mein Total revenue **₹4.06 Cr** hai. |
+   | Total POs is **170 POs** (all months so far). | Total POs **170 POs** hai (ab tak ke sabhi mahine). |
+   | **MAHI EXPORTS** is the fabricator with the highest Pending Pcs: **1,758 pcs**. | Sabse zyada Pending Pcs **MAHI EXPORTS** (fabricator) ke paas hai: **1,758 pcs**. |
+   | … **₹80.75 L lower**, a **16.6% decline** compared with October-26. | … Yani **₹80.75 L kam**, October-26 ke mukable **16.6% giravat**. |
+   | **Delayed POs** is on the **Fabric PO** page. | **Delayed POs** **Fabric PO** page par dikhega. |
+
+   Figures, names, units, months and bold are copied exactly (`tests/test_assistant_hinglish.py` checks every
+   shape). Tables and long explanations keep their English wording, apart from fixed phrases such as "all months so
+   far". To teach it a new answer shape, add a pattern to `_LINES` in `hinglish.py` and a case to the test.
+3. "namaste" / "shukriya" get a Hinglish greeting; "in one word" answers are never rewritten.
 
 ## What people can ask
 

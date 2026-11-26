@@ -1,8 +1,10 @@
 """Stock Ageing (FIFO) dashboard: finished-goods PCS stock from EasyTrade (SQL Server, F2ETrade11).
 
-The dashboard server does not connect to SQL itself. It reads a snapshot file, stock_ageing.json, from the folder in
-SQL_SNAPSHOT_DIR (one row per design with the closing pcs already split FIFO into age buckets). The file holds company
-figures, so it lives outside the repository. Without it, made-up demo rows are shown and the page says so.
+With EASYTRADE_MCP_URL and EASYTRADE_MCP_TOKEN set, the server reads EasyTrade through its read-only MCP server
+(sources/easytrade.py: yesterday's closing, pulled once a day and cached). Otherwise it reads a snapshot file,
+stock_ageing.json, from the folder in SQL_SNAPSHOT_DIR (one row per design with the closing pcs already split FIFO
+into age buckets). The file holds company figures, so it lives outside the repository. Without either, made-up demo
+rows are shown and the page says so.
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from ..tables import kpi, notice, table
+from ..sources import easytrade
 from .unsold import unsold_insights
 
 BUCKETS = ["0-30 days", "31-60 days", "61-90 days", "91-180 days", "181-365 days", "Over 365 days"]
@@ -29,12 +32,24 @@ def design_series(code: str) -> str:
 
 
 def load_snapshot():
+    """Live EasyTrade when EASYTRADE_MCP_URL / _TOKEN are set (yesterday's closing, pulled once a day), else the
+    SQL_SNAPSHOT_DIR file, else demo rows. A failed live pull falls back to the last good one, then the file, and the
+    page says so (``note``)."""
+    note = None
+    if easytrade.configured():
+        snap, problem = easytrade.live_snapshot()
+        if snap and not problem:
+            return {**snap, "demo": False}
+        note = (problem or "EasyTrade could not be reached") + (
+            f"; showing the last pull, as on {snap['as_on']}." if snap else "; showing the snapshot file instead.")
+        if snap:
+            return {**snap, "demo": False, "note": note}
     folder = os.getenv("SQL_SNAPSHOT_DIR", "").strip()
     path = os.path.join(folder, "stock_ageing.json") if folder else ""
     if path and os.path.isfile(path):
         with open(path, encoding="utf-8") as fh:
-            return {**json.load(fh), "demo": False}
-    return demo_snapshot()
+            return {**json.load(fh), "demo": False, **({"note": note} if note else {})}
+    return {**demo_snapshot(), **({"note": note} if note else {})}
 
 
 def demo_snapshot(seed: int = 7):
@@ -91,7 +106,10 @@ def stock_ageing_dashboard(snapshot, f):
     d = _frame(snapshot)
     head = {"as_on": pd.Timestamp(snapshot["as_on"]).strftime("%d %b %Y"), "source": snapshot.get("source", ""),
             "demo": bool(snapshot.get("demo"))}
-    notices = [notice("Demo rows: set SQL_SNAPSHOT_DIR to show the EasyTrade snapshot.", "warning")] if head["demo"] else []
+    notices = [notice("Demo rows: set EASYTRADE_MCP_URL and EASYTRADE_MCP_TOKEN (live EasyTrade) or SQL_SNAPSHOT_DIR "
+                      "(a snapshot file) to show real stock.", "warning")] if head["demo"] else []
+    if snapshot.get("note"):
+        notices.append(notice(snapshot["note"], "warning"))
     if d.empty:
         return {**head, "empty": True, "notices": notices}
     options = {"type": sorted(d["type"].unique()), "age": BUCKETS}

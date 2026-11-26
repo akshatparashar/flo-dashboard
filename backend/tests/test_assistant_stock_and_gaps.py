@@ -29,8 +29,8 @@ def test_stock_summary(client, question):
     body = client.get("/api/stock-ageing").json()
     a = chat(client, question)
     assert a["page"] == "/stock-ageing" and a["page_label"] == "Stock Ageing"
-    assert f"Closing stock: **{fmt.fmt_int(body['summary']['qty'])} pcs**" in a["answer"]
-    assert "demo rows" in a["answer"]                     # made-up data is always called out
+    assert "Closing stock:" in a["answer"] and f"**{fmt.fmt_int(body['summary']['qty'])} pcs**" in a["answer"]
+    assert "demo rows" in a["answer"]                     # made-up data is always called out (English or Hinglish)
 
 
 @pytest.mark.parametrize("question,buckets", [("stock value over 180 days", [4, 5]),
@@ -53,7 +53,7 @@ def test_series_number_is_not_an_age(client):
 def test_stock_follow_up(client):
     first = chat(client, "closing stock kitna hai")
     follow = chat(client, "aur over 365 days?", first["conversation_id"])
-    assert follow["page"] == "/stock-ageing" and "over 365 days old" in follow["answer"]
+    assert follow["page"] == "/stock-ageing" and ("over 365 days old" in follow["answer"] or "365 din se purana" in follow["answer"])
 
 
 def test_other_stock_words_are_left_to_their_pages():

@@ -183,12 +183,16 @@ _HINDI_WORDS = frozenset("""
 kitna kitne kitni hai hain ka ki ke ko mein mahine mahina mahine batao bataiye bata dikhao dikha sabse zyada jyada
 aur tak hua hue hui kya kaun konsa kaunsa abhi pichle pichla pichhle fark badhi badha badhe ghata ghati milake
 milakar karo nahi paas wala wali liye maal kamai kapda yeh woh isme usme isse uska iska hamara humara chahiye
+kahan kab kyun kyu kaise kaisa purana purani puraana wale aane aayega dikhega dikhta dikhata sasta sasti mehenga
+mehnga sabhi saare har tha thi hoga hogi bachi baki baaki dono kiska kiski kiske jab batana dijiye chahie samjhao
+namaste shukriya dhanyavad
 """.split())
 
 
 def language_of(text: str) -> str:
-    """'Hindi (Devanagari)', 'Hinglish (Hindi written in English letters)' or 'English'; used to pick the reply language."""
+    """'Hinglish (Hindi written in English letters)' or 'English'; used to pick the reply language. The dashboard
+    answers in English and Hinglish only, so a question typed in Devanagari is answered in Hinglish."""
     if re.search(r"[\u0900-\u097f]", text or ""):
-        return "Hindi in Devanagari script"
+        return "Hinglish (Hindi written in English letters)"
     words = set(raw_tokens(text))
     return "Hinglish (Hindi written in English letters)" if words & _HINDI_WORDS else "English"

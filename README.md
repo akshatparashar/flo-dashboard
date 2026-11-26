@@ -7,7 +7,7 @@
 
 # FLO Operations Dashboard
 
-**Live production, orders, samples, fabric and revenue for FLO — read straight from Google Sheets, refreshed every minute, on any phone or PC.**
+**Live production, orders, samples, fabric, revenue and stock for FLO — read straight from Google Sheets and EasyTrade, refreshed every minute, on any phone or PC.**
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-1f5fd1?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-read--only%20API-1f5fd1?logo=fastapi&logoColor=white)
@@ -16,7 +16,7 @@
 ![Tests](https://img.shields.io/badge/tests-150%20passing-18794a)
 ![Sheets access](https://img.shields.io/badge/Google%20Sheets-read--only-0b1a33)
 
-[Screens](#screens) · [Dashboards](#the-eight-dashboards) · [Architecture](#how-it-works) · [Quick start](#quick-start) · [Configuration](#configuration) · [API](#api-reference) · [Testing](#testing) · [Deploy](#deploy-to-vercel) · [Phone app](#phone-app) · [Design](#design-system) · [Roadmap](#roadmap)
+[Screens](#screens) · [Dashboards](#the-dashboards) · [Architecture](#how-it-works) · [Quick start](#quick-start) · [Configuration](#configuration) · [API](#api-reference) · [Testing](#testing) · [Deploy](#deploy-to-vercel) · [Phone app](#phone-app) · [Design](#design-system) · [Roadmap](#roadmap)
 
 </div>
 
@@ -90,9 +90,10 @@ the test suite runs it side by side with the new API on the same sheet data, com
 | **Phone and PC** | A real phone layout with its own navigation, not a shrunken desktop. On a PC the sidebar folds into an icon rail (button in the top bar, or press <kbd>[</kbd>) for a full-width view. Light and dark mode follow the device. |
 | **Private** | Optional team passcode; signed tokens; no data reaches the browser before sign-in. |
 | **Export** | Every table downloads as a CSV that opens cleanly in Excel. |
-| **Ready for AI** | The same endpoints are designed to be the tools of an AI assistant ([`docs/CHATBOT.md`](docs/CHATBOT.md)). |
+| **FLO Assistant** | A chatbot on every page that answers in **English or Hinglish** (whichever you type in) from the dashboard's own figures ([`docs/CHATBOT.md`](docs/CHATBOT.md)). |
+| **FLO World** | A brand front door: a landing page where a needle stitches the FLO letters, and a hub of all 23 FLO labels (the dashboard is live; the other labels are coming). |
 
-## The ten dashboards
+## The dashboards
 
 | Page | The question it answers | Source sheet |
 |---|---|---|
@@ -106,6 +107,13 @@ the test suite runs it side by side with the new API on the same sheet data, com
 | **Designer Order Target** | Are we on track for the yearly new-order target? Which designs sell again? | Designer target · `NEW` + `REPEAT` |
 | **FLO Future** | What did each designer promise this month, what is late, and who needs a nudge? | FLO Future · `Samples` + `Visits & Meetings` (+ `Outsource Projects`) |
 | **Vendor Rate** | Which vendor is cheapest for each fabric, and how do vendors' rates compare? | FABRIC PO 11 · `Rate_Data` (+ `NEW RATE SHEET` cross-check) |
+| **In/Out Sale** | How much came in and went out this year against last year, and from which fabricator? | IN/OUT/SALE 2026-27 · `2026-27` |
+| **Daily Delegation** | What is today's pending work, and who is it with? | Sir_Daily_Delegation_Tracker · `Daily Schedule` |
+| **Stock Ageing** | How old is the finished-goods stock (FIFO), and which designs have not sold? | **EasyTrade** (SQL Server `F2ETrade11`, PCS only), live through its MCP server or from a snapshot file |
+
+Around the dashboards: **`/welcome`** (landing page), **`/world`** (FLO World, the 23 FLO labels) and
+**`/world/<label>`** (a coming-soon room per label). `/` opens the landing once per browser session, then the
+dashboard.
 
 <details>
 <summary><b>Business rules the dashboards apply</b> (same as the original)</summary>
@@ -296,12 +304,16 @@ All settings live in `backend/.env` (copy `backend/.env.example`). The file is g
 | `TOKEN_SECRET` | derived from the service-account key (else `dev-only-secret`) | Signs sign-in tokens. **Set a long random value in production** |
 | `TOKEN_HOURS` | `336` | How long a sign-in lasts (14 days) |
 | `CORS_ORIGINS` | — | Extra browser origins allowed to call the API (comma separated) |
-| `GEMINI_API_KEY` | — | Optional. Lets FLO Assistant ask a small Gemini model to read questions the rules can't place (English / Hinglish / Hindi), chat, and rewrite answers fluently in the question's language. Reading a question sends only the question and the dashboard's labels; rewriting an answer sends the answer text (figures) |
+| `GEMINI_API_KEY` | — | Optional (set on Vercel). Lets FLO Assistant ask a small Gemini model to read questions the rules can't place, chat, and rewrite answers fluently in English or Hinglish. Reading a question sends only the question and the dashboard's labels; rewriting an answer sends the answer text (figures). Without it, Hinglish questions still get Hinglish answers from the rules |
 | `GEMINI_MODEL` | `gemini-flash-lite-latest` | Gemini model used for that fallback |
 | `ASSISTANT_GEMINI` | `on` | `off` turns Gemini off entirely even when a key is set |
 | `ASSISTANT_GEMINI_PHRASING` | `on` | `off` stops answers (and so figures) being sent to Gemini for rewriting; the rules' own wording is used |
 | `FLO_FUTURE_SHEET_ID` | the Nov 2026 sheet | Points the FLO Future page at a new month's copy of the sheet (no code change) |
 | `VENDOR_RATE_SHEET_ID` | FABRIC PO 11 | Points the Vendor Rate page at another sheet with a `Rate_Data` tab (e.g. the next PO book) |
+| `EASYTRADE_MCP_URL` | — | Stock Ageing, live: the EasyTrade MCP address (`https://…/ai/mcp`). See [Stock Ageing from EasyTrade](#stock-ageing-from-easytrade) |
+| `EASYTRADE_MCP_TOKEN` | — | The bearer token for it. **Secret**: `.env` and Vercel only, never in git or a chat |
+| `EASYTRADE_CACHE_DIR` | system temp folder | Where each day's pull is kept, so EasyTrade is asked about once a day |
+| `SQL_SNAPSHOT_DIR` | — | Folder holding a `stock_ageing.json` snapshot; used when the live settings are not set, and as a fallback |
 
 Sheet IDs and tab names are in [`backend/app/config.py`](backend/app/config.py) (`SHEET_REGISTRY`). Each entry lists
 the data tab names to try in order, with fallbacks, exactly as the original app did.
@@ -325,9 +337,38 @@ the data tab names to try in order, with fallbacks, exactly as the original app 
 > Never commit `.env` or a key file, and never paste a key into a chat, an issue or a commit message. If a key is
 > ever exposed, create a new one in Google Cloud and delete the old one.
 
+### Stock Ageing from EasyTrade
+
+The Stock Ageing page reads EasyTrade (SQL Server, database `F2ETrade11`) through EasyTrade's **read-only MCP
+server**. Nothing in the dashboard connects to SQL Server directly.
+
+1. In `backend/.env`, and in Vercel → *Settings → Environment Variables* (Production and Preview), set
+   `EASYTRADE_MCP_URL` and `EASYTRADE_MCP_TOKEN`.
+2. Check one pull by hand. It prints the closing pcs and the ledger total, to tie to EasyTrade's own as-on stock
+   report:
+   ```powershell
+   cd backend; .venv\Scripts\python -m app.sources.easytrade --out C:\flo-sql-data
+   ```
+3. Restart the API (redeploy on Vercel). The page loses its *Demo rows* warning and its source reads
+   "EasyTrade F2ETrade11 (live, via MCP)".
+
+How it behaves (`backend/app/sources/easytrade.py`):
+
+- **Yesterday's closing**, FIFO, PCS only (`sd_Mtrs = 0`), value at inward cost before GST: the rules of the
+  owner's Stock Ageing Report. Sales fields for *Unsold Inventory Insights* come from the `SL` (sale) vouchers.
+- **About one pull a day.** A pull is 5 to 7 MCP requests (connect, table list, ledger total, one query per 1,000
+  designs) and is kept in memory and in `EASYTRADE_CACHE_DIR` for that date, because the MCP server has a monthly
+  request limit.
+- **When EasyTrade is off** (the PC behind the tunnel is shut down, the token is wrong, the limit is used up), the
+  page shows the last good pull with a warning, then the `SQL_SNAPSHOT_DIR` file, then demo rows. After a failure it
+  waits 10 minutes before asking again.
+- A new financial year's `TblStockDetails_<n>_<yyyy>_<yyyy>` table is picked up automatically.
+
 ## Security
 
 - **Read-only Google access** — only the `spreadsheets.readonly` scope is requested.
+- **Read-only EasyTrade access** — the MCP server runs `SELECT` queries only; its token lives in environment
+  variables only.
 - **Optional passcode** — compared in constant time; 10 wrong attempts a minute triggers a pause; successful sign-in
   returns an HMAC-signed, expiring token stored on the device.
 - **No caching of data by browsers or proxies** — every API response carries `Cache-Control: no-store`.
@@ -400,7 +441,9 @@ Send `Authorization: Bearer <token>` when a passcode is set.
 | **Parity on real sheets** | `PARITY_SOURCE=google pytest tests/test_parity.py` | The same comparison on a frozen snapshot of the live Google Sheets |
 | **Filters** (9) | `pytest tests/test_api_filters.py` | Every filter of every endpoint reaches its calculation over HTTP |
 | **API** (27) | `pytest tests/test_api.py` | Routes, sign-in and rate limit, refresh cooldown, one read per minute, stale-if-error, messy-cell parsing |
-| **Assistant** (31 + 48) | `pytest tests/test_assistant.py tests/test_assistant_calc.py` | FLO Assistant quotes the dashboard's own figures, English + Hinglish, follow-ups, read-only, sign-in, sheet-down message, Gemini fallback; growth / difference / sums / shares / arithmetic checked against the API's own numbers; Gemini rewrite keeps every figure |
+| **Assistant** | `pytest tests/test_assistant*.py` | FLO Assistant quotes the dashboard's own figures, follow-ups, read-only, sign-in, sheet-down message, Gemini fallback; growth / difference / sums / shares / arithmetic checked against the API's own numbers; Gemini rewrite keeps every figure |
+| **English + Hinglish replies** | `pytest tests/test_assistant_hinglish.py` | A Hinglish question gets a Hinglish answer (Gemini first, the rules' rewrite when Gemini is off or fails); every rewritten line keeps exactly the same figures; English stays English |
+| **EasyTrade** | `pytest tests/test_easytrade.py tests/test_stock_ageing.py tests/test_unsold_insights.py` | The MCP conversation (JSON and event-stream replies), paging past 1,000 rows, one pull a day, the fallbacks when EasyTrade is down, the FIFO page and unsold insights |
 | **Frontend unit** (19) | `npm test` | Rupee and number formatting, CSV escaping, URL filters, live-sync pulses, table behaviour, chat widget |
 | **Phone app** (3) | `cd mobile && npm test` | Number formatting and API helpers (plus `npm run typecheck`, `npm run lint`, `npx expo-doctor`) |
 | **Browser** (31 + device-specific) | `npx playwright test` | Every page in Chrome on desktop and phone, no console errors or failed calls, on-screen numbers equal the API, filters, sign-in, theme, intro, sidebar rail, CSV export |
@@ -439,7 +482,8 @@ environments, tests and `legacy/` out of the upload.
    | `GOOGLE_SERVICE_ACCOUNT_JSON` | the whole service-account key as one line of JSON |
    | `DASHBOARD_PASSCODE` | the team passcode — **required**: without it anyone with the link sees all the data |
    | `TOKEN_SECRET` | a long random value (if left out, one is derived from the service-account key) |
-   | `GEMINI_API_KEY` | optional — helps FLO Assistant with questions its rules can't place |
+   | `GEMINI_API_KEY` | optional — helps FLO Assistant with questions its rules can't place, and with fluent Hinglish |
+   | `EASYTRADE_MCP_URL`, `EASYTRADE_MCP_TOKEN` | Stock Ageing from EasyTrade (see [above](#stock-ageing-from-easytrade)); without them the page shows demo rows |
 
 3. Deploy, then check:
    - the site asks for the passcode;
@@ -505,11 +549,14 @@ Principles:
 - [x] Vercel deployment config (web + API as one project) — deploy from the Vercel dashboard
 - [x] FLO Assistant that answers from the dashboard (see [`docs/CHATBOT.md`](docs/CHATBOT.md))
 - [x] React Native app for iOS and Android on the same API (`mobile/`)
-- [ ] Deploy on Vercel with the real sheets and a passcode (checklist in [`CHECKPOINT.md`](CHECKPOINT.md))
+- [x] Deploy on Vercel with the real sheets and a passcode
+- [x] In/Out Sale, Daily Delegation and Stock Ageing pages; FLO World landing and label hub
+- [x] FLO Assistant answers in English and Hinglish, with or without Gemini
+- [x] Stock Ageing live from EasyTrade through its MCP server (switched on by the two `EASYTRADE_MCP_*` variables)
 - [ ] Test the phone app on a real Android phone and iPhone
 - [x] FLO Future page (the old Streamlit FLO Future tab, same numbers) + Overview highlights + chatbot support
 - [x] Vendor Rate page (fabric rates per vendor, cheapest per fabric) + chatbot rate questions
-- [ ] FLO Future and Vendor Rate screens in the phone app
+- [ ] Rewrite the phone app for the new version (new tabs, FLO World look)
 - [ ] Publish the phone app (EAS build → APK / TestFlight)
 - [ ] Retire the Streamlit dashboard and remove `legacy/`
 
@@ -520,7 +567,8 @@ Principles:
 - **Code map**: `graphify-out/` holds a knowledge graph of the repo (code, docs and how they connect).
   Open `graphify-out/graph.html` in a browser, read `graphify-out/GRAPH_REPORT.md`, or ask it questions with
   `graphify query "how does the chatbot pick a figure?"`. Refresh it after changes with `/graphify . --update`.
-- **Branches**: keep `main` deployable; work on feature branches and open a pull request.
+- **Branches**: `main` is the working branch and **every push to it redeploys the live site** (Vercel). Keep it
+  deployable; put larger work on a feature branch first.
 - **Run the tests** before pushing: backend `pytest`, frontend `npm run typecheck && npm test`.
 - **Changing a calculation?** Change it in `backend/app/dashboards/`. The parity tests will fail on purpose — that
   is the signal to confirm the new rule with the team, then update the test to the agreed behaviour.
@@ -534,6 +582,9 @@ Principles:
 | Symptom | Fix |
 |---|---|
 | Header shows *Demo data* | No key found: check `DATA_SOURCE=google` and the key variable in `backend/.env`, then restart the API |
+| Stock Ageing shows *Demo rows* | Set `EASYTRADE_MCP_URL` and `EASYTRADE_MCP_TOKEN` (or `SQL_SNAPSHOT_DIR`) and restart |
+| Stock Ageing says EasyTrade could not be reached | The EasyTrade PC or its tunnel is off, the token changed, or the monthly limit is used up; the last good pull is shown meanwhile |
+| Assistant answers a Hinglish question in English | The question had no Hindi word it knows; the detection words are `_HINDI_WORDS` in `backend/app/assistant/text.py` |
 | `Google API 403` / `404` in `/api/status` | Share that sheet with the service account's `client_email` as Viewer |
 | Light shows *Delayed* | Google did not answer the last read; the last good copy is shown and it retries within a minute |
 | Light shows *Offline* | The browser cannot reach the API; check that `uvicorn` is running |

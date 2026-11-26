@@ -25,7 +25,7 @@ from . import calc, fmt, planner
 from .orders import OrderAnalyst
 from .status import StatusAnalyst
 from .extras import PageAnswers
-from . import stock
+from . import hinglish, stock
 from .pages import (NEW_PAGES, DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
 from ..dashboards.vendor_rate import category_in_text
@@ -792,10 +792,12 @@ class Assistant:
             question = rewritten
         self._history = history
         t = norm(question)
+        desi = bool(re.search(r"\b(namaste|namaskar|dhanyavaa?d|shukriya)\b", t))     # answer a Hindi hello in Hinglish
         if _GREET.match(t):
-            return self._reply("Hi! I'm FLO Assistant. " + HELP, intent="greet")
+            return self._reply(hinglish.GREETING if desi else "Hi! I'm FLO Assistant. " + HELP, intent="greet")
         if _THANKS.match(t) and len(t.split()) <= 4:
-            return self._reply("You're welcome! Ask me anything else about the dashboard.", intent="thanks")
+            return self._reply(hinglish.THANKS if desi else "You're welcome! Ask me anything else about the dashboard.",
+                               intent="thanks")
 
         if _SMALLTALK.search(t) and not _HELP.search(t):
             result = self._smalltalk(question)
@@ -876,15 +878,22 @@ class Assistant:
 
     def _polish(self, question: str, result: dict, style: str) -> dict:
         """Gemini rewrites the finished answer as a natural reply in the person's own language. The figures in it
-        are checked against the original, and the plain answer is kept if anything differs."""
-        phrase = getattr(self.interpreter, "phrase", None)
-        if (phrase is None or not getattr(self.interpreter, "phrasing", False) or style == "terse"
-                or result.get("intent") not in PHRASE_INTENTS or not result.get("answer")
-                or "\n|" in result["answer"]):                  # tables are kept exactly as built
+        are checked against the original, and the plain answer is kept if anything differs. A Hinglish question that
+        Gemini did not rephrase (no key, a failed or slow call, a changed figure) gets the rules' own Hinglish
+        rewrite instead (hinglish.py), so the reply language follows the question either way."""
+        if style == "terse" or result.get("intent") not in PHRASE_INTENTS or not result.get("answer"):
             return result
-        better = phrase(question, result["answer"], language_of(question))
-        if better:
-            result = {**result, "answer": better, "phrased": True}
+        language = language_of(question)
+        phrase = getattr(self.interpreter, "phrase", None)
+        if phrase is not None and getattr(self.interpreter, "phrasing", False) \
+                and "\n|" not in result["answer"]:              # tables are kept exactly as built
+            better = phrase(question, result["answer"], language)
+            if better:
+                return {**result, "answer": better, "phrased": True}
+        if language.startswith("Hinglish"):
+            local = hinglish.to_hinglish(result["answer"])
+            if local != result["answer"]:
+                result = {**result, "answer": local, "phrased": "rules"}
         return result
 
     # -------------------------------------------------------------------------------------------- pieces

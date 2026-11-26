@@ -74,7 +74,10 @@ def test_month_change_matches_the_dashboard(client, question):
     assert fmt.value(cur, "inr") in text and fmt.value(base, "inr") in text
     assert fmt.pct_text(pct) in text
     assert fmt.diff(cur, base, "inr") in text
-    assert ("lower" in text and "decline" in text) if cur < base else ("higher" in text and "growth" in text)
+    if cur < base:      # English, or the Hinglish reply to a Hinglish question
+        assert ("lower" in text and "decline" in text) or ("kam" in text and "giravat" in text)
+    else:
+        assert ("higher" in text and "growth" in text) or ("zyada" in text and "badhat" in text)
     assert "November-26" in text and "October-26" in text
 
 
@@ -291,7 +294,7 @@ def test_the_reply_language_is_chosen_by_rules_not_guessed():
     from app.assistant.text import language_of
     assert language_of("total sales") == "English"
     assert language_of("is mahine ki sales kitni hai").startswith("Hinglish")
-    assert language_of("इस महीने की बिक्री").startswith("Hindi")
+    assert language_of("इस महीने की बिक्री").startswith("Hinglish")     # English and Hinglish replies only
     seen = {}
 
     class Spy(Fake):

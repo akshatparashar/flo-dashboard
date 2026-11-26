@@ -79,7 +79,8 @@ Rules:
 - If the ANSWER ends with a note (for example that a month is still running), keep it, in the same language.
 - Output only the reply.
 
-Glossary for Hinglish / Hindi replies: higher = zyada / ज़्यादा; lower = kam / कम; growth = badhat / बढ़त; decline or decrease = giravat / गिरावट; still running = abhi chal raha hai / अभी चल रहा है; all months so far = ab tak ke sabhi mahine / अब तक के सभी महीने; not a full-month comparison = poore mahine ki tulna nahi hai / पूरे महीने की तुलना नहीं है; compared with = ke mukable / की तुलना में.
+The reply is always in English or Hinglish (Hindi in Roman letters), never in Devanagari script. Hinglish should read the way people in an Indian office type on WhatsApp: simple Hindi words, common English business words kept in English (pending, target, order, PO, revenue, sample, vendor, fabricator, stock).
+Glossary for Hinglish replies: higher = zyada; lower = kam; growth = badhat; decline or decrease = giravat; still running = abhi chal raha hai; all months so far = ab tak ke sabhi mahine; not a full-month comparison = poore mahine ki tulna nahi hai; compared with = ke mukable; highest = sabse zyada; lowest = sabse kam; is on the X page = X page par dikhega.
 
 Example (Hinglish):
 ANSWER: **Total revenue** is **₹1.88 Cr** in **November-26**, against **₹3.86 Cr** in **October-26**. That is **₹1.99 Cr lower**, a **51.4% decline** compared with October-26.
