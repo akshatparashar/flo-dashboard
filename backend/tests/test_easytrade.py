@@ -44,7 +44,7 @@ class FakeMCP:
         if json["method"] == "notifications/initialized":
             return Resp("", status=202)
         assert headers.get("Mcp-Session-Id") == "s1"
-        sql = json["params"]["arguments"]["query"]
+        sql = json["params"]["arguments"]["sql"]
         assert json["params"]["arguments"]["database"] == "F2ETrade11"
         assert sql.lstrip().upper().startswith(("SELECT", "WITH"))
         self.queries.append(sql)

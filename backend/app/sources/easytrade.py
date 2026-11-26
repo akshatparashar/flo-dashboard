@@ -90,7 +90,7 @@ class MCPClient:
     def query(self, sql: str, database: str = DATABASE) -> list[dict]:
         if self.session_id is None and self._id == 0:
             self.connect()
-        result = self._call("tools/call", {"name": "run_query", "arguments": {"query": sql, "database": database}})
+        result = self._call("tools/call", {"name": "run_query", "arguments": {"sql": sql, "database": database}})
         if result.get("isError"):
             raise EasyTradeError("run_query failed: " + _text(result)[:300])
         return _rows(result)
@@ -124,6 +124,8 @@ def _text(result: dict) -> str:
 def _rows(result: dict) -> list[dict]:
     """Rows of a run_query result, as dicts. Accepts structuredContent or JSON text, rows as dicts or as lists."""
     data = result.get("structuredContent")
+    if isinstance(data, dict) and isinstance(data.get("result"), str):    # EasyTrade: {"result": "<the JSON as text>"}
+        data = None
     if not data:
         txt = _text(result)
         try:
