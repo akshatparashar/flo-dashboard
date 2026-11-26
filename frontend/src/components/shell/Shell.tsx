@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Boxes, ListChecks, Building2, ClipboardCheck, Factory, IndianRupee, LayoutDashboard, Menu, Moon, Package, Palette, PanelLeftClose, PanelLeftOpen, RefreshCw, Scissors, Shirt, Sun, Target, X } from "lucide-react";
+import { ArrowLeftRight, Boxes, ListChecks, Building2, ClipboardCheck, Factory, IndianRupee, LayoutDashboard, Menu, Moon, Orbit, Package, Palette, PanelLeftClose, PanelLeftOpen, RefreshCw, Scissors, Shirt, Sun, Target, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useFetchingReporter, useRefreshAll } from "../../api/hooks";
@@ -134,6 +134,9 @@ export function Shell({ children }: { children: ReactNode }) {
             </span>
           )}
           <LiveStatus />
+          <NavLink to="/world" className="btn ghost icon" aria-label="Open FLO World" title="FLO World">
+            <Orbit />
+          </NavLink>
           <button className="btn ghost icon refresh" onClick={doRefresh} aria-label="Read the sheets again now" title="Read the sheets again now">
             <RefreshCw style={{ transition: "transform 500ms var(--ease-out)", transform: spinning ? "rotate(360deg)" : "none" }} />
           </button>

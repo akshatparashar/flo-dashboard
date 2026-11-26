@@ -114,14 +114,24 @@ test("theme toggle switches and persists", async ({ page }) => {
   expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
 });
 
-test("intro plays once per session and then gets out of the way", async ({ page }) => {
+test("intro hands over to the landing page once per session, then / opens the dashboard", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".preloader")).toBeVisible();
   await expect(page.locator(".preloader")).toHaveCount(0, { timeout: 15_000 });
+  await expect(page).toHaveURL(/\/welcome$/);
+  await expect(page.getByRole("heading", { level: 1, name: "FLO" })).toBeVisible();
+  await page.getByRole("button", { name: "Open dashboard" }).first().click();
   await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
-  await page.reload();
+  await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
   await expect(page.locator(".preloader")).toHaveCount(0);
+});
+
+test("FLO World opens a coming-soon room for a label", async ({ page }) => {
+  await page.goto("/world");
+  await expect(page.getByRole("heading", { level: 1, name: "FLO World" })).toBeVisible();
+  await page.getByRole("link", { name: "FLO Vibe, coming soon" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /FLO Vibe is being stitched in/ })).toBeVisible({ timeout: 10_000 });
 });
 
 test("tables download as CSV", async ({ page, isMobile }) => {

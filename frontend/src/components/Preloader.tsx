@@ -18,8 +18,8 @@ const SOURCE_NAMES: Record<string, string> = {
   in_out_sale: "In/Out sale",
   daily_delegation: "Delegation",
 };
-const MIN_MS = 1700;
-const MAX_MS = 9000;
+const MIN_MS = 1900; // long enough for the bracket and the wordmark to finish drawing
+const MAX_MS = 3200; // never hold the page for slow sheets: the pages show their own loading states
 
 type Pt = [number, number];
 
@@ -29,7 +29,8 @@ function logoBox(vw: number, vh: number) {
   return { x: (vw - w) / 2, y: (vh - h) / 2 - 36, w, h, s: w / ART.w };
 }
 
-function sheetBox(vw: number, vh: number) {
+function sheetBox(vw: number, vh: number, full: boolean) {
+  if (full) return { l: 14, t: 14, r: vw - 14, b: vh - 14 };
   if (vw <= 1024) return { l: -2, t: 52, r: vw + 2, b: vh + 2 };
   return { l: navCollapsed() ? 68 : 236, t: 52, r: vw - 8, b: vh - 8 };
 }
@@ -40,7 +41,9 @@ function pathOf(p: Pt[]) {
 
 /** FLO's open bracket draws itself like a wire, the wordmark appears inside it, the five sheets light up as they
  *  really load, then the bracket stretches into the sheet frame of the app: the logo becomes the interface. */
-export function Preloader({ status, onDone }: { status: StatusData | undefined; onDone: () => void }) {
+/** exit "sheet" opens the bracket into the dashboard's sheet frame; "page" opens it to the edges of the screen
+ *  (the landing page). */
+export function Preloader({ status, onDone, exit = "sheet" }: { status: StatusData | undefined; onDone: () => void; exit?: "sheet" | "page" }) {
   const root = useRef<HTMLDivElement>(null);
   const path = useRef<SVGPathElement>(null);
   const mark = useRef<HTMLDivElement>(null);
@@ -97,7 +100,7 @@ export function Preloader({ status, onDone }: { status: StatusData | undefined; 
       gsap.to(root.current, { opacity: 0, duration: 0.25, onComplete: onDone });
       return;
     }
-    const sb = sheetBox(vw, vh);
+    const sb = sheetBox(vw, vh, exit === "page");
     const end: Pt[] = [
       [sb.r, sb.t + Math.min(160, (sb.b - sb.t) * 0.25)],
       [sb.r, sb.t],
@@ -126,7 +129,8 @@ export function Preloader({ status, onDone }: { status: StatusData | undefined; 
         },
         "-=0.1",
       )
-      .to(root.current, { backgroundColor: "rgba(0,0,0,0)", duration: 0.45, ease: "power2.out" }, "-=0.25")
+      // fade the backdrop out in its own colour, so the page does not dip to grey on the way
+      .to(root.current, { backgroundColor: getComputedStyle(root.current!).backgroundColor.replace(/rgba?\(([^,]+),([^,]+),([^,)]+).*$/, "rgba($1,$2,$3,0)"), duration: 0.45, ease: "power2.out" }, "-=0.25")
       .to(path.current, { opacity: 0, duration: 0.3 }, "-=0.1");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);

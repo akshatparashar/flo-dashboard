@@ -46,3 +46,6 @@ graphify-out/cost.json
 
 # FLO Assistant conversation memory (local SQLite)
 backend/.chat/
+
+# source logo PDFs and archive (107 MB); the site uses the PNGs in frontend/public/brand/world
+LOGOS/

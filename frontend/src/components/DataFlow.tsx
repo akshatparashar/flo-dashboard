@@ -44,9 +44,11 @@ export function DataFlow({ sources, outputs, now }: { sources: Record<string, So
       const src = ORDER.map((k, i) => ({ k, x: 18, y: 24 + i * rowH + 10, dotX: W * 0.52 }));
       return { W, H, core, src, out: [] as { x: number; y: number }[] };
     }
-    const H = 232;
+    // tall enough for every sheet: the rows set the height, not the other way round
+    const rowH = 40;
+    const H = 28 * 2 + (ORDER.length - 1) * rowH;
     const core = { x: W * 0.5, y: H / 2 };
-    const src = ORDER.map((k, i) => ({ k, x: 4, y: 30 + i * 43, dotX: Math.min(220, W * 0.22) }));
+    const src = ORDER.map((k, i) => ({ k, x: 4, y: 28 + i * rowH, dotX: Math.min(220, W * 0.22) }));
     const outX = W - Math.min(300, W * 0.3);
     const out = outputs.slice(0, 5).map((_, i, a) => ({ x: outX, y: H / 2 + (i - (a.length - 1) / 2) * 43 }));
     return { W, H, core, src, out };

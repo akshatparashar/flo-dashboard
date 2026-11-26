@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useState, type FormEvent } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, getToken, setToken } from "./api/client";
 import { useHealth, useStatus } from "./api/hooks";
 import { Assistant } from "./components/assistant/Assistant";
 import { Wordmark } from "./components/Brand";
 import { Preloader } from "./components/Preloader";
 import { Shell } from "./components/shell/Shell";
+import { hasEntered, markEntered } from "./world/brands";
 import { PageSkeleton } from "./components/ui";
 import Overview from "./pages/Overview";
 
@@ -21,6 +22,9 @@ const VendorRate = lazy(() => import("./pages/VendorRate"));
 const InOutSale = lazy(() => import("./pages/InOutSale"));
 const DailyDelegation = lazy(() => import("./pages/DailyDelegation"));
 const StockAgeing = lazy(() => import("./pages/StockAgeing"));
+const Landing = lazy(() => import("./world/Landing"));
+const World = lazy(() => import("./world/World"));
+const Soon = lazy(() => import("./world/Soon"));
 
 function SignIn({ onDone }: { onDone: () => void }) {
   const [code, setCode] = useState("");
@@ -66,15 +70,50 @@ function introWanted(): boolean {
   }
 }
 
-function Dashboard() {
+function noIntroParam(): boolean {
+  return new URLSearchParams(window.location.search).has("nointro");
+}
+
+function introSeen() {
+  try {
+    sessionStorage.setItem("flo-intro", "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** The landing page: the preloader hands over to it on the first visit of a session. */
+function Welcome() {
   const status = useStatus();
   const [loading, setLoading] = useState(introWanted);
   const finish = () => {
-    try {
-      sessionStorage.setItem("flo-intro", "1");
-    } catch {
-      /* ignore */
-    }
+    introSeen();
+    setLoading(false);
+  };
+  return (
+    <>
+      <Suspense fallback={null}>
+        <Landing ready={!loading} />
+      </Suspense>
+      {loading && <Preloader exit="page" status={status.data ?? (status.error ? ({ sources: {} } as never) : undefined)} onDone={finish} />}
+    </>
+  );
+}
+
+/** "/" opens the landing page until the person has entered the dashboard once this session. Links straight to
+ *  a page, and ?nointro (automated checks), go to the dashboard directly. */
+function Gate() {
+  const loc = useLocation();
+  if (loc.pathname === "/" && !hasEntered() && !noIntroParam()) return <Navigate to="/welcome" replace />;
+  return <Dashboard />;
+}
+
+function Dashboard() {
+  const status = useStatus();
+  const [loading, setLoading] = useState(introWanted);
+  useEffect(() => markEntered(), []);
+  const finish = () => {
+    introSeen();
     setLoading(false);
   };
   return (
@@ -117,5 +156,12 @@ export default function App() {
     return () => window.removeEventListener("flo:signed-out", out);
   }, []);
   if (health.data?.auth_required && !signedIn) return <SignIn onDone={() => setSignedIn(true)} />;
-  return <Dashboard />;
+  return (
+    <Routes>
+      <Route path="/welcome" element={<Welcome />} />
+      <Route path="/world" element={<Suspense fallback={null}><World /></Suspense>} />
+      <Route path="/world/:slug" element={<Suspense fallback={null}><Soon /></Suspense>} />
+      <Route path="*" element={<Gate />} />
+    </Routes>
+  );
 }

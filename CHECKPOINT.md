@@ -1,19 +1,20 @@
 # Checkpoint — where the project stands
 
-_Last updated: 2026-11-26. Read this first when picking the work up._
+_Last updated: 2026-11-26 (evening: FLO World UI). Read this first when picking the work up._
 
 > [!IMPORTANT]
-> **Work on `more-sheets`, not `main`.** `main` (`977b158`) has none of the new tabs and must not be merged into,
-> committed to or rebased without the owner's say-so.
+> **26 Nov: the owner moved everything to `main`** (the new tabs, the chatbot fixes and the FLO World UI). `main` is
+> now the working branch; `more-sheets` stops at `49f4eca`. The **phone app (`mobile/`) was left as it is on
+> purpose**: it will be rewritten later for the new version, and the new build handed to the owner then.
 
 ## Branches
 
 | Branch | What is on it (26 Nov) |
 |---|---|
-| `more-sheets` | The integration branch: **everything below**, including Stock Ageing and the 26 Nov chatbot fixes. |
+| `more-sheets` | The new tabs, Stock Ageing and the 26 Nov chatbot fixes (`49f4eca`); all of it is now on `main` too. |
 | `feature/chatbot` | Chatbot work up to `a898a64` (merged into `more-sheets` on 26 Nov). Start from `more-sheets`: this branch lacks the later work. |
 | `backup/more-sheets-2026-11-24` | `more-sheets` as it was before the first chatbot merge. |
-| `main` | Untouched; what the 17 Nov deploy was made from. |
+| `main` | Everything: `more-sheets` plus the FLO World UI (pushed 26 Nov on the owner's instruction). Before that, `977b158` (the 17 Nov deploy). |
 
 ## New since 17 Nov
 
@@ -46,6 +47,38 @@ _Last updated: 2026-11-26. Read this first when picking the work up._
 Parked on the owner's instruction (26 Nov). The SQL database does not hold creditor bills (only vouchers pushed to
 Tally since 1 Oct); the owner's FIFO register is built from **Tally Prime**'s pending bills.
 
+## FLO World UI (26 Nov evening, on `main`)
+
+A brand front door in front of the dashboard. Files: `frontend/src/world/` (new), `frontend/public/brand/world/`
+(22 label logos cut from `LOGOS/`), `frontend/public/brand/flo-letters-hi.png`; routes in `frontend/src/App.tsx`.
+
+| Route | What it is |
+|---|---|
+| `/welcome` | Landing page. The preloader fades into it; a needle stitches a thread through the FLO letters (`NeedleFLO.tsx`, `STITCH` = 5.2 s), then live KPI cards, the design-to-delivery thread, the label marquee and a navy **footer** (page links, the house address, © FLO India). |
+| `/world` | FLO World hub: the Dashboard card in the middle of a 7 x 4 grid, the 22 labels in the cells around it, each stitched to its neighbour nearer the core. Below 900 x 500 px it becomes a simple card grid. |
+| `/world/:slug` | "Coming soon" room for a label. |
+| `/` | Goes to `/welcome` once per browser session, then straight to the dashboard. `/?nointro` skips it (used by the e2e tests). |
+
+Fixed on 26 Nov evening, after the owner's review:
+- Needle and thread: about twice as slow (3.1 s to 6.2 s) and twice as thick, with a soft shadow; the headline comes in as the needle leaves the O.
+- FLO World: the two overlapping ellipses of labels were replaced by the grid, so nothing overlaps and every gap is the same.
+- New footer on the landing page.
+- Preloader: lets go after **3.2 s at most** (was 9 s; it waited for every sheet). On the landing page the bracket
+  **opens out to the edges of the screen** like a box (`exit="page"`), the same move that opens into the dashboard frame.
+- Needle: hidden until it starts moving, sets off at once, and starts at the screen's left edge (the thread begins
+  far off-screen, so the needle used to travel unseen for about 2.5 s). Stitch takes 5.2 s.
+- "Enter the FLO world" dive into the O: zooms the letters' box as one GPU layer (`will-change` in `world.css`)
+  instead of scaling the SVG, switches off the thread's shadow and glint first, and no longer re-renders the page on
+  the click. It measured smooth (no frame over 30 ms) in the 2nd and 3rd test runs.
+- **Overview → data-flow diagram:** the box was 232 px high for nine sheets, so the bottom wires ran off into empty space. Its height now follows the number of sheets (`frontend/src/components/DataFlow.tsx`).
+
+Screenshots: `node e2e/world-shots.mjs <outdir>` with the dev server running. It takes these env vars: `BASE=http://localhost:5173`,
+`CHANNEL=chrome` (when Playwright's own browser is not installed), `TOKEN=<token from POST /api/auth/login>` (when the
+passcode is on) and `ONLY=1` (desktop light only).
+Checked: typecheck clean, 19 unit tests pass, no console errors on any page (desktop light and dark, phone).
+Playwright: 46 passed, 6 skipped by design (desktop + phone); production build clean.
+`LOGOS/` (the source PDFs and a .rar, 107 MB) is git-ignored: the site only needs the PNGs in `public/brand/world/`.
+
 ## Status at a glance
 
 | Part | State | Verified how (26 Nov, demo data unless said) |
@@ -54,7 +87,7 @@ Tally since 1 Oct); the owner's FIFO register is built from **Tally Prime**'s pe
 | Website (`frontend/`) | Working | Playwright 42 passed, 8 skipped by design (desktop + phone, includes the new tabs); 19 unit tests; typecheck and build clean |
 | FLO Assistant | Answers for every new tab | Tested in English + Hinglish against copies of the real sheets and the stock snapshot |
 | New sheets on the live Google API | **Not verified** | No Google key on the development PC; checked against downloaded copies of the sheets |
-| Phone app (`mobile/`) | Renames only; **no screens for the new tabs** | Not tested since 17 Nov (dependencies not installed) |
+| Phone app (`mobile/`) | Renames only; **no screens for the new tabs**. To be rewritten for the new version later (owner, 26 Nov) | Not tested since 17 Nov (dependencies not installed) |
 | Live site (Vercel) | Deployed 17 Nov from `main` | Not redeployed as part of this work; not re-checked |
 
 Chatbot fixes of 26 Nov: Stock Ageing questions; "December me kitne pcs aane wale hai" (answered 0 before); "which
@@ -73,7 +106,7 @@ answered twice; a person's open tasks when none is marked *Pending*. Tests: `tes
 3. Decide how Stock Ageing gets its data on the server (see above).
 4. Decide on Gemini phrasing: with a key set, answer text (now including task names and stock values) is sent to
    Google unless `ASSISTANT_GEMINI_PHRASING=off`.
-5. Merge to `main` only when the owner says so.
+5. ✅ Merged to `main` on the owner's say-so (26 Nov).
 
 ## Part A — Deploy the dashboard on Vercel ✅ done 17 Nov
 
@@ -186,7 +219,8 @@ cd backend  && PARITY_SOURCE=google python -m pytest tests/test_parity.py
 
 ## Recent history
 
-- **18–26 Nov:** the new tabs above, chatbot answers for them, merged on `more-sheets` (never `main`).
+- **26 Nov evening:** FLO World UI (landing, hub, coming-soon rooms), footer, data-flow height fix; see above.
+- **18–26 Nov:** the new tabs above, chatbot answers for them, merged on `more-sheets`, then (26 Nov) on `main`.
 - **17 Nov — real-sheet check:** the old Streamlit app (`legacy/streamlit_app.py`, identical to the
   `design355/sample-production-dashboard` app) and the new API were run on the same live sheets: all headline
   figures match. Reports of "wrong numbers" were the demo-data mode. This file and the README were updated as a
@@ -208,6 +242,7 @@ cd backend  && PARITY_SOURCE=google python -m pytest tests/test_parity.py
 | Chatbot understanding | `backend/app/assistant/engine.py`, `text.py` (words, Hinglish), `pages.py` |
 | Sheet IDs / tabs | `backend/app/config.py` → `SHEET_REGISTRY` |
 | Website page | `frontend/src/pages/` |
+| Landing / FLO World / label rooms | `frontend/src/world/` (labels list in `brands.ts`) |
 | Phone screen | `mobile/src/app/` (tabs in `(tabs)/`), shared UI in `mobile/src/components/` |
 | Deploy config | `vercel.json`, `.vercelignore`, `backend/.python-version`, `mobile/eas.json` |
 | Code map | `graphify-out/` (knowledge graph of the repo — see README → *Working on this project*) |
