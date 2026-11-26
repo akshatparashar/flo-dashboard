@@ -147,6 +147,8 @@ class StatusAnalyst:
         t = norm(q.text)
         if re.search(r"\b(came|incoming|sold|sale|net sale)\b", t):
             return None                              # In/Out Sale figures
+        if re.search(r"\b(tasks?|delegat\w*|awaiting|responsible)\b", t):
+            return None                              # Daily Delegation
         sctx = self._base(ctx)
         designers = [e for e in q.entities if e.type == "designer"]
         if any(e.type not in ("designer", "month") for e in q.entities):

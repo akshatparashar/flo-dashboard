@@ -72,6 +72,12 @@ PAGES: dict[str, Page] = {p.key: p for p in [
          "fabricator-wise incoming pieces (In-house or Outsource) and the pieces promised for a month against what "
          "came in.",
          {"month": "month", "fabricator": "fabricator"}, 11),
+    Page("daily-delegation", "Daily Delegation", "/daily-delegation",
+         ("daily delegation", "delegation", "delegation tracker", "daily schedule", "daily tasks", "sir daily", "task list"),
+         "Sir's day as a task list from the Daily Schedule tab of the Sir_Daily_Delegation_Tracker sheet: one row per task "
+         "with date, responsible person, status (Completed, In Progress, Awaiting Approval, Pending, On Hold) and remarks; "
+         "counts are tasks, and 'open for' is days since the task's date.",
+         {"person": "person", "status": "status"}, 12),
     Page("overview", "Overview", "/", ("overview", "home page", "summary page", "main page"),
          "A summary of every sheet: orders, fabricator stock, fabric POs and samples, plus the alerts that need "
          "attention.",
@@ -79,7 +85,7 @@ PAGES: dict[str, Page] = {p.key: p for p in [
 ]}
 
 # Pages added after the original dashboard (the chatbot can summarise "the new sections").
-NEW_PAGES = ("flo-future", "vendor-rate", "in-out-sale")
+NEW_PAGES = ("flo-future", "vendor-rate", "in-out-sale", "daily-delegation")
 
 # Option lists in the API -> entity type. Other option lists (status, order type, risk...) are not used as names.
 OPTION_TYPES = {"designer": "designer", "client": "client", "order_by": "client", "vendor": "vendor",
