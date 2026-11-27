@@ -1,6 +1,6 @@
 # Checkpoint — where the project stands
 
-_Last updated: 2026-11-26 (late: English + Hinglish chatbot, live EasyTrade for Stock Ageing). Read this first._
+_Last updated: 2026-11-27 (phone app 2.0 with the new pages; assistant training from `more-sheets` merged). Read this first._
 
 > [!IMPORTANT]
 > **26 Nov: the owner moved everything to `main`** (the new tabs, the chatbot fixes and the FLO World UI). `main` is
@@ -136,7 +136,7 @@ Playwright: 46 passed, 6 skipped by design (desktop + phone); production build c
 | Website (`frontend/`) | Working | Playwright 42 passed, 8 skipped by design (desktop + phone, includes the new tabs); 19 unit tests; typecheck and build clean |
 | FLO Assistant | Answers for every new tab | Tested in English + Hinglish against copies of the real sheets and the stock snapshot |
 | New sheets on the live Google API | **Not verified** | No Google key on the development PC; checked against downloaded copies of the sheets |
-| Phone app (`mobile/`) | Renames only; **no screens for the new tabs**. To be rewritten for the new version later (owner, 26 Nov) | Not tested since 17 Nov (dependencies not installed) |
+| Phone app (`mobile/`) | **2.0 (27 Nov):** screens for FLO Future, Vendor Rate, In/Out Sale, Daily Delegation, Stock Ageing (+ Unsold); Clients and Overview additions; chat sends `conversation_id` | typecheck, lint, tests, expo-doctor pass; every screen rendered on demo data (web) without errors; APK built on EAS (preview profile) |
 | Live site (Vercel) | Deployed 17 Nov from `main` | Not redeployed as part of this work; not re-checked |
 
 Chatbot fixes of 26 Nov: Stock Ageing questions; "December me kitne pcs aane wale hai" (answered 0 before); "which
@@ -294,6 +294,9 @@ cd backend  && PARITY_SOURCE=google python -m pytest tests/test_parity.py
 
 ## Recent history
 
+- **27 Nov:** `more-sheets` (assistant follow-ups, synonyms, greetings, stock / unsold questions) fast-forwarded into
+  `main`. Phone app 2.0: the five new pages under More (grouped), Clients (client share, expected deliveries, FW
+  ORDER'S), FLO Future on Overview, chat memory via `conversation_id`, Expo SDK 58 patch updates.
 - **26 Nov late:** merged `more-sheets` (Unsold Inventory Insights); chatbot replies in English or Hinglish
   without needing Gemini; Stock Ageing can read EasyTrade live through its MCP server (needs the two env vars).
 - **26 Nov evening:** FLO World UI (landing, hub, coming-soon rooms), footer, data-flow height fix; see above.
