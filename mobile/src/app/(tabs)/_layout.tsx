@@ -1,10 +1,13 @@
-/* Bottom tabs for the four screens the owner opens most; the rest live under More. */
+/* Bottom tabs for the four screens the owner opens most; the rest live under More. Until the welcome screen has been
+   passed (once per app start) the tabs send the owner there first. */
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { Redirect, type Href } from "expo-router";
 import { Tabs } from "expo-router/js-tabs";
 import type { ComponentProps } from "react";
 import type { ColorValue } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { font, useTheme } from "../../lib/theme";
+import { hasEntered } from "../../world/brands";
 
 type Icon = ComponentProps<typeof Ionicons>["name"];
 
@@ -17,6 +20,8 @@ function icon(on: Icon, off: Icon) {
 export default function TabsLayout() {
   const c = useTheme();
   const insets = useSafeAreaInsets();
+  // each time the app starts it opens on the FLO welcome screen, as the website does once per visit
+  if (!hasEntered()) return <Redirect href={"/welcome" as Href} />;
   return (
     <Tabs
       screenOptions={{

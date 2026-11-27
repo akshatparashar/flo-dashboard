@@ -45,6 +45,9 @@ function Navigation({ fontsReady }: { fontsReady: boolean }) {
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.frame } }}>
         <Stack.Protected guard={signedIn}>
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="welcome" options={{ animation: "fade" }} />
+          <Stack.Screen name="world/index" options={{ animation: "fade_from_bottom" }} />
+          <Stack.Screen name="world/[slug]" />
           <Stack.Screen name="designers" options={detail} />
           <Stack.Screen name="clients" options={detail} />
           <Stack.Screen name="samples" options={detail} />
