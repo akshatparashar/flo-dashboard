@@ -500,22 +500,25 @@ its own domain, and the phone app is not a browser.
 
 ## Phone app
 
-`mobile/` is the dashboard as an Android / iPhone app (React Native, Expo SDK 58) on the same API: the eight
-dashboards with month chips and filters, tables and charts made for a phone screen, FLO Assistant behind the robot
-button on every screen, light and dark mode, and sign-in with the same passcode. See
+`mobile/` is the dashboard as an Android / iPhone app (React Native, Expo SDK 58), **version 2.0**, on the same API.
+It opens on the FLO World landing (the bracket opening, the needle stitching through FLO, live figures, the 22 labels)
+with the label hub behind "Enter the FLO world", then every dashboard of the web app: the thirteen pages with month
+chips and filters, tables and charts made for a phone screen, FLO Assistant behind the robot button on every screen,
+light and dark mode, and sign-in with the same passcode. See
 [`mobile/README.md`](mobile/README.md) to run it with Expo Go or build an installable app with EAS.
 
 **Hand-over for the mobile developer** (needs the deployed address and passcode from [Deploy to Vercel](#deploy-to-vercel)):
 
 1. `cd mobile && npm install && npx expo start`, scan the QR code with Expo Go, sign in with the Vercel address and
-   passcode, and check every tab on a **real phone** (not done yet).
+   passcode, and check every screen on a **real phone** (only checked in a phone-sized browser so far).
 2. Put the Vercel address in `mobile/eas.json` → `EXPO_PUBLIC_API_URL` for **both** the `preview` and `production`
    profiles.
 3. `npx eas-cli@latest build --profile preview --platform android` gives an installable APK link; use the
    `production` profile for TestFlight / the App Store.
 
 The app only calls the API; it never calculates figures itself. Its response types in `mobile/src/lib/types.ts` are a
-copy of `frontend/src/api/types.ts`, so change both if a response changes. Open items: target editor, CSV export.
+copy of `frontend/src/api/types.ts`, so change both if a response changes. When a web page is added or changed, add
+or change its screen in `mobile/src/app/` too and build a new APK. Open items: target editor.
 
 ## Design system
 
@@ -556,8 +559,9 @@ Principles:
 - [ ] Test the phone app on a real Android phone and iPhone
 - [x] FLO Future page (the old Streamlit FLO Future tab, same numbers) + Overview highlights + chatbot support
 - [x] Vendor Rate page (fabric rates per vendor, cheapest per fabric) + chatbot rate questions
-- [ ] Rewrite the phone app for the new version (new tabs, FLO World look)
-- [ ] Publish the phone app (EAS build → APK / TestFlight)
+- [x] Rewrite the phone app for the new version (new tabs, FLO World look and animations) — 2.0, 27 Nov
+- [x] Android APK for the owner (EAS preview build)
+- [ ] Publish the phone app to the stores (Play Store / TestFlight)
 - [ ] Retire the Streamlit dashboard and remove `legacy/`
 
 ## Working on this project

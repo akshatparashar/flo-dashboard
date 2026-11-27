@@ -1,15 +1,22 @@
 # FLO Operations — phone app
 
-The FLO dashboard as a native Android / iPhone app (React Native, Expo SDK 58). It reads the same read-only API as
-the web dashboard, so every number matches the web pages exactly, and it includes FLO Assistant.
+The FLO dashboard as a native Android / iPhone app (React Native, Expo SDK 58), **version 2.0**. It reads the same
+read-only API as the web dashboard, so every number matches the web pages exactly, and it includes FLO Assistant.
+
+The app opens like the website: the **opening** (the FLO bracket draws itself and opens out to the screen edges),
+then the **landing** hero (a needle stitches a thread through the FLO letters), live figures, the thread from design
+to delivery, the 22 labels and the house. **Enter the FLO world** opens the label hub; **Open dashboard** opens the
+tabs below (Back returns to the landing).
 
 | Tab / screen | What it shows |
 |---|---|
-| **Overview** | What needs attention now: alerts, orders, fabric POs, stock, samples, designers |
+| **Landing** (`/`) | The FLO front door: hero, live figures, a link to every page, the labels, footer |
+| **FLO World** (`/world`) | The live Dashboard card and the 22 labels (burst-in, stitches, signal pings); each label opens a "coming soon" room |
+| **Overview** (`/overview`) | What needs attention now: alerts, orders, fabric POs, stock, samples, FLO Future, designers |
 | **Production** | Pending and overdue pcs by category, fabricator and month |
 | **Fabric PO** | Overdue POs, delivery status, vendor scorecard, every PO |
 | **Revenue** | The yearly new-order target, revenue by month, designer, item and client, repeat designs |
-| **More** | Designers, Clients, Samples, Fabricators, FLO Assistant, sheet status, sign out |
+| **More** | FLO World, the landing screen, FLO Assistant; In/Out Sale, Stock Ageing (+ Unsold Inventory), Clients Order Status, FLO Future, Designers, Samples, Fabricators, Vendor Rate, Daily Delegation; sheet status, sign out |
 | **Robot button** | FLO Assistant on every screen — English or Hinglish, same answers as the web chatbot |
 
 Every screen: month chips, a **Filters** sheet (designer, vendor, client…), tables with a fixed first column that
@@ -56,11 +63,23 @@ npm test               # number formatting and API helpers (Node test runner)
 npx expo-doctor        # Expo dependency and config check
 ```
 
+To look at the screens without a phone: `EXPO_PUBLIC_API_URL=http://localhost:8000 npx expo start --web` (the
+backend needs `CORS_ORIGINS` set to the web address). Animations are the same code on the phone, but check them on a
+real phone before handing over a build.
+
+## Builds handed over
+
+| Version | Build | Date | What changed |
+|---|---|---|---|
+| 1.0.0 | 2 | 17 Nov 2026 | First app: eight dashboards, FLO Assistant |
+| 2.0.0 | 5 | 27 Nov 2026 | FLO World (opening, landing, hub, label rooms, web animations); FLO Future, Vendor Rate, In/Out Sale, Daily Delegation, Stock Ageing; Clients and Overview additions; chat memory. Builds 3 and 4 were intermediate and replaced by 5. |
+
 ## How it is built
 
 | Part | Where |
 |---|---|
-| Screens (Expo Router, file based) | `src/app/` — `(tabs)/` for the bottom tabs, `designers.tsx` … for pages under More, `assistant.tsx`, `sign-in.tsx` |
+| Screens (Expo Router, file based) | `src/app/` — `index.tsx` the landing (home route), `world/` the hub and label rooms, `(tabs)/` the bottom tabs, `designers.tsx` … `stock-ageing.tsx` the pages under More, `assistant.tsx`, `sign-in.tsx` |
+| FLO World pieces | `src/world/` — labels list and logos (`brands.ts`, artwork in `assets/world/`), `NeedleFLO.tsx` (needle and thread), `Preloader.tsx`, `motion.tsx` (scroll reveals, count-up, ping dot) |
 | API client, sign-in, data refresh | `src/lib/api.ts`, `src/lib/auth.tsx` (token in the phone's secure storage), `src/lib/query.ts` |
 | Number formats (same as the web) | `src/lib/format.ts` |
 | Colours and fonts (FLO navy / blush, Bodoni Moda + Instrument Sans) | `src/lib/theme.ts` |

@@ -1,6 +1,6 @@
 # Checkpoint — where the project stands
 
-_Last updated: 2026-11-27 (phone app 2.0 with the new pages; assistant training from `more-sheets` merged). Read this first._
+_Last updated: 2026-11-27 evening (phone app 2.0 build 5: FLO World landing and animations, all new pages). Read this first._
 
 > [!IMPORTANT]
 > **26 Nov: the owner moved everything to `main`** (the new tabs, the chatbot fixes and the FLO World UI). `main` is
@@ -294,6 +294,9 @@ cd backend  && PARITY_SOURCE=google python -m pytest tests/test_parity.py
 
 ## Recent history
 
+- **27 Nov (evening):** phone app opens on the FLO landing (home route `/`, Overview moved to `/overview`) with the
+  web's animations: opening preloader, needle + glint, scroll reveals, count-up, drawn stage thread, hiding top bar,
+  dive into the O; FLO World burst-in, stitches, signal pings, scrambled status line, tap zoom. APK build 5.
 - **27 Nov:** `more-sheets` (assistant follow-ups, synonyms, greetings, stock / unsold questions) fast-forwarded into
   `main`. Phone app 2.0: the five new pages under More (grouped), Clients (client share, expected deliveries, FW
   ORDER'S), FLO Future on Overview, chat memory via `conversation_id`, Expo SDK 58 patch updates.
