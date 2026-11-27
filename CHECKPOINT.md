@@ -239,6 +239,12 @@ by its code, where the section is; their follow-ups travel in the context (`stoc
 unsold, best selling = the opposite, supplier = vendor, passed / failed samples, unfinished / closed tasks, undelivered
 = pending, and so on. Add a rule there (with its condition) when people use a new word.
 
+**Daily Delegation, Designers, Production** (`focus.py`, tests `test_assistant_focus.py`) are the owner's most
+important tabs: a task by words of its title, people only the delegation sheet has, who has completed nothing, tasks by
+date, a designer's categories / profile / "under N pcs", overdue designs, production by status and month, fabricators
+by on-time rate, and their follow-ups. **Greetings** are in `greetings.py`. Still ambiguous by design: "Deepika" is in
+both Designers and Delegation, so say "task" for the delegation one.
+
 **Not-a-figure questions** (`shortcuts.py`): urgent items (Overview alerts), where a page is, FLO World, team wise
 status, a fabric's rate by name ("no fabric called X" instead of another rate). Tests: `test_assistant_synonyms.py`.
 The other failures from the 27 Nov audit (oldest open task, Hinglish "sabse bada" / "sabse kharab", most overdue) are

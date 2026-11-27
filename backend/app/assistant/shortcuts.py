@@ -16,7 +16,7 @@ URGENT = re.compile(r"\b(urgent\w*|needs? (?:my |our )?attention|attention (?:ne
 NOT_OVERVIEW = re.compile(r"\b(tasks?|delegation|kaam|sir|mam|flo future|promis\w*|samples?|po|pos|stock|vendors?|"
                           r"fabricators?|designers?|clients?)\b", re.I)
 
-TEAM_STATUS = re.compile(r"^\s*(?:flo future )?team[- ]?wise (?:status|progress|report|completion|summary)"
+TEAM_STATUS = re.compile(r"^\s*(?:flo future )?team(?:[- ]?wise| ka| ki)? (?:status|progress|report|completion|summary)"
                          r"(?: (?:batao|dikhao|kya hai))?\s*[?.!]*$", re.I)
 
 # (words people use, page label, sidebar group); first match wins

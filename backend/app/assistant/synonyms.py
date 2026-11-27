@@ -52,6 +52,15 @@ RULES: list[tuple[str, str, str | None, str | None]] = [
     (r"^.*\b(?:sabse (?:zyada|jyada) overdue (?:kiska|kiske|kiski)|(?:who|whose) (?:has )?(?:the )?most overdue)\b.*$",
      "which fabricator has the most overdue pcs", None,
      r"\b(designers?|fabricators?|vendors?|tasks?|po|pos|samples?|promis\w*|flo future)\b"),
+    # production and designers
+    (r"\blate (?:pcs|pieces|qty)\b", "overdue pcs", None, r"\b(po|pos|fabric|tasks?)\b"),
+    (r"^\s*designers? ranking\s*[?.!]*$", "top 10 designers", None, None),
+    (r"\bkaam\b", "orders", r"\bdesigners?\b", r"\b(tasks?|delegation|sir|mam)\b"),   # a designer's work is orders
+    (r"^.*\bpending\b.*\bfabricators? ke paas\b.*$", "fabricator wise pending", None,
+     r"\b(sabse|most|least|kis|kaun)\b"),
+    (r"^\s*top (?:ka |ke |category )?(?=(?:pending|received)\b)", "tops ", None, None),
+    # tasks left
+    (r"\b(?:remaining|left)\b", "open", TASKS, r"\b(fabricators?|production)\b"),
     # selling, and its opposite
     (r"\b(?:slowest[- ]?selling|least[- ]?selling|worst[- ]?selling|sabse kam bik\w+)\b", "longest unsold", None, None),
     (r"\b(?:fast(?:est)?[- ]?(?:moving|selling)|best[- ]?sell(?:ing|ers?)|top[- ]?sell(?:ing|ers?)|"

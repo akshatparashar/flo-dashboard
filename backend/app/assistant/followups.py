@@ -153,6 +153,13 @@ def _resolve(question: str, ctx: dict | None, history: list[dict], months: list[
         if months and not rest and asked:
             return f"{asked} in {month}"
 
+    # "category wise pending" -> "sabse zyada?": the same breakdown, its leader
+    if topic == "production" and ctx.get("dim") in ("category", "month", "fabricator") and TOP_Q.search(low) and \
+            all(w in {"sabse", "zyada", "jyada", "kam", "most", "highest", "least", "lowest", "which", "one"}
+                for w in rest) and not months:
+        order = "least" if re.search(r"\b(kam|least|lowest)\b", low) else "most"
+        return f"which {ctx['dim']} has {order} {ctx.get('figure') or 'pending'} in production"
+
     # "sabse zyada kiske paas?" - rank the figure already in hand
     if topic in ("fabricators", "production") and TOP_Q.search(low) and not people and re.search(
             r"\b(kiske|kiska|kis|kaun|who|whose|which)\b", low):

@@ -1189,6 +1189,8 @@ class PageAnswers:
         dates, date_note = self._dd_dates(raw, opts.get("date") or [], base.get("today", ""))
         mq = re.search(r"\btasks?\s+(?:about|regarding|related to|on|containing|with)\s+([a-z0-9&\-\s]{3,40})$", raw.strip(" ?.!"))
         q = mq.group(1).strip() if mq else ""
+        if re.fullmatch(r"(?:hold|names?|status|details?|dates?|responsible[a-z ]*|persons?[a-z ]*)", q):
+            q = ""                                       # "tasks on hold", "tasks with names": not search text
         if q and any(q.lower() == p.lower() or q.lower() == p.lower().split()[0] for p in people_all):
             q = ""                                       # "tasks with Monu Sir" names a person, not search text
         if dctx and follow:                              # "What about Monu Sir?", "Now show pending", "Compare with Deepika"
@@ -1221,6 +1223,8 @@ class PageAnswers:
                          "still open with another status:"]
                 lines += [f"• {r[cols.index('Task')]} ({r[cols.index('Status')]})" for r in (tab.get("rows") or [])[:10]]
                 return "\n".join(lines), ctx
+        if body.get("no_match") and people and statuses and not q and not dates:
+            return f"{' and '.join(people)}: no **{', '.join(statuses)}** task in the sheet.", ctx
         if body.get("no_match"):
             return (f"No task matches these filters ({scope}). People in the sheet: {', '.join(people_all)}; dates: "
                     f"{', '.join(opts.get('date') or [])}; statuses: {', '.join(opts.get('status') or [])}.", ctx)
@@ -1296,7 +1300,8 @@ class PageAnswers:
             for r in ordered:
                 lines.append(f"| {r[0]} | {self._dd_num(r[pi(key)], key)} | " + " | ".join(self._dd_num(r[pi(c)], c) for c in extra) + " |")
             lines.append(footer)
-            return "\n".join(lines), {**ctx, "intent": "rank", "dim": "person"}
+            return "\n".join(lines), {**ctx, "intent": "rank", "dim": "person",
+                                      "deleg": {**mem, "top": tied[0] if len(tied) == 1 else None, "tied": tied}}
 
         # ---- oldest open task / what needs attention
         if re.search(r"\b(oldest|purana|sabse purana|needs attention|attention|carried|overdue|kitne din)\b", raw):
@@ -1319,7 +1324,7 @@ class PageAnswers:
         if re.search(r"\b(today|aaj)\b", raw) and set(dates) <= {base.get("today", "")} and \
                 re.search(r"\b(pending|open|tasks?|work|kaam|schedule)\b", raw):
             tp = body.get("today_pending") or {}
-            lines = [head.replace(f" · {', '.join(statuses)}", ""), f"Tasks dated today ({tp.get('date')}): **{tp.get('today_total', 0)}**; open ones: **{len(tp.get('today') or [])}**.",
+            lines = [head.replace(f" · {', '.join(statuses)}", "") if statuses else head, f"Tasks dated today ({tp.get('date')}): **{tp.get('today_total', 0)}**; open ones: **{len(tp.get('today') or [])}**.",
                      f"Open tasks carried over from earlier days: **{len(tp.get('carried') or [])}**."]
             show = (tp.get("today") or []) + (tp.get("carried") or [])
             if show:

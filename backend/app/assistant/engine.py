@@ -25,7 +25,7 @@ from . import calc, fmt, planner
 from .orders import OrderAnalyst
 from .status import StatusAnalyst
 from .extras import PageAnswers
-from . import followups, hinglish, shortcuts, stock, synonyms
+from . import focus, followups, greetings, hinglish, shortcuts, stock, synonyms
 from .pages import (NEW_PAGES, DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
 from ..dashboards.vendor_rate import category_in_text
@@ -551,6 +551,14 @@ class Assistant:
         question = (question or "").strip()[:MAX_QUESTION]
         if not question:
             return self._reply("Please type a question about the dashboard.", understood=False)
+        small = greetings.reply(question)
+        if small:
+            return self._reply(small[0], intent=small[1])
+        salute, question = greetings.split(question)          # "good morning, <question>": greet and answer
+        if salute:
+            out = self.answer(question, context, history)
+            gap = "\n" if out["answer"].startswith("|") else " "
+            return {**out, "answer": f"{salute}{gap}{out['answer']}"}
         question = _PAGE_ALIASES.sub(lambda m: _ALIAS_TO[re.sub(r"\W+", " ", m.group(0).lower()).strip()], question)
         snap = Snapshot(self.fetch)
         vocab = Vocabulary(snap)
@@ -571,6 +579,9 @@ class Assistant:
         if short:
             return short
         named = parse(question, vocab, self.today_month())
+        direct = self._focus(typed, question, named, context, history, snap, vocab)
+        if direct:
+            return self._noted(direct, question, context, named, vocab)
         full = followups.resolve(question, context, history, named.months, named.entities)
         if full:
             said = parse(full, vocab, self.today_month())
@@ -583,10 +594,38 @@ class Assistant:
 
     def _noted(self, reply: dict, asked: str, previous, parsed, vocab) -> dict:
         """Adds to the reply's context what the next follow-up will need (see followups.py)."""
+        if reply.get("understood") and reply.get("page") == "/designers" and reply.get("context") is not None                 and not reply["context"].get("designer"):          # who "uska" will mean next
+            said = [e.display.upper() for e in parsed.entities if e.type == "designer"]
+            lead = followups._first_named(reply["answer"], vocab, "designer") if not said else None
+            name = said[0] if len(said) == 1 else lead
+            if name:
+                reply = {**reply, "context": {**reply["context"], "designer": name}}
         if not reply.get("understood") or not reply.get("context") or reply.get("intent") in ("greet", "thanks", "multi"):
             return reply
         return {**reply, "context": followups.annotate(reply["context"], asked, reply["answer"], previous, vocab,
                                                        parsed.months, parsed.entities)}
+
+    def _focus(self, typed: str, question: str, q: Query, context, history, snap, vocab) -> dict | None:
+        """Daily Delegation, Designers and Production shapes the general matcher misreads (see focus.py)."""
+        ctx = context if isinstance(context, dict) else {}
+        if calc.given_calc(question):                        # a sum on the person's own numbers
+            return None
+        known = {w for lab in vocab.labels for w in raw_tokens(lab)} | set(vocab.common)
+        known |= {w for e in vocab.entities.values() for w in e.key.split()}
+        others = {w for e in vocab.entities.values() for w in e.key.split()}
+        pa = PageAnswers(snap.get, {k: p.filters for k, p in PAGES.items()}, {k: p.label for k, p in PAGES.items()})
+        months = q.months
+        for step in (lambda: focus.delegation(question, ctx, history, snap.get, pa, known, others),
+                     lambda: focus.designers(question, ctx, snap.get, q.entities, months, known),
+                     lambda: focus.production(question, snap.get, q.entities, months)):
+            try:
+                out = step()
+            except (DataUnavailable, KeyError, ValueError, TypeError, IndexError, ZeroDivisionError):
+                out = None
+            if out:
+                text, page, new = out
+                return self._polish(typed, self._reply(text, page, new, intent="value"), "normal")
+        return None
 
     def _shortcut(self, typed: str, question: str, snap, vocab) -> dict | None:
         """Not a figure: what is urgent, where a page is, FLO World, a fabric's rate by name (see shortcuts.py)."""
