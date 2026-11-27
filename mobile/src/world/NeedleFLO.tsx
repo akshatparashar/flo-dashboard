@@ -3,7 +3,7 @@
    over its right side. The thread is drawn twice, under the letters and over them clipped to the "over" stretches,
    so it really weaves; the needle too. The path is sampled once here so the needle can ride it frame by frame. */
 import { useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, Animated, Image, View } from "react-native";
+import { AccessibilityInfo, Animated, Easing, Image, View } from "react-native";
 import Svg, { ClipPath, Defs, Ellipse, G, Path, Rect } from "react-native-svg";
 import { useTheme } from "../lib/theme";
 
@@ -65,6 +65,11 @@ function at(pts: Pt[], s: number): { x: number; y: number; deg: number } {
 const { pts, len } = sample();
 // start where the visible part begins, so the needle is in view from the first frame
 const from = pts.find((p) => p.x >= VB.x - 8)?.s ?? 0;
+// where the thread leaves the right edge: the glint only needs to run across what is on screen
+const to = pts.find((p) => p.x >= VB.x + VB.w + 8)?.s ?? len;
+const GLINT = 34;
+
+const AnimatedPath = Animated.createAnimatedComponent(Path);
 
 const ease = (t: number) => -(Math.cos(Math.PI * t) - 1) / 2; // sine.inOut, as on the web
 
@@ -83,6 +88,8 @@ export function NeedleFLO({ width, onDone, play = true }: { width: number; onDon
   const c = useTheme();
   const [p, setP] = useState(0);
   const [fade] = useState(() => new Animated.Value(0));
+  const [glint] = useState(() => new Animated.Value(from - GLINT));
+  const [stitched, setStitched] = useState(false);
   const done = useRef(onDone);
   useEffect(() => {
     done.current = onDone;
@@ -110,6 +117,7 @@ export function NeedleFLO({ width, onDone, play = true }: { width: number; onDon
           done.current?.();
         }
         if (t < 1) raf = requestAnimationFrame(tick);
+        else setStitched(true);
       };
       raf = requestAnimationFrame(tick);
     });
@@ -119,6 +127,20 @@ export function NeedleFLO({ width, onDone, play = true }: { width: number; onDon
     };
   }, [play, fade]);
 
+  // afterwards a short glint keeps running along the thread, like a signal through a wire
+  useEffect(() => {
+    if (!stitched) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(glint, { toValue: to, duration: 2600, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
+        Animated.delay(2400),
+        Animated.timing(glint, { toValue: from - GLINT, duration: 0, useNativeDriver: false }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [stitched, glint]);
+
   const s = from + (len - from) * ease(p);
   const n = at(pts, s);
   const showNeedle = p > 0.01 && p < 0.985 && n.x < VB.x + VB.w + NEEDLE_LEN;
@@ -126,12 +148,24 @@ export function NeedleFLO({ width, onDone, play = true }: { width: number; onDon
   const height = VB.h * k;
   const thread = { d: THREAD, fill: "none", stroke: c.accent, strokeWidth: 2.4, strokeLinecap: "round" as const, strokeDasharray: `${len} ${len}`, strokeDashoffset: len - s };
   const needle = { ...n, body: c.ink2, eye: c.frame };
+  const shine = stitched && (
+    <AnimatedPath
+      d={THREAD}
+      fill="none"
+      stroke={c.dark ? "#ffffff" : c.sheet}
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeDasharray={`${GLINT} ${len * 2}`}
+      strokeDashoffset={glint.interpolate({ inputRange: [0, len], outputRange: [0, -len] })}
+    />
+  );
   const viewBox = `${VB.x} ${VB.y} ${VB.w} ${VB.h}`;
 
   return (
     <View style={{ width, height }} accessible accessibilityRole="image" accessibilityLabel="FLO">
       <Svg width={width} height={height} viewBox={viewBox} style={{ position: "absolute" }}>
         <Path {...thread} />
+        {shine}
         {showNeedle && <Needle {...needle} />}
       </Svg>
       <Animated.View style={{ position: "absolute", left: -VB.x * k, top: -VB.y * k, width: 450 * k, height: 165 * k, opacity: fade }}>
@@ -147,6 +181,7 @@ export function NeedleFLO({ width, onDone, play = true }: { width: number; onDon
         </Defs>
         <G clipPath="url(#flo-front)">
           <Path {...thread} />
+          {shine}
           {showNeedle && <Needle {...needle} />}
         </G>
       </Svg>

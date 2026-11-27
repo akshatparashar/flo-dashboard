@@ -42,10 +42,3 @@ export const LABELS: Label[] = [
 export function labelBySlug(slug: string | undefined): Label | undefined {
   return LABELS.find((l) => l.slug === slug);
 }
-
-/* The welcome screen plays once each time the app starts; after that the dashboard opens directly. */
-let entered = false;
-export const hasEntered = () => entered;
-export function markEntered() {
-  entered = true;
-}

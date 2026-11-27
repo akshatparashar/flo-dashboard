@@ -44,8 +44,9 @@ function Navigation({ fontsReady }: { fontsReady: boolean }) {
       <StatusBar style={c.dark ? "light" : "dark"} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.frame } }}>
         <Stack.Protected guard={signedIn}>
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="welcome" options={{ animation: "fade" }} />
+          {/* the app opens on the FLO landing screen (index); the dashboard tabs sit behind "Open dashboard" */}
+          <Stack.Screen name="index" options={{ animation: "fade" }} />
+          <Stack.Screen name="(tabs)" options={{ animation: "fade" }} />
           <Stack.Screen name="world/index" options={{ animation: "fade_from_bottom" }} />
           <Stack.Screen name="world/[slug]" />
           <Stack.Screen name="designers" options={detail} />

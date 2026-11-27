@@ -1,13 +1,11 @@
-/* Bottom tabs for the four screens the owner opens most; the rest live under More. Until the welcome screen has been
-   passed (once per app start) the tabs send the owner there first. */
+/* Bottom tabs for the four screens the owner opens most; the rest live under More. The app itself opens on the FLO
+   landing screen (src/app/index.tsx); its "Open dashboard" leads here. */
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { Redirect, type Href } from "expo-router";
 import { Tabs } from "expo-router/js-tabs";
 import type { ComponentProps } from "react";
 import type { ColorValue } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { font, useTheme } from "../../lib/theme";
-import { hasEntered } from "../../world/brands";
 
 type Icon = ComponentProps<typeof Ionicons>["name"];
 
@@ -20,8 +18,6 @@ function icon(on: Icon, off: Icon) {
 export default function TabsLayout() {
   const c = useTheme();
   const insets = useSafeAreaInsets();
-  // each time the app starts it opens on the FLO welcome screen, as the website does once per visit
-  if (!hasEntered()) return <Redirect href={"/welcome" as Href} />;
   return (
     <Tabs
       screenOptions={{
@@ -33,7 +29,7 @@ export default function TabsLayout() {
         sceneStyle: { backgroundColor: c.frame },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: "Overview", tabBarIcon: icon("home", "home-outline") }} />
+      <Tabs.Screen name="overview" options={{ title: "Overview", tabBarIcon: icon("home", "home-outline") }} />
       <Tabs.Screen name="production" options={{ title: "Production", tabBarIcon: icon("cube", "cube-outline") }} />
       <Tabs.Screen name="fabric-po" options={{ title: "Fabric PO", tabBarIcon: icon("layers", "layers-outline") }} />
       <Tabs.Screen name="target" options={{ title: "Revenue", tabBarIcon: icon("trending-up", "trending-up-outline") }} />

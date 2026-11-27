@@ -91,7 +91,7 @@ export default function More() {
 
       <Card flush>
         <Row first title="FLO World" sub="The 22 FLO labels around the dashboard" onPress={() => router.push("/world" as Href)} left={<Ionicons name="planet-outline" size={20} color={c.ink} />} />
-        <Row title="Welcome screen" sub="The needle and thread, the stages and the labels" onPress={() => router.push("/welcome" as Href)} left={<Ionicons name="sparkles-outline" size={20} color={c.ink} />} />
+        <Row title="Welcome screen" sub="The needle and thread, the stages and the labels" onPress={() => router.push("/")} left={<Ionicons name="sparkles-outline" size={20} color={c.ink} />} />
       </Card>
 
       <Card flush>

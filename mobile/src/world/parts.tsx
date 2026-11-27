@@ -4,7 +4,7 @@ import { Image, type ImageStyle, type StyleProp } from "react-native";
 import { ago } from "../lib/format";
 import { useTheme } from "../lib/theme";
 import type { StatusData } from "../lib/types";
-import { LOGO_RATIO, markEntered, type Label } from "./brands";
+import { LOGO_RATIO, type Label } from "./brands";
 
 export function LogoMark({ label, width, color, style }: { label: Label; width: number; color?: string; style?: StyleProp<ImageStyle> }) {
   const c = useTheme();
@@ -18,17 +18,17 @@ export function LogoMark({ label, width, color, style }: { label: Label; width: 
   );
 }
 
-const TABS = new Set(["/", "/production", "/fabric-po", "/target", "/more"]);
+const TABS = new Set(["/overview", "/production", "/fabric-po", "/target", "/more"]);
 
-/** Leaves FLO World for a dashboard page: the tabs become the base of the stack, a page under More opens over them. */
+/** Leaves the landing screen or FLO World for a dashboard page: the tabs open over the landing screen (back returns
+ *  there), and a page under More opens over the tabs. */
 export function openPage(to: string) {
-  markEntered();
   if (router.canDismiss()) router.dismissAll();
   if (TABS.has(to)) {
-    router.replace(to as Href);
+    router.push(to as Href);
     return;
   }
-  router.replace("/");
+  router.push("/overview" as Href);
   setTimeout(() => router.push(to as Href), 0);
 }
 

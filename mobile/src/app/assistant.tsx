@@ -27,7 +27,7 @@ const nextId = () => memory.next++;
 
 /** Web paths in answers -> app screens (they are the same names). */
 const ROUTES = new Set([
-  "/", "/production", "/fabric-po", "/target", "/designers", "/clients", "/samples", "/fabricators",
+  "/overview", "/production", "/fabric-po", "/target", "/designers", "/clients", "/samples", "/fabricators",
   "/flo-future", "/vendor-rate", "/in-out-sale", "/daily-delegation", "/stock-ageing",
 ]);
 
@@ -99,7 +99,7 @@ export default function Assistant() {
   /** Closes the chat, then shows the page the answer came from (a tab, or a page under More). */
   const open = (page: string) => {
     router.back();
-    router.navigate(page as Href);
+    router.navigate((page === "/" ? "/overview" : page) as Href);
   };
 
   return (
@@ -146,7 +146,7 @@ export default function Assistant() {
           ) : (
             <View key={m.id} style={[st.bubble, st.bot, { backgroundColor: m.error ? c.negSoft : c.sheet, borderColor: m.error ? "transparent" : c.sheetEdge }]}>
               <RichText text={m.text} color={m.error ? c.negInk : c.ink2} strong={m.error ? c.negInk : c.ink} />
-              {m.page && ROUTES.has(m.page) && (
+              {m.page && ROUTES.has(m.page === "/" ? "/overview" : m.page) && (
                 <Pressable onPress={() => open(m.page!)} hitSlop={6} accessibilityRole="link">
                   <Text style={{ fontFamily: font.uiBold, fontSize: 13.5, color: c.accent, marginTop: 4 }}>Open {m.pageLabel ?? "page"} →</Text>
                 </Pressable>

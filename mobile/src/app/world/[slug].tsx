@@ -30,7 +30,7 @@ export default function Soon() {
         sew.setValue(1);
         return;
       }
-      Animated.timing(intro, { toValue: 1, duration: 1300, easing: Easing.out(Easing.exp), useNativeDriver: true }).start();
+      Animated.timing(intro, { toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
       loops = [
         Animated.loop(Animated.timing(spin, { toValue: 1, duration: 40000, easing: Easing.linear, useNativeDriver: true })),
         Animated.loop(Animated.sequence([Animated.timing(sew, { toValue: 1, duration: 3400, easing: Easing.linear, useNativeDriver: true }), Animated.delay(900)])),
@@ -75,13 +75,23 @@ export default function Soon() {
           <Animated.View style={[st.needle, { backgroundColor: c.ink2, transform: [{ translateX: sew.interpolate({ inputRange: [0, 1], outputRange: [-30, W + 10] }) }] }]} />
         </View>
 
-        <Animated.View style={{ opacity: intro, gap: 12, alignItems: "center" }}>
-          <Text style={[st.h1, { color: c.brand }]} accessibilityRole="header">FLO {label.name} is being stitched in.</Text>
+        <Animated.View style={{ gap: 12, alignItems: "center" }}>
+          <View style={st.words} accessible accessibilityRole="header" accessibilityLabel={`FLO ${label.name} is being stitched in.`}>
+            {`FLO ${label.name} is being stitched in.`.split(" ").map((w, i) => {
+              const a = Math.min(0.9, 0.38 + i * 0.05);
+              return (
+                <View key={i} style={{ overflow: "hidden" }}>
+                  <Animated.Text style={[st.h1, { color: c.brand, transform: [{ translateY: intro.interpolate({ inputRange: [0, a, Math.min(1, a + 0.3)], outputRange: [40, 40, 0], extrapolate: "clamp" }) }] }]}>{w}</Animated.Text>
+                </View>
+              );
+            })}
+          </View>
+          <Animated.View style={{ opacity: intro.interpolate({ inputRange: [0, 0.55, 0.9], outputRange: [0, 0, 1] }), gap: 12, alignItems: "center" }}>
           <T style={{ textAlign: "center", maxWidth: 380 }}>
             This label gets its own room in the FLO system soon. Until then, everything the house runs on lives in the FLO Dashboard.
           </T>
           <View style={{ gap: 10, marginTop: 8, alignItems: "center" }}>
-            <Pressable onPress={() => openPage("/")} accessibilityRole="button" style={({ pressed }) => [st.cta, { backgroundColor: c.brand, opacity: pressed ? 0.85 : 1 }]}>
+            <Pressable onPress={() => openPage("/overview")} accessibilityRole="button" style={({ pressed }) => [st.cta, { backgroundColor: c.brand, opacity: pressed ? 0.85 : 1 }]}>
               <Text style={{ fontFamily: font.uiBold, fontSize: 15.5, color: c.onBrand }}>Open FLO Dashboard</Text>
               <Ionicons name="arrow-forward" size={17} color={c.onBrand} />
             </Pressable>
@@ -89,6 +99,7 @@ export default function Soon() {
               <Text style={{ fontFamily: font.uiBold, fontSize: 15.5, color: c.ink }}>Back to FLO World</Text>
             </Pressable>
           </View>
+          </Animated.View>
         </Animated.View>
       </View>
     </View>
@@ -101,6 +112,7 @@ const st = StyleSheet.create({
   mark: { width: 230, height: 230, alignItems: "center", justifyContent: "center" },
   st: { position: "absolute", top: 9, height: 2, borderRadius: 1 },
   needle: { position: "absolute", top: 8.5, width: 30, height: 3, borderTopRightRadius: 2, borderBottomRightRadius: 2 },
+  words: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", columnGap: 9, maxWidth: 360 },
   h1: { fontFamily: font.display, fontSize: 30, lineHeight: 36, textAlign: "center", letterSpacing: -0.3 },
   cta: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 48, paddingHorizontal: 22, borderRadius: 999 },
 });
