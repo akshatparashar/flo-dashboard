@@ -136,7 +136,7 @@ Playwright: 46 passed, 6 skipped by design (desktop + phone); production build c
 | Website (`frontend/`) | Working | Playwright 42 passed, 8 skipped by design (desktop + phone, includes the new tabs); 19 unit tests; typecheck and build clean |
 | FLO Assistant | Answers for every new tab | Tested in English + Hinglish against copies of the real sheets and the stock snapshot |
 | New sheets on the live Google API | **Not verified** | No Google key on the development PC; checked against downloaded copies of the sheets |
-| Phone app (`mobile/`) | **2.0 (27 Nov):** screens for FLO Future, Vendor Rate, In/Out Sale, Daily Delegation, Stock Ageing (+ Unsold); Clients and Overview additions; chat sends `conversation_id` | typecheck, lint, tests, expo-doctor pass; every screen rendered on demo data (web) without errors; APK built on EAS (preview profile) |
+| Phone app (`mobile/`) | **2.0 (27 Nov):** screens for FLO Future, Vendor Rate, In/Out Sale, Daily Delegation, Stock Ageing (+ Unsold); FLO World (welcome with needle, hub, label rooms; `mobile/src/world/`); Clients and Overview additions; chat sends `conversation_id` | typecheck, lint, tests, expo-doctor pass; every screen rendered on demo data (web) without errors; APK built on EAS (preview profile) |
 | Live site (Vercel) | Deployed 17 Nov from `main` | Not redeployed as part of this work; not re-checked |
 
 Chatbot fixes of 26 Nov: Stock Ageing questions; "December me kitne pcs aane wale hai" (answered 0 before); "which
