@@ -17,6 +17,15 @@ _V = r"\*\*[^*]+\*\*"                       # one bold value: **₹4.06 Cr**
 
 # Whole-line patterns, tried in order; the first that matches rewrites the line.
 _LINES: list[tuple[re.Pattern, str]] = [
+    # Stock Ageing / Unsold Inventory
+    (re.compile(rf"^No sale for over (?P<d>\d+) days: (?P<n>{_V}), (?P<q>{_V}), (?P<v>{_V}) at cost \((?P<p>[\d.]+%) of stock value\)\.$"),
+     r"\g<d> din se nahi bika: \g<n>, \g<q>, cost par \g<v> (stock value ka \g<p>)."),
+    (re.compile(rf"^Never sold \(no sale on record since April 2023\): (?P<n>{_V}), (?P<q>{_V}), (?P<v>{_V}) at cost\. Some may simply be new\.$"),
+     r"Kabhi nahi bika (April 2023 se koi sale record nahi): \g<n>, \g<q>, cost par \g<v>. Kuch naye bhi ho sakte hain."),
+    (re.compile(rf"^Average age of the stock is (?P<d>{_V}) \(weighted by pieces\)\.$"),
+     r"Stock ki average umar \g<d> hai (pcs ke hisaab se)."),
+    (re.compile(rf"^(?P<who>{_V}) has the most stock with no sale for over (?P<d>\d+) days: (?P<v>{_V}) \((?P<n>[\d,]+) designs\)\.$"),
+     r"\g<d> din se na bikne wala sabse zyada stock \g<who> mein hai: \g<v> (\g<n> designs)."),
     # "Total revenue in November-26 is **₹4.06 Cr**."
     (re.compile(rf"^(?P<label>[^*\n]+?) in (?P<month>[A-Z][a-z]+-\d{{2}}) is (?P<v>{_V})\.$"),
      r"\g<month> mein \g<label> \g<v> hai."),
@@ -85,6 +94,11 @@ _LINES: list[tuple[re.Pattern, str]] = [
 # Phrases swapped anywhere in a line (after the line patterns), longest first.
 _PHRASES = [
     ("(all months so far)", "(ab tak ke sabhi mahine)"),
+    ("Designs that have waited longest without a sale:", "Sabse zyada din se na bikne wale designs:"),
+    ("Oldest stock, by design (age of the oldest piece still in stock):", "Sabse purana stock, design-wise (sabse purane piece ki umar):"),
+    ("Longest without a sale first:", "Sabse zyada din wale pehle:"),
+    ("Highest value first:", "Sabse zyada value wale pehle:"),
+    ("Unsold stock (designs whose stock has waited without any sale):", "Unsold stock (jin designs ka stock bina sale ke pada hai):"),
     ("all months so far", "ab tak ke sabhi mahine"),
     ("is still running", "abhi chal raha hai"),
     ("so this is not a full-month comparison", "isliye yeh poore mahine ki tulna nahi hai"),

@@ -389,7 +389,11 @@ def chat(body: ChatIn):
     store = get_conversations()
     conv = body.conversation_id if ConversationStore.valid(body.conversation_id) else ConversationStore.new_id()
     history = store.contexts(conv)
-    context = history[-1] if history else body.context
+    # The browser sends the context of the last answer it showed. On a server with more than one instance (Vercel) this
+    # instance may have missed turns, so that context wins over an older remembered one.
+    context = body.context or (history[-1] if history else None)
+    if body.context and (not history or history[-1] != body.context):
+        history = history + [body.context]
     reply = get_assistant().answer(body.message, context, history)
     store.add(conv, "user", body.message)
     store.add(conv, "assistant", reply["answer"], reply.get("context") if reply.get("understood") else None,

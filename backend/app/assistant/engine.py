@@ -25,7 +25,7 @@ from . import calc, fmt, planner
 from .orders import OrderAnalyst
 from .status import StatusAnalyst
 from .extras import PageAnswers
-from . import hinglish, stock
+from . import followups, hinglish, shortcuts, stock, synonyms
 from .pages import (NEW_PAGES, DIMENSION_PLURALS, DIMENSION_WORDS, FEATURES, HELP, HOME_PAGE, OPTION_TYPES, PAGES, PLURALS,
                     QUALITY, ROW_TYPES, TYPE_NAMES)
 from ..dashboards.vendor_rate import category_in_text
@@ -560,8 +560,49 @@ class Assistant:
         history = [c for c in (history or []) if isinstance(c, dict)]
         if context is None and history:
             context = history[-1]
+        if isinstance(context, dict):          # it comes back from the browser: keep only entity lists of the right shape
+            refs = context.get("entities")
+            if refs is not None and not (isinstance(refs, list) and all(isinstance(r, dict) for r in refs)):
+                context = {**context, "entities": []}
         self._ctx_in, self._history = context, history
         self._vocab = vocab
+        typed, question = question, synonyms.normalise(question)     # replies follow the language as typed
+        short = self._shortcut(typed, question, snap, vocab)
+        if short:
+            return short
+        named = parse(question, vocab, self.today_month())
+        full = followups.resolve(question, context, history, named.months, named.entities)
+        if full:
+            said = parse(full, vocab, self.today_month())
+            reply = self._one(full, None, history, snap, vocab, asked_as=typed)    # reply in their language
+            if reply.get("understood"):
+                return self._noted(reply, full, context, said, vocab)
+            self._ctx_in = context                       # fall back to reading the message as it was typed
+        reply = self._answer_as_typed(question, context, history, snap, vocab, typed)
+        return self._noted(reply, question, context, named, vocab)
+
+    def _noted(self, reply: dict, asked: str, previous, parsed, vocab) -> dict:
+        """Adds to the reply's context what the next follow-up will need (see followups.py)."""
+        if not reply.get("understood") or not reply.get("context") or reply.get("intent") in ("greet", "thanks", "multi"):
+            return reply
+        return {**reply, "context": followups.annotate(reply["context"], asked, reply["answer"], previous, vocab,
+                                                       parsed.months, parsed.entities)}
+
+    def _shortcut(self, typed: str, question: str, snap, vocab) -> dict | None:
+        """Not a figure: what is urgent, where a page is, FLO World, a fabric's rate by name (see shortcuts.py)."""
+        known = {w for lab in vocab.labels for w in raw_tokens(lab)}
+        known |= {w for e in vocab.entities.values() if e.type != "fabric" for w in e.key.split()}
+        try:
+            out = shortcuts.answer(question, snap.get, known)
+        except (DataUnavailable, KeyError, ValueError, TypeError):
+            return None
+        if not out:
+            return None
+        text, page, intent = out
+        ctx = {"page": page, "metric": None, "intent": intent, "entities": [], "months": [], "dim": None} if page else {}
+        return self._polish(typed, self._reply(text, page, ctx, intent=intent), "normal")
+
+    def _answer_as_typed(self, question: str, context, history, snap, vocab, typed: str) -> dict:
         own = calc.given_calc(question)
         if own:
             return self._given(question, own, context, history, snap, vocab)
@@ -578,7 +619,7 @@ class Assistant:
         parts = [question] if (whole_status or flow or one_page) else self._plan(question, vocab)
         if len(parts) > 1:
             return self._multi(question, parts, context, history, snap, vocab)
-        return self._one(question, context, history, snap, vocab)
+        return self._one(question, context, history, snap, vocab, asked_as=typed)
 
     def _given(self, question, text, context, history, snap, vocab) -> dict:
         """The person's own numbers are used for the sum; the dashboard's figures are shown next to them when the same
@@ -785,8 +826,9 @@ class Assistant:
         return None
 
     def _one(self, question: str, context: dict | None, history: list[dict], snap: Snapshot, vocab: Vocabulary,
-             polish: bool = True, pin: str | None = None) -> dict:
-        original = question
+             polish: bool = True, pin: str | None = None,
+             asked_as: str | None = None) -> dict:
+        original = asked_as or question
         rewritten = self._rewrite(question, context, history, vocab)
         if rewritten:
             question = rewritten
@@ -1514,15 +1556,16 @@ class Assistant:
 
     def _stock_ageing(self, q: Query, snap: Snapshot) -> dict | None:
         """Old / closing / ageing stock questions (the Stock Ageing page, see stock.py)."""
-        previous = self._ctx_in.get("page") if isinstance(self._ctx_in, dict) else None
-        if not stock.matches(q.text, previous):
+        ctx = self._ctx_in if isinstance(self._ctx_in, dict) else {}
+        if not stock.matches(q.text, ctx.get("page")):
             return None
+        earlier = ctx.get("stock") if ctx.get("page") == "stock-ageing" and isinstance(ctx.get("stock"), dict) else None
         try:
-            text = stock.answer(q.text, snap.get)
-        except (DataUnavailable, KeyError, ValueError, ZeroDivisionError):
+            text, intent = stock.answer(q.text, snap.get, earlier)
+        except (DataUnavailable, KeyError, ValueError, TypeError, ZeroDivisionError):
             return None
         out = self._reply(text, None, {"page": "stock-ageing", "metric": None, "intent": "value", "entities": [],
-                                       "months": [], "dim": None}, intent="value")
+                                       "months": [], "dim": None, "stock": intent}, intent="value")
         return {**out, "page": "/stock-ageing", "page_label": "Stock Ageing"}
 
     def _status(self, q: Query, snap: Snapshot, vocab: Vocabulary) -> dict | None:

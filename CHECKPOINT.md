@@ -224,6 +224,26 @@ Full guide: [`mobile/README.md`](mobile/README.md) and [`mobile/AGENTS.md`](mobi
 the share sheet with a `.csv` file; same file as the website). **Still open:** not yet tested on a real Android or
 iPhone.
 
+## Chatbot follow-ups (27 Nov)
+
+`backend/app/assistant/followups.py` rebuilds a short follow-up ("uska received?", "April me?", "kiske hain?") into a
+full question from notes kept after each answer (topic, the name that came top, figure, months); `resolve` returns
+None for anything else. The browser's context now wins over an older server memory (several server instances).
+Tests: `backend/tests/test_assistant_followups.py`.
+
+**Stock and Unsold Inventory** (`backend/app/assistant/stock.py`, tests `test_assistant_unsold.py`): no sale for N
+days, never sold, longest unsold, oldest stock, by series, average age, count / journal and return pieces, one design
+by its code, where the section is; their follow-ups travel in the context (`stock` intent).
+
+**Other words and opposites** (`backend/app/assistant/synonyms.py`): inventory / maal / godown = stock, non-moving =
+unsold, best selling = the opposite, supplier = vendor, passed / failed samples, unfinished / closed tasks, undelivered
+= pending, and so on. Add a rule there (with its condition) when people use a new word.
+
+**Not-a-figure questions** (`shortcuts.py`): urgent items (Overview alerts), where a page is, FLO World, team wise
+status, a fabric's rate by name ("no fabric called X" instead of another rate). Tests: `test_assistant_synonyms.py`.
+The other failures from the 27 Nov audit (oldest open task, Hinglish "sabse bada" / "sabse kharab", most overdue) are
+fixed. Synonym coverage is a list, so a word not in it can still be missed.
+
 ## Known issues
 
 - **6 real-sheet parity tests fail on purpose** — `PARITY_SOURCE=google pytest tests/test_parity.py` →

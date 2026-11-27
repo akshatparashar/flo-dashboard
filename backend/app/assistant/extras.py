@@ -1128,7 +1128,8 @@ class PageAnswers:
                ("In Progress", r"in progress|inprogress|ongoing|chal raha|chalu|wip"),
                ("On Hold", r"on hold|hold"),
                ("Pending", r"pending|baki|baaki|not started|shuru nahi"),
-               ("Completed", r"completed|complete|done|finished|ho gaya|ho gaye|poora|pura|khatam")]
+               # whole words: "purana" is not "pura", "incomplete" is not "complete"
+               ("Completed", r"\b(?:completed?|done|finished|ho gaya|ho gaye|poor[ae]|pur[ae]|khatam)\b")]
     MONTHS3 = {"jan": "Jan", "feb": "Feb", "mar": "Mar", "apr": "Apr", "may": "May", "jun": "Jun", "jul": "Jul", "aug": "Aug",
                "sep": "Sep", "oct": "Oct", "nov": "Nov", "dec": "Dec"}
 
@@ -1174,7 +1175,8 @@ class PageAnswers:
         dctx = ctx_in.get("deleg") if isinstance(ctx_in, dict) and ctx_in.get("page") == "daily-delegation" else None
         follow = bool(dctx) and len(raw.split()) <= 9
         trigger = named or bool(self.DELEG.search(raw)) or (follow and (self._dd_people(raw, people_all) or any(
-            re.search(rx, raw) for _, rx in self.DSTATUS) or re.search(r"\b(compare|what about|and|aur|vs|now|ab)\b", raw)))
+            re.search(rx, raw) for _, rx in self.DSTATUS) or re.search(
+            r"\b(compare|what about|and|aur|vs|now|ab|oldest|sabse purana|sabse purani)\b", raw)))
         if not trigger:
             return None
         if base.get("empty") or "kpis" not in base:
@@ -1255,7 +1257,7 @@ class PageAnswers:
 
         # ---- who has the most / fewest (open) tasks, best/worst completion
         rank = re.search(r"\b(who|which person|kaun|kiske|kis|most|least|fewest|highest|lowest|sabse|top|best|worst)\b", raw) and \
-            not people and re.search(r"\b(tasks?|open|pending|completed|done|work|kaam|baki|approval|completion|percent\w*)\b|%", raw)
+            not re.search(r"\b(oldest|purana|puraana|purane|puraane)\b", raw) and not people and re.search(r"\b(tasks?|open|pending|completed|done|work|kaam|baki|approval|completion|percent\w*)\b|%", raw)
         if rank:
             body = self._dd({"date": dates, "q": [q] if q else []})      # a ranking compares everyone: no status filter
             ptab = (body.get("tables") or {}).get("persons") or {}
