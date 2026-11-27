@@ -1,6 +1,6 @@
 /* Building blocks shared by every screen: type, cards, KPI tiles, notices, loading and error states. */
 import { useEffect, useState, type ReactNode } from "react";
-import { Animated, Platform, Pressable, StyleSheet, Text, View, type StyleProp, type TextProps, type TextStyle, type ViewStyle } from "react-native";
+import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View, type StyleProp, type TextProps, type TextStyle, type ViewStyle } from "react-native";
 import { fmtKpi } from "../lib/format";
 import { font, useTheme } from "../lib/theme";
 import type { Kpi, Notice as NoticeT } from "../lib/types";
@@ -125,6 +125,45 @@ export function Notices({ items }: { items?: NoticeT[] }) {
   );
 }
 
+/** Plain-language highlights the server worked out ("3 designs hold 40% of the old stock"), one per line. */
+export function Insights({ items }: { items: string[] }) {
+  const c = useTheme();
+  if (!items.length) return null;
+  return (
+    <Card style={{ gap: 10 }}>
+      {items.map((t) => (
+        <View key={t} style={{ flexDirection: "row", gap: 10 }}>
+          <View style={[s.bullet, { backgroundColor: c.accent }]} />
+          <T style={{ flex: 1, fontSize: 14.5, color: c.ink2 }}>{t}</T>
+        </View>
+      ))}
+    </Card>
+  );
+}
+
+/** A row of mutually exclusive choices (width, measure, threshold…); scrolls sideways when it does not fit. */
+export function Segmented<V extends string | number>({ items, value, onChange, label }: { items: { value: V; label: string }[]; value: V; onChange: (v: V) => void; label?: string }) {
+  const c = useTheme();
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 16 }} style={{ marginHorizontal: -16 }} accessibilityLabel={label}>
+      {items.map((it) => {
+        const on = it.value === value;
+        return (
+          <Pressable
+            key={String(it.value)}
+            onPress={() => onChange(it.value)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: on }}
+            style={({ pressed }) => [s.seg, { backgroundColor: on ? c.brand : c.control, borderColor: on ? c.brand : c.controlEdge, opacity: pressed ? 0.8 : 1 }]}
+          >
+            <Text style={{ fontFamily: font.uiMedium, fontSize: 13.5, color: on ? c.onBrand : c.ink }}>{it.label}</Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
 export function Button({ label, onPress, kind = "default", disabled, icon }: { label: string; onPress: () => void; kind?: "default" | "primary" | "ghost"; disabled?: boolean; icon?: ReactNode }) {
   const c = useTheme();
   const bg = kind === "primary" ? c.brand : kind === "ghost" ? "transparent" : c.control;
@@ -207,5 +246,7 @@ const s = StyleSheet.create({
   kpi: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, padding: 14, gap: 6, flexGrow: 1, minHeight: 92 },
   kpiLead: { paddingVertical: 16 },
   notice: { borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },
+  bullet: { width: 6, height: 6, borderRadius: 3, marginTop: 8 },
+  seg: { paddingHorizontal: 13, minHeight: 36, justifyContent: "center", borderRadius: 10, borderWidth: 1 },
   btn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, minHeight: 44, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1 },
 });

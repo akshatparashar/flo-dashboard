@@ -49,6 +49,11 @@ function Navigation({ fontsReady }: { fontsReady: boolean }) {
           <Stack.Screen name="clients" options={detail} />
           <Stack.Screen name="samples" options={detail} />
           <Stack.Screen name="fabricators" options={detail} />
+          <Stack.Screen name="flo-future" options={detail} />
+          <Stack.Screen name="vendor-rate" options={detail} />
+          <Stack.Screen name="in-out-sale" options={detail} />
+          <Stack.Screen name="daily-delegation" options={detail} />
+          <Stack.Screen name="stock-ageing" options={detail} />
           <Stack.Screen name="assistant" options={{ presentation: "modal", contentStyle: { backgroundColor: c.sheet } }} />
         </Stack.Protected>
         <Stack.Protected guard={!signedIn}>

@@ -4,7 +4,8 @@ import { BarList, Bars, Split } from "../components/charts";
 import { DataTable } from "../components/DataTable";
 import { FilterButton, MonthChips, useFilters } from "../components/Filters";
 import { Em, Screen } from "../components/Screen";
-import { KpiGrid, Panel, Section } from "../components/ui";
+import { KpiGrid, Notices, Panel, Section } from "../components/ui";
+import { useTheme } from "../lib/theme";
 import { fmtInt } from "../lib/format";
 import { useDashboard } from "../lib/query";
 import type { ClientData } from "../lib/types";
@@ -17,6 +18,7 @@ const GROUPS = [
 ];
 
 export default function Clients() {
+  const c = useTheme();
   const f = useFilters(KEYS);
   const q = useDashboard<ClientData>("/client", f.values);
   return (
@@ -64,6 +66,47 @@ export default function Clients() {
               <DataTable table={d.tables.monthly} name="clients_monthly" maxRows={13} titleCaseFirst={false} />
             </Panel>
           </Section>
+          {!!d.charts.client_share?.length && (
+            <Section title="Clients" sub="Share of ordered pcs by client">
+              <Panel title="Order pcs by client">
+                <BarList items={d.charts.client_share} unit="pcs" max={10} />
+              </Panel>
+            </Section>
+          )}
+          {d.delivery60 && (
+            <Section title="Expected deliveries" sub={`Pending pcs by the 60-day delivery date · red = date already passed (${d.delivery60.today})`}>
+              <KpiGrid kpis={d.delivery60.kpis} lead={["total"]} />
+              <Panel title="Pcs due to arrive, by month" sub="Tap a month for figures">
+                <Bars data={d.delivery60.chart} unit="pcs" stacked colors={{ Overdue: c.neg, "Not yet due": c.seriesRef }} />
+              </Panel>
+              <Panel title="Month-wise pcs expected" flush>
+                <DataTable table={d.delivery60.tables.months} name="clients_delivery60_months" maxRows={14} titleCaseFirst={false} />
+              </Panel>
+              <Panel title="Client-wise pending and delivery dates" flush>
+                <DataTable table={d.delivery60.tables.clients} name="clients_delivery60_clients" maxRows={14} titleCaseFirst={false} />
+              </Panel>
+            </Section>
+          )}
+          {(d.fw_orders || d.fw_orders_error) && (
+            <Section title="FW ORDER'S" sub="Order, dispatched and pending pcs by month · DASHBOARD tab">
+              {d.fw_orders ? (
+                <>
+                  <Notices items={d.fw_orders.checks} />
+                  <Panel
+                    title="Orders vs dispatched"
+                    sub={`${fmtInt(d.fw_orders.totals.dispatched)} of ${fmtInt(d.fw_orders.totals.order)} pcs dispatched (${d.fw_orders.totals.dispatched_pct.toFixed(1)}%)`}
+                  >
+                    <Bars data={d.fw_orders.chart} unit="pcs" colors={{ "Order pcs": c.seriesRef, "Dispatched pcs": c.accent, "Pending pcs": c.neg }} />
+                  </Panel>
+                  <Panel title="FW ORDER'S" flush>
+                    <DataTable table={d.fw_orders.table} name="fw_orders" maxRows={13} titleCaseFirst={false} />
+                  </Panel>
+                </>
+              ) : (
+                <Notices items={[{ kind: "warning", text: `FW ORDER'S could not be read: ${d.fw_orders_error}` }]} />
+              )}
+            </Section>
+          )}
           <Section title="Categories" sub="Pcs by category and month">
             <Panel title="Category mix by month" sub="Tap a month for figures">
               <Bars data={d.charts.category_by_month} unit="pcs" stacked />

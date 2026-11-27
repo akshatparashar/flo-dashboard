@@ -2,14 +2,21 @@
    reference (ordered, target), red = pending / overdue / rejected. Tapping a month shows its exact figures under the
    chart, so nothing depends on hover. */
 import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import Svg, { G, Line, Rect, Text as SvgText } from "react-native-svg";
 import { axisLabel, fmtInt, inrShort, isNum, shortMonth, titleCase } from "../lib/format";
 import { colorFor, font, useTheme } from "../lib/theme";
 import type { SeriesChart, Slice } from "../lib/types";
 import { T } from "./ui";
 
-type Unit = "pcs" | "mtr" | "POs" | "inr" | "pct" | "";
+type Unit = "pcs" | "mtr" | "POs" | "inr" | "pct" | "tasks" | "";
+
+/** "AJAY KUMAR" under a narrow bar -> "Ajay Ku…" */
+function shortName(s: string, room: number): string {
+  const t = titleCase(s);
+  const max = Math.max(4, Math.floor(room / 6.5));
+  return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
+}
 
 export function fmtValue(v: number, unit: Unit): string {
   if (unit === "inr") return inrShort(v);
@@ -43,7 +50,7 @@ export function Legend({ items }: { items: { name: string; color: string }[] }) 
 }
 
 /** Vertical bars by month (or any short category): grouped, or stacked when the series add up. */
-export function Bars({ data, unit = "", stacked = false, height = 190 }: { data: SeriesChart; unit?: Unit; stacked?: boolean; height?: number }) {
+export function Bars({ data, unit = "", stacked = false, height = 190, colors: fixed, names = false }: { data: SeriesChart; unit?: Unit | "tasks"; stacked?: boolean; height?: number; colors?: Record<string, string>; names?: boolean }) {
   const c = useTheme();
   const [w, setW] = useState(0);
   const [sel, setSel] = useState<number | null>(null);
@@ -52,7 +59,7 @@ export function Bars({ data, unit = "", stacked = false, height = 190 }: { data:
   let n = data.categories.length;
   while (n > 1 && series.every((s) => !isNum(s.values[n - 1]) || s.values[n - 1] === 0)) n--;
   const cats = data.categories.slice(0, n);
-  const colors = series.map((s, i) => colorFor(s.name, i, c));
+  const colors = series.map((s, i) => fixed?.[s.name] ?? colorFor(s.name, i, c));
   const totals = cats.map((_, i) => series.reduce((a, s) => a + Math.max(0, s.values[i] ?? 0), 0));
   const max = stacked ? Math.max(0, ...totals) : Math.max(0, ...series.flatMap((s) => s.values.slice(0, n).filter(isNum)));
   const { top, ticks } = niceMax(max);
@@ -102,7 +109,7 @@ export function Bars({ data, unit = "", stacked = false, height = 190 }: { data:
                   })}
                   {i % step === 0 && (
                     <SvgText x={x0 + band / 2} y={height - 6} fontSize={10.5} fill={sel === i ? c.ink : c.muted} textAnchor="middle" fontFamily={font.ui}>
-                      {shortMonth(cat)}
+                      {names ? shortName(cat, band * step) : shortMonth(cat)}
                     </SvgText>
                   )}
                 </G>
@@ -143,10 +150,13 @@ export function Bars({ data, unit = "", stacked = false, height = 190 }: { data:
 }
 
 /** A ranked list with bars: best for names (fabricators, vendors, designers) on a narrow screen. */
-export function BarList({ items, unit = "", tone = "accent", max = 8 }: { items: Slice[]; unit?: Unit; tone?: "accent" | "neg"; max?: number }) {
+export function BarList({ items, unit = "", tone = "accent", max = 8, raw = false, keepOrder = false }: { items: Slice[]; unit?: Unit | "tasks"; tone?: "accent" | "neg"; max?: number; raw?: boolean; keepOrder?: boolean }) {
   const c = useTheme();
   const [all, setAll] = useState(false);
-  const rows = useMemo(() => [...items].filter((x) => isNum(x.value)).sort((a, b) => b.value - a.value), [items]);
+  const rows = useMemo(() => {
+    const r = items.filter((x) => isNum(x.value));
+    return keepOrder ? r : [...r].sort((a, b) => b.value - a.value);
+  }, [items, keepOrder]);
   const top = Math.max(0, ...rows.map((r) => r.value));
   const shown = all ? rows : rows.slice(0, max);
   if (!rows.length) return <T v="small">Nothing to show.</T>;
@@ -155,7 +165,7 @@ export function BarList({ items, unit = "", tone = "accent", max = 8 }: { items:
       {shown.map((r) => (
         <View key={r.label} style={{ gap: 5 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
-            <T v="body" numberOfLines={1} style={{ flex: 1, fontSize: 14, color: c.ink }}>{titleCase(r.label)}</T>
+            <T v="body" numberOfLines={1} style={{ flex: 1, fontSize: 14, color: c.ink }}>{raw ? r.label : titleCase(r.label)}</T>
             <T v="strong" style={{ fontSize: 14, fontVariant: ["tabular-nums"] }}>{fmtValue(r.value, unit)}</T>
           </View>
           <View style={[st.track, { backgroundColor: c.well }]}>
@@ -173,7 +183,7 @@ export function BarList({ items, unit = "", tone = "accent", max = 8 }: { items:
 }
 
 /** Horizontal stacked bars per name (e.g. received + pending per fabricator), largest `sortBy` first. */
-export function StackedList({ data, unit = "", sortBy, max = 8 }: { data: SeriesChart; unit?: Unit; sortBy?: string; max?: number }) {
+export function StackedList({ data, unit = "", sortBy, max = 8, colors: fixed, raw = false }: { data: SeriesChart; unit?: Unit | "tasks"; sortBy?: string; max?: number; colors?: Record<string, string>; raw?: boolean }) {
   const c = useTheme();
   const series = data.series;
   const key = series.findIndex((s) => s.name === sortBy);
@@ -182,13 +192,13 @@ export function StackedList({ data, unit = "", sortBy, max = 8 }: { data: Series
     .sort((a, b) => (key >= 0 ? b.vals[key] - a.vals[key] : b.vals.reduce((x, y) => x + y, 0) - a.vals.reduce((x, y) => x + y, 0)))
     .slice(0, max);
   const top = Math.max(0, ...rows.map((r) => r.vals.reduce((x, y) => x + y, 0)));
-  const colors = series.map((s, i) => colorFor(s.name, i, c));
+  const colors = series.map((s, i) => fixed?.[s.name] ?? colorFor(s.name, i, c));
   return (
     <View style={{ gap: 12 }}>
       {rows.map((r) => (
         <View key={r.name} style={{ gap: 5 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
-            <T numberOfLines={1} style={{ flex: 1, fontSize: 14, color: c.ink }}>{titleCase(r.name)}</T>
+            <T numberOfLines={1} style={{ flex: 1, fontSize: 14, color: c.ink }}>{raw ? r.name : titleCase(r.name)}</T>
             <T v="small" style={{ fontVariant: ["tabular-nums"] }}>
               {r.vals.map((v, i) => fmtValue(v, unit === "inr" || i === r.vals.length - 1 ? unit : "")).join(" · ")}
             </T>
@@ -210,12 +220,12 @@ const SPLIT: Record<string, "accent" | "neg" | "ref" | "pale" | "grey" | "warn">
 };
 
 /** Shares of one whole as a single segmented bar with a labelled list (e.g. POs by delivery status). */
-export function Split({ items, unit = "" }: { items: Slice[]; unit?: Unit }) {
+export function Split({ items, unit = "", colors: fixed, raw = false }: { items: Slice[]; unit?: Unit | "tasks"; colors?: Record<string, string>; raw?: boolean }) {
   const c = useTheme();
   const rows = items.filter((x) => isNum(x.value) && x.value > 0);
   const total = rows.reduce((a, x) => a + x.value, 0);
   const tone = { accent: c.accent, neg: c.neg, ref: c.seriesRef, pale: c.seriesPale, grey: c.seriesGrey, warn: c.warn };
-  const color = (label: string, i: number) => (SPLIT[label] ? tone[SPLIT[label]] : colorFor(label, i, c));
+  const color = (label: string, i: number) => fixed?.[label] ?? (SPLIT[label] ? tone[SPLIT[label]] : colorFor(label, i, c));
   if (!total) return <T v="small">Nothing to show.</T>;
   return (
     <View style={{ gap: 12 }}>
@@ -227,7 +237,7 @@ export function Split({ items, unit = "" }: { items: Slice[]; unit?: Unit }) {
       {rows.map((x, i) => (
         <View key={x.label} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <View style={[st.swatch, { backgroundColor: color(x.label, i) }]} />
-          <T style={{ flex: 1, fontSize: 14, color: c.ink }} numberOfLines={1}>{titleCase(x.label)}</T>
+          <T style={{ flex: 1, fontSize: 14, color: c.ink }} numberOfLines={1}>{raw ? x.label : titleCase(x.label)}</T>
           <T v="strong" style={{ fontSize: 14, fontVariant: ["tabular-nums"] }}>{fmtValue(x.value, unit)}</T>
           <T v="small" style={{ width: 52, textAlign: "right", fontVariant: ["tabular-nums"] }}>{((x.value / total) * 100).toFixed(1)}%</T>
         </View>
@@ -260,7 +270,75 @@ export function TargetBar({ achieved, target, scheduled }: { achieved: number; t
   );
 }
 
+/** Rows x columns of counts, darker = more. Row names stay put; the columns scroll sideways. Tap a cell for its figure. */
+export function Heatmap({ rows, columns, values, unit = "pcs", raw = false }: { rows: string[]; columns: string[]; values: number[][]; unit?: Unit; raw?: boolean }) {
+  const c = useTheme();
+  const [sel, setSel] = useState<[number, number] | null>(null);
+  const top = Math.max(0, ...values.flat().filter(isNum));
+  const cellW = 58;
+  if (!rows.length || !top) return <T v="small">Nothing to show.</T>;
+  const shade = (v: number) => (v > 0 ? 0.14 + 0.86 * Math.sqrt(v / top) : 0);
+  const label = (r: string) => (raw ? r : titleCase(r));
+  return (
+    <View>
+      <View style={{ flexDirection: "row" }}>
+        <View style={{ width: 110 }}>
+          <View style={st.heatHead} />
+          {rows.map((r) => (
+            <View key={r} style={st.heatRow}>
+              <Text numberOfLines={1} style={{ fontFamily: font.uiMedium, fontSize: 12.5, color: c.ink }}>{label(r)}</Text>
+            </View>
+          ))}
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+          <View>
+            <View style={{ flexDirection: "row" }}>
+              {columns.map((col) => (
+                <View key={col} style={[st.heatHead, { width: cellW }]}>
+                  <Text numberOfLines={2} style={{ fontFamily: font.uiBold, fontSize: 11, color: c.muted, textAlign: "center" }}>{col}</Text>
+                </View>
+              ))}
+            </View>
+            {rows.map((r, ri) => (
+              <View key={r} style={{ flexDirection: "row" }}>
+                {columns.map((col, ci) => {
+                  const v = values[ri]?.[ci] ?? 0;
+                  const a = shade(v);
+                  const on = sel?.[0] === ri && sel?.[1] === ci;
+                  return (
+                    <Pressable key={col} onPress={() => setSel(on ? null : [ri, ci])} accessibilityLabel={`${label(r)}, ${col}: ${fmtValue(v, unit)}`} style={[st.heatRow, { width: cellW, padding: 2 }]}>
+                      <View style={[st.heatCell, { backgroundColor: v > 0 ? c.accent : c.well, opacity: v > 0 ? a : 1 }]} />
+                      {v > 0 && (
+                        <View style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}>
+                          <Text style={[st.heatText, { color: a > 0.55 ? "#fff" : c.ink, textDecorationLine: on ? "underline" : "none" }]} numberOfLines={1}>
+                            {axisLabel(v)}
+                          </Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+      </View>
+      {sel && (
+        <View style={[st.readout, { backgroundColor: c.well }]}>
+          <T v="small" style={{ fontSize: 12.5 }}>
+            {label(rows[sel[0]])} · {columns[sel[1]]}: <Text style={{ fontFamily: font.uiBold, color: c.ink }}>{fmtValue(values[sel[0]]?.[sel[1]] ?? 0, unit)}</Text>
+          </T>
+        </View>
+      )}
+    </View>
+  );
+}
+
 const st = StyleSheet.create({
+  heatHead: { height: 34, justifyContent: "flex-end", paddingBottom: 4 },
+  heatRow: { height: 34, justifyContent: "center" },
+  heatCell: { flex: 1, borderRadius: 5 },
+  heatText: { fontFamily: font.uiBold, fontSize: 11, fontVariant: ["tabular-nums"] },
   legend: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 10 },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
   swatch: { width: 10, height: 10, borderRadius: 3 },

@@ -1,8 +1,8 @@
 /* Filters for a phone: months as a row of chips under the title (the filter used most), everything else (designer,
    vendor, client…) in a sheet behind one "Filters" button that shows how many are on. Leaving a filter empty
    means "all", exactly like the web dashboard and the API. */
-import { useCallback, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { shortMonth, titleCase } from "../lib/format";
 import { font, useTheme } from "../lib/theme";
@@ -137,6 +137,7 @@ export function FilterButton({ groups, options, values, onApply }: { groups: Fil
 }
 
 const st = StyleSheet.create({
+  search: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, fontSize: 15, fontFamily: font.ui },
   chip: { paddingHorizontal: 13, minHeight: 36, justifyContent: "center", borderRadius: 999, borderWidth: 1 },
   fbtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, minHeight: 36, borderRadius: 999, borderWidth: 1 },
   badge: { minWidth: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
@@ -144,3 +145,36 @@ const st = StyleSheet.create({
   wrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   sheetFoot: { flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
 });
+
+/** Free-text search; the query only changes once typing pauses, so the server is not asked on every key. */
+export function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  const c = useTheme();
+  const [text, setText] = useState(value);
+  const [seen, setSeen] = useState(value);
+  // the filter was changed elsewhere (cleared): show the new value
+  if (value !== seen) {
+    setSeen(value);
+    setText(value);
+  }
+  useEffect(() => {
+    if (text.trim() === value) return;
+    const id = setTimeout(() => onChange(text.trim()), 400);
+    return () => clearTimeout(id);
+  }, [text, value, onChange]);
+  return (
+    <TextInput
+      value={text}
+      onChangeText={setText}
+      placeholder={placeholder}
+      placeholderTextColor={c.faint}
+      returnKeyType="search"
+      autoCorrect={false}
+      clearButtonMode="while-editing"
+      accessibilityLabel={placeholder}
+      style={[st.search, { backgroundColor: c.control, borderColor: c.controlEdge, color: c.ink }]}
+    />
+  );
+}
+
+
+

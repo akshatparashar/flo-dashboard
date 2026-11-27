@@ -96,7 +96,17 @@ export interface ClientData extends Envelope {
   options: Options;
   kpis: Kpi[];
   tables: { monthly: TableData; categories: TableData };
-  charts: { monthly_share: Slice[]; fulfilment: Slice[]; category_by_month: SeriesChart };
+  charts: { monthly_share: Slice[]; client_share?: Slice[]; fulfilment: Slice[]; category_by_month: SeriesChart };
+  /** The "FW ORDER'S" table of the master sheet's DASHBOARD tab; null when that tab cannot be read. */
+  fw_orders?: {
+    table: TableData;
+    chart: SeriesChart;
+    totals: { order: number; dispatched: number; pending: number; overall: number; dispatched_pct: number };
+    checks: Notice[];
+  } | null;
+  fw_orders_error?: string;
+  /** Pending pcs against the 60-day delivery date (sheet column AG); null when nothing is pending. */
+  delivery60?: { today: string; kpis: Kpi[]; chart: SeriesChart; tables: { months: TableData; clients: TableData } } | null;
 }
 
 export interface ProductionData extends Envelope {
@@ -232,6 +242,7 @@ export interface OverviewData extends Envelope {
     };
     samples?: { kpis: Kpi[]; table: TableData; chart: SeriesChart };
     designers?: { table: TableData };
+    flo_future?: FloHighlights;
   };
 }
 
@@ -259,4 +270,191 @@ export interface Health {
   source: "google" | "demo";
   ttl: number;
   auth_required: boolean;
+}
+
+export interface PromiseItem {
+  level: "error" | "warning";
+  bucket: string;
+  reason: string;
+  item: string;
+  designer: string;
+  team: string;
+  vendor: string;
+  status: string;
+  pending: number;
+  qty: number;
+  due: string | null;
+  days_left: number | null;
+}
+
+export interface CountSlice extends Slice {
+  items: number;
+}
+
+export interface FloVisits {
+  totals: { done: number; required: number; missed: number; not_planned: number };
+  summary: TableData;
+  detail: TableData;
+  chart: SeriesChart & { flags: string[] };
+}
+
+export interface FloFutureData extends Envelope {
+  empty?: boolean;
+  no_match?: boolean;
+  period: string;
+  today: string;
+  options: Options;
+  notices: Notice[];
+  checks?: Notice[];
+  kpis: Kpi[];
+  visits: FloVisits;
+  summary?: {
+    items: number;
+    target: number;
+    completed: number;
+    pending: number;
+    done_pct: number;
+    items_done: number;
+    overdue_items: number;
+    overdue_pcs: number;
+    due_soon: number;
+    due_soon_pcs: number;
+    no_due_date: number;
+    most_pending: { designer: string; pending: number } | null;
+    longest_overdue: { designer: string; item: string; days: number } | null;
+    visits: { done: number; required: number; missed: number; not_planned: number };
+  };
+  follow_up?: PromiseItem[];
+  tables?: { designers: TableData; teams: TableData; items: TableData; outsource: TableData };
+  charts?: {
+    designers: SeriesChart & {
+      labels: { designer: string; team: string; done_pct: number; completed: number; target: number; items: number; overdue_items: number; nearest: string }[];
+    };
+    due_status: CountSlice[];
+    status: CountSlice[];
+  };
+}
+
+export interface FloHighlights {
+  period: string;
+  kpis: Kpi[];
+  designers: { label: string; value: number; pending: number; target: number }[];
+  urgent: PromiseItem[];
+}
+
+export interface RateCompare {
+  category: string;
+  widths: string[];
+  vendors: number;
+  tiles: { width: string; rate: number; vendor: string; fabric: string }[];
+  chart: { vendors: string[]; series: { name: string; values: (number | null)[]; best: boolean[] }[] } | null;
+  table: TableData | null;
+  pieces: TableData | null;
+}
+
+export interface VendorCard {
+  vendor: string;
+  items: number;
+  pending: number;
+  table: TableData;
+}
+
+export interface VendorRateData extends Envelope {
+  empty?: boolean;
+  no_match?: boolean;
+  source?: string;
+  options: Options;
+  notices: Notice[];
+  checks?: Notice[];
+  kpis: Kpi[];
+  compare?: { categories: string[]; default: string; data: Record<string, RateCompare> };
+  tables?: { benchmark: TableData; master: TableData };
+  vendor_cards?: VendorCard[];
+  sheet_tables?: { vendor: string; items: number; table: TableData }[];
+  vendor_fabric?: { widths: string[]; data: Record<string, { categories: string[]; series: { name: string; values: (number | null)[]; best: boolean[] }[] }> };
+}
+
+export interface InOutSaleData extends Envelope {
+  empty?: boolean;
+  notices?: Notice[];
+  options: Options;
+  years: { this: string; last: string };
+  kpis: Kpi[];
+  summary: { months: number; sale_pcs: number; net_sale: number; sale_change_pct: number | null };
+  tables: { compare: TableData; flow: TableData; fabricators?: TableData; promises?: TableData };
+  charts: {
+    sale_pcs: SeriesChart;
+    net_sale: SeriesChart;
+    cumulative_net: SeriesChart;
+    flow: SeriesChart;
+    fab_share?: Slice[];
+    fab_split?: Slice[];
+    fab_heat?: { rows: string[]; columns: string[]; values: number[][] };
+    fab_months?: SeriesChart;
+    promise?: SeriesChart;
+  };
+  fabricators: { count: number; incoming?: number; top?: string; top_pct?: number; promised?: number; promise_pending?: number };
+  checks: Notice[];
+}
+
+export interface DailyDelegationData extends Envelope {
+  empty?: boolean;
+  no_match?: boolean;
+  notices?: Notice[];
+  options: Options;
+  today: string;
+  kpis: Kpi[];
+  summary: { tasks: number; completed: number; open: number; done_pct: number; people: number; days: number; awaiting: number; today: number };
+  insights: string[];
+  today_pending: { date: string; today_total: number; today: TodoItem[]; carried: TodoItem[] };
+  charts: { status: Slice[]; by_person: SeriesChart; by_date: SeriesChart; ageing: Slice[] };
+  tables: { tasks: TableData; persons: TableData; dates: TableData; attention: TableData };
+  checks: Notice[];
+}
+
+export interface TodoItem {
+  task: string;
+  person: string;
+  status: string;
+  date: string;
+  age: number | null;
+}
+
+export interface StockAgeingData extends Envelope {
+  empty?: boolean;
+  no_match?: boolean;
+  demo: boolean;
+  as_on: string;
+  source: string;
+  notices?: Notice[];
+  options: Options;
+  kpis: Kpi[];
+  summary: { qty: number; value: number; designs: number; avg_age: number; old_qty: number; old_value: number; old_value_pct: number };
+  insights: string[];
+  charts: { value_by_age: Slice[]; qty_by_age: Slice[]; type_age: { rows: string[]; columns: string[]; values: number[][] } };
+  tables: { ages: TableData; types: TableData; stuck: TableData; designs: TableData };
+  unsold?: UnsoldData;
+}
+
+export interface UnsoldCard {
+  days: number;
+  pcs: number;
+  value: number;
+  designs: number;
+  pcs_pct: number;
+  value_pct: number;
+  no_sale: { designs: number; pcs: number; value: number; value_pct: number } | null;
+}
+
+export interface UnsoldData {
+  has_sales: boolean;
+  cards: UnsoldCard[];
+  totals: { pcs: number; value: number; designs: number };
+  compare: SeriesChart;
+  bands: { label: string; designs: number; pcs: number; value: number }[];
+  never: { designs: number; pcs: number; value: number; value_pct: number } | null;
+  heat: { rows: string[]; columns: string[]; values: number[][] } | null;
+  dated_from: { returns: number; adjustments: number };
+  table: TableData;
+  insights: string[];
 }

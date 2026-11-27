@@ -12,20 +12,24 @@ import { T } from "../components/ui";
 import { api } from "../lib/api";
 import { font, useTheme } from "../lib/theme";
 
-type Reply = { answer: string; page: string | null; page_label: string | null; context: Record<string, unknown>; understood: boolean };
+type Reply = { answer: string; page: string | null; page_label: string | null; context: Record<string, unknown>; understood: boolean; conversation_id?: string };
 type Msg = { id: number; role: "user" | "bot"; text: string; page?: string | null; pageLabel?: string | null; error?: boolean; retry?: string };
 
 const MAX_LEN = 500;
 const WELCOME = "Hi! I'm **FLO Assistant**. Ask me anything about the dashboard: any number, name or month, in English or Hinglish.";
-const SUGGESTIONS = ["Total pending", "This month revenue", "Overdue POs", "Top 3 vendors by pending fabric", "Sabse zyada pending kis fabricator ke paas hai", "New vs repeat revenue"];
+const SUGGESTIONS = ["Aaj ka pending kaam", "Total pending", "This month revenue", "Overdue FLO Future samples", "Stock over 180 days", "Sale vs last year", "Cheapest crepe vendor", "Sabse zyada pending kis fabricator ke paas hai"];
 
 // kept outside the component so closing and reopening the chat keeps the conversation
-const memory: { msgs: Msg[]; ctx: Record<string, unknown> | null; next: number } = { msgs: [], ctx: null, next: 1 };
+// the server also remembers the last 15 messages of the conversation, so short follow-ups ("uska received?") work
+const memory: { msgs: Msg[]; ctx: Record<string, unknown> | null; conv: string | null; next: number } = { msgs: [], ctx: null, conv: null, next: 1 };
 const remember = (patch: Partial<typeof memory>) => Object.assign(memory, patch);
 const nextId = () => memory.next++;
 
 /** Web paths in answers -> app screens (they are the same names). */
-const ROUTES = new Set(["/", "/production", "/fabric-po", "/target", "/designers", "/clients", "/samples", "/fabricators"]);
+const ROUTES = new Set([
+  "/", "/production", "/fabric-po", "/target", "/designers", "/clients", "/samples", "/fabricators",
+  "/flo-future", "/vendor-rate", "/in-out-sale", "/daily-delegation", "/stock-ageing",
+]);
 
 /** Android draws edge to edge, so the window no longer shrinks for the keyboard: track its height ourselves.
     React Native reports it without the navigation bar, which insets.bottom already covers. */
@@ -67,7 +71,8 @@ export default function Assistant() {
     setDraft("");
     setBusy(true);
     try {
-      const r = await api<Reply>("/chat", undefined, { method: "POST", body: { message, context: memory.ctx }, timeoutMs: 60_000 });
+      const r = await api<Reply>("/chat", undefined, { method: "POST", body: { message, context: memory.ctx, conversation_id: memory.conv ?? undefined }, timeoutMs: 60_000 });
+      if (r.conversation_id) remember({ conv: r.conversation_id });
       if (r.understood) remember({ ctx: r.context });
       push({ role: "bot", text: r.answer, page: r.page, pageLabel: r.page_label });
     } catch (e) {
@@ -87,7 +92,7 @@ export default function Assistant() {
   };
 
   const reset = () => {
-    remember({ ctx: null });
+    remember({ ctx: null, conv: null });
     setMsgs([]);
   };
 

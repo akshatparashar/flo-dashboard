@@ -1,7 +1,8 @@
 /* Overview: what needs attention right now, across every sheet. */
 import { router, type Href } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Bars, Split, StackedList } from "../../components/charts";
+import { BarList, Bars, Split, StackedList } from "../../components/charts";
+import { FollowUp } from "../../components/FollowUp";
 import { DataTable } from "../../components/DataTable";
 import { MonthChips, useFilters } from "../../components/Filters";
 import { Em, Screen } from "../../components/Screen";
@@ -11,7 +12,7 @@ import { font, useTheme } from "../../lib/theme";
 import type { Alert, OverviewData } from "../../lib/types";
 
 const KEYS = ["month"];
-const AREA_LINK: Record<string, Href> = { orders: "/production", overdue: "/production", stock: "/fabricators", po: "/fabric-po", samples: "/samples" };
+const AREA_LINK: Record<string, Href> = { orders: "/production", overdue: "/production", stock: "/fabricators", po: "/fabric-po", samples: "/samples", promises: "/flo-future" };
 const AREA_NAME: Record<string, string> = { orders: "Production", overdue: "Delivery", stock: "Fabricator stock", po: "Fabric PO", samples: "Samples", promises: "FLO Future", none: "Data" };
 const SEVERITY: Record<string, number> = { error: 0, warning: 1, info: 2, success: 3 };
 
@@ -129,6 +130,18 @@ export default function Overview() {
                 <KpiGrid kpis={s.samples.kpis} lead={["approval_pct"]} />
                 <Panel title="Sample status by month" sub="Pcs · tap a month for figures">
                   <Bars data={s.samples.chart} stacked unit="pcs" />
+                </Panel>
+              </Section>
+            )}
+
+            {s.flo_future && (
+              <Section title="FLO Future" sub={`Designers' promised samples${s.flo_future.period ? ` · ${s.flo_future.period}` : ""}`} action={<Open to="/flo-future" label="FLO Future" />}>
+                <KpiGrid kpis={s.flo_future.kpis} lead={["done_pct"]} />
+                <Panel title="Most urgent" sub="Overdue, then due in the next 3 days" flush>
+                  <FollowUp items={s.flo_future.urgent} max={5} empty="Nothing is overdue or due in the next 3 days." />
+                </Panel>
+                <Panel title="Pending pcs by designer" sub="Promised but not completed yet">
+                  <BarList items={s.flo_future.designers.map((x) => ({ label: x.label, value: x.pending }))} unit="pcs" tone="neg" max={6} raw />
                 </Panel>
               </Section>
             )}

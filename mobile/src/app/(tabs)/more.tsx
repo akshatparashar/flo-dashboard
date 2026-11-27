@@ -15,11 +15,31 @@ import { font, useTheme } from "../../lib/theme";
 
 type Icon = ComponentProps<typeof Ionicons>["name"];
 
-const PAGES: { to: Href; title: string; sub: string; icon: Icon }[] = [
-  { to: "/designers", title: "Designers", sub: "New and repeat pcs per designer", icon: "color-palette-outline" },
-  { to: "/clients", title: "Clients Order Status", sub: "Orders and fulfilment per client", icon: "people-outline" },
-  { to: "/samples", title: "Samples", sub: "Approved, rejected and in process", icon: "shirt-outline" },
-  { to: "/fabricators", title: "Fabricators", sub: "Stock with each fabricator, month by month", icon: "construct-outline" },
+type Page = { to: Href; title: string; sub: string; icon: Icon };
+
+const PAGES: { group: string; pages: Page[] }[] = [
+  {
+    group: "Sales and stock",
+    pages: [
+      { to: "/in-out-sale", title: "In/Out Sale", sub: "This year against last, and the flow to sale", icon: "swap-horizontal-outline" },
+      { to: "/stock-ageing", title: "Stock Ageing", sub: "How old the stock is, and what is not selling", icon: "hourglass-outline" },
+      { to: "/clients", title: "Clients Order Status", sub: "Orders, deliveries due and FW orders", icon: "people-outline" },
+    ],
+  },
+  {
+    group: "Design and production",
+    pages: [
+      { to: "/flo-future", title: "FLO Future", sub: "Promised samples, overdue and due soon", icon: "sparkles-outline" },
+      { to: "/designers", title: "Designers", sub: "New and repeat pcs per designer", icon: "color-palette-outline" },
+      { to: "/samples", title: "Samples", sub: "Approved, rejected and in process", icon: "shirt-outline" },
+      { to: "/fabricators", title: "Fabricators", sub: "Stock with each fabricator, month by month", icon: "construct-outline" },
+      { to: "/vendor-rate", title: "Vendor Rate", sub: "Cheapest fabric rate per vendor and width", icon: "pricetags-outline" },
+    ],
+  },
+  {
+    group: "Sir's desk",
+    pages: [{ to: "/daily-delegation", title: "Daily Delegation", sub: "Today's pending work, and who holds what", icon: "checkbox-outline" }],
+  },
 ];
 
 function Row({ title, sub, onPress, left, first }: { title: string; sub?: string; onPress: () => void; left: ReactNode; first?: boolean }) {
@@ -70,11 +90,19 @@ export default function More() {
       </Text>
 
       <Card flush>
-        {PAGES.map((p, i) => (
-          <Row key={p.title} first={i === 0} title={p.title} sub={p.sub} onPress={() => router.push(p.to)} left={<Ionicons name={p.icon} size={20} color={c.ink} />} />
-        ))}
-        <Row title="FLO Assistant" sub="Ask about any number, in English or Hinglish" onPress={() => router.push("/assistant")} left={<Robot size={22} color={c.ink} />} />
+        <Row first title="FLO Assistant" sub="Ask about any number, in English or Hinglish" onPress={() => router.push("/assistant")} left={<Robot size={22} color={c.ink} />} />
       </Card>
+
+      {PAGES.map((g) => (
+        <View key={g.group} style={{ gap: 10 }}>
+          <Text style={{ fontFamily: font.display, fontSize: 22, color: c.brand }}>{g.group}</Text>
+          <Card flush>
+            {g.pages.map((p, i) => (
+              <Row key={p.title} first={i === 0} title={p.title} sub={p.sub} onPress={() => router.push(p.to)} left={<Ionicons name={p.icon} size={20} color={c.ink} />} />
+            ))}
+          </Card>
+        </View>
+      ))}
 
       <View style={{ gap: 10 }}>
         <Text style={{ fontFamily: font.display, fontSize: 22, color: c.brand }}>Google Sheets</Text>
@@ -106,7 +134,7 @@ export default function More() {
           <Button label="Sign out" onPress={signOut} />
         </Card>
         <T v="small" style={{ textAlign: "center" }}>
-          FLO Operations · version {Constants.expoConfig?.version ?? "1.0.0"} · read-only
+          FLO Operations · version {Constants.expoConfig?.version ?? "2.0.0"} · read-only
         </T>
       </View>
     </ScrollView>
