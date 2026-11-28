@@ -1,9 +1,9 @@
 """Daily Delegation dashboard (sheet "Sir_Daily_Delegation_Tracker", tab "Daily Schedule" only).
 
-The tab is Sir's day as a list: one row per task / meeting / follow-up with Date, Day, Task, Responsible Person,
+The tab is Sir's day as a list: one row per task / meeting / follow-up with the date, Task, Responsible Person,
 Status and Remarks. There is no deadline column, so "how long has this been open" is measured from the row's date.
-Columns are found by their header text; the sheet's own Day column is ignored (it is a formula that can be blank,
-the weekday is worked out from the date instead).
+Columns are found by their header text. The date column is headed "Date", or "Day" since 28 Nov 2026; a "Day" column
+beside a "Date" column is ignored (the weekday is worked out from the date instead).
 """
 from __future__ import annotations
 
@@ -46,17 +46,30 @@ def clean_status(v) -> str:
     return STATUS_ALIASES.get(norm_key(s), s.title())
 
 
+def _date_column(grid, hr, cols):
+    """The column holding each row's date: the one headed "Date", else the "Day" column when it holds dates (the tab
+    has been laid out both ways). A "Day" column of weekday names is not a date column."""
+    if cols["date"] is not None:
+        return cols["date"]
+    day, task = cols["day"], cols["task"]
+    if day is None:
+        return None
+    values = [str(row[day]) for row in grid[hr + 1:] if day < len(row) and task < len(row) and _clean(row[task])]
+    return day if any(re.search(r"\d", v) for v in values) else None
+
+
 def parse_daily_schedule(grid):
     """Raw grid -> {"rows": DataFrame, "problems": [...]} (one row per task)."""
     hr, cols = None, {}
     for r, row in enumerate(grid or []):
         keys = [norm_key(v) for v in row]
         found = {name: next((i for i, k in enumerate(keys) if k.startswith(want)), None) for name, want in HEADERS.items()}
-        if found["date"] is not None and found["task"] is not None and found["status"] is not None:
+        if found["task"] is not None and found["status"] is not None and (found["date"] is not None or found["day"] is not None):
             hr, cols = r, found
             break
     if hr is None:
         return {"rows": pd.DataFrame(), "problems": ["header"]}
+    cols["date"] = _date_column(grid, hr, cols)
     recs = []
     for r in range(hr + 1, len(grid)):
         row = grid[r]
@@ -95,6 +108,10 @@ def _counts(x):
 
 def daily_delegation_dashboard(parsed, f, today=None):
     d = parsed["rows"]
+    if "header" in parsed.get("problems", []):
+        return {"empty": True, "notices": [notice("The Daily Schedule tab's header row was not found, so its layout may "
+                                                  "have changed. It needs the columns Task, Status and Date (or Day "
+                                                  "holding the dates).", "warning")]}
     if d.empty:
         return {"empty": True, "notices": [notice("The Daily Schedule tab has no tasks yet (a header row with Date, "
                                                   "Task and Status, then one row per task).", "warning")]}

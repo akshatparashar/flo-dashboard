@@ -149,3 +149,29 @@ def test_todays_pending_block(parsed):
     assert [t["task"] for t in f["today_pending"]["today"]] == ["Today's call"] and f["today_pending"]["carried"] == []
     quiet = ddl.daily_delegation_dashboard(parsed, {}, today="2026-12-30")["today_pending"]
     assert quiet["today"] == [] and quiet["today_total"] == 0 and len(quiet["carried"]) == 5
+
+
+# the layout since 28 Nov 2026: no "Date" header, the "Day" column holds the dates
+DAY_HEAD = ["Day", "Task / Meeting / Follow-up", "Responsible Person", "Status", "Remarks"]
+
+
+@pytest.mark.parametrize("first,second", [("20-Nov-2026", "27-Nov-2026"), (46346, 46353)])    # text, or sheet serials
+def test_dates_under_a_day_header(first, second):
+    parsed = ddl.parse_daily_schedule([["SIR'S SCHEDULE"], ["28-Nov-2026 (Saturday)", "0 item(s) scheduled for today"],
+                                       DAY_HEAD, [first, "Prepare sheet", "Asha", "Completed"],
+                                       [second, "Call the printer", "arihant sir", "Pending", "urgent"], [""] * 5])
+    d = parsed["rows"]
+    assert parsed["problems"] == [] and list(d["task"]) == ["Prepare sheet", "Call the printer"]
+    assert [str(x.date()) for x in d["date"]] == ["2026-11-20", "2026-11-27"]
+    r = ddl.daily_delegation_dashboard(parsed, {}, today="2026-11-28")
+    assert r["options"]["date"] == ["20 Nov 2026", "27 Nov 2026"] and kp(r)["total"]["value"] == 2
+
+
+def test_a_day_column_of_weekday_names_is_not_read_as_dates():
+    parsed = ddl.parse_daily_schedule([DAY_HEAD, ["Fri", "Prepare sheet", "Asha", "Pending", ""]])
+    assert len(parsed["rows"]) == 1 and parsed["rows"]["date"].isna().all()
+
+
+def test_a_changed_layout_says_so():
+    r = ddl.daily_delegation_dashboard(ddl.parse_daily_schedule([["When", "What", "Who"]]), {}, today=TODAY)
+    assert r["empty"] and "header row was not found" in r["notices"][0]["text"]
