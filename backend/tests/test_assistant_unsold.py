@@ -174,3 +174,13 @@ def test_without_sales_history_nothing_is_claimed(client, monkeypatch, tmp_path)
     monkeypatch.setenv("SQL_SNAPSHOT_DIR", str(tmp_path))
     a = text(ask(client, "90 din se kitne designs nahi bike"))
     assert "Sales history is not in this stock snapshot" in a and "No sale for over" not in a
+
+
+def test_days_between_the_age_bands_give_exact_limits(client):
+    body = page(client)
+    qty = [c["value"] for c in body["charts"]["qty_by_age"]]
+    _, a = talk(client, "180 din se purana maal kitna pda h", "or 150 din purana")
+    assert f"between {fmt.fmt_int(sum(qty[4:]))} and {fmt.fmt_int(sum(qty[3:]))} pcs" in text(a), a["answer"][:300]
+    assert "designs hold at least one piece older than 150 days" in text(a)
+    n, _ = over(body, 150)
+    assert f"no sale for over 150 days: {n:,} designs" in text(a)
