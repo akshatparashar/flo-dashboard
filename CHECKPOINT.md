@@ -250,6 +250,19 @@ status, a fabric's rate by name ("no fabric called X" instead of another rate). 
 The other failures from the 27 Nov audit (oldest open task, Hinglish "sabse bada" / "sabse kharab", most overdue) are
 fixed. Synonym coverage is a list, so a word not in it can still be missed.
 
+## 28 Nov: Daily Delegation layout, any number of days
+
+The Daily Delegation fix is its own commit, meant for `main` (the live site). The stock answer below is on
+`more-sheets` only.
+
+- **Daily Delegation showed no data on the new sheet layout.** The `Daily Schedule` tab's date column is no longer headed
+  "Date": the dates sit under "Day". Both layouts are read now, and a missing header row says so on the page. Also check
+  that the sheet is shared with the service account (still unconfirmed). The sheet's own `Date-wise Record` tab showed 0 schedule items for dates that have rows, so its
+  formulas may need the same correction.
+- **Stock asked for any number of days** ("150 din se purana"): piece age is kept in bands, so the assistant gives the
+  limits it lies between, plus the exact designs by oldest piece and the exact no-sale figure. An exact piece count needs
+  day-wise ages in the EasyTrade pull.
+
 ## Known issues
 
 - **6 real-sheet parity tests fail on purpose** — `PARITY_SOURCE=google pytest tests/test_parity.py` →

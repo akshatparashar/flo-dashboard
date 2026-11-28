@@ -302,6 +302,37 @@ def answer(text: str, fetch, previous: dict | None = None) -> tuple[str, dict]:
     return "\n".join(lines), want
 
 
+def _between_bands(days: int, qty: list, val: list, s: dict, lines: list[str], rows: list, at: dict) -> None:
+    """"over 150 days": the pieces are only kept in age bands, so give the exact limits the answer lies between, and
+    what is exact for any number of days (designs by oldest piece, and no-sale time)."""
+    edges = {0: 0, 30: 1, 60: 2, 90: 3, 180: 4, 365: 5}           # days -> first band that is older
+    over = lambda d: (sum(qty[edges[d]:]), sum(val[edges[d]:]))
+    if days in edges:
+        q, v = over(days)
+        lines.append(f"Stock over {days} days old: **{fmt.fmt_int(q)} pcs**, **{_inr(v)}** at cost "
+                     f"({q / s['qty'] * 100 if s['qty'] else 0:.1f}% of pieces).")
+        return
+    low = max(d for d in edges if d < days)
+    high = next((d for d in sorted(edges) if d > days), None)
+    upper = over(low)
+    if high is None:
+        lines.append(f"Over {days} days: **at most {fmt.fmt_int(upper[0])} pcs** ({_inr(upper[1])}), the stock over {low} "
+                     "days. The exact figure is not in this data: piece age is kept in bands.")
+    else:
+        lower = over(high)
+        lines.append(f"Over {days} days: **between {fmt.fmt_int(lower[0])} and {fmt.fmt_int(upper[0])} pcs** "
+                     f"({_inr(lower[1])} to {_inr(upper[1])}): over {high} days is {fmt.fmt_int(lower[0])}, over {low} days "
+                     f"is {fmt.fmt_int(upper[0])}. The exact figure is not in this data: piece age is kept in bands.")
+    if rows and "Oldest piece (days)" in at:
+        held = sum(1 for r in rows if (r[at["Oldest piece (days)"]] or 0) > days)
+        lines.append(f"Exact: **{held:,} designs** hold at least one piece older than {days} days.")
+    if rows and "Days without sale" in at:
+        idle = [r for r in rows if (r[at["Days without sale"]] or 0) > days]
+        lines.append(f"Exact: no sale for over {days} days: **{len(idle):,} designs**, "
+                     f"{fmt.fmt_int(sum(r[at['Pcs']] or 0 for r in idle))} pcs, "
+                     f"{_inr(sum(r[at['Value']] or 0 for r in idle))}.")
+
+
 def _age_answer(raw: str, want: dict, body: dict, lines: list[str], rows: list, at: dict) -> None:
     """Piece age: the summary, one age band, "older than N days", or the designs to act on."""
     s = body["summary"]
@@ -337,8 +368,7 @@ def _age_answer(raw: str, want: dict, body: dict, lines: list[str], rows: list, 
                      f"({q / s['qty'] * 100 if s['qty'] else 0:.1f}% of pieces, "
                      f"{v / s['value'] * 100 if s['value'] else 0:.1f}% of value).")
     elif days is not None:
-        lines.append(f"Piece age is kept in bands, so I can't count \"over {days} days\" exactly. Ask for over 30, 90, "
-                     "180 or 365 days, or ask what has not sold for that long.")
+        _between_bands(days, qty, val, s, lines, rows, at)
     else:
         lines.append(f"Closing stock: **{fmt.fmt_int(s['qty'])} pcs** in {s['designs']:,} designs, worth **{_inr(s['value'])}**; "
                      f"average age {s['avg_age']} days.")
